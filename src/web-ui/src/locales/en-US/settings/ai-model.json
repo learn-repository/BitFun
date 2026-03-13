@@ -22,6 +22,10 @@
     "formatHint": "Automatically selected based on provider, usually no need to change"
   },
   "providers": {
+    "gemini": {
+      "name": "Google Gemini",
+      "description": "Google Gemini 2.5 series multimodal models"
+    },
     "anthropic": {
       "name": "Anthropic Claude",
       "description": "Anthropic Claude series models"
@@ -72,21 +76,18 @@
     "general_chat": "Text Generation",
     "multimodal": "Image Understanding",
     "image_generation": "Image Generation",
-    "search_enhanced": "Information Retrieval",
     "speech_recognition": "Speech Recognition"
   },
   "categoryIcons": {
     "general_chat": "Text",
     "multimodal": "Vision",
     "image_generation": "Image",
-    "search_enhanced": "Search",
     "speech_recognition": "Speech"
   },
   "categoryHints": {
     "general_chat": "Text Generation: Generate text responses, code, etc. for most conversation scenarios",
     "multimodal": "Image Understanding: Understand image content and have mixed text-image conversations",
     "image_generation": "Image Generation: Generate images from text descriptions",
-    "search_enhanced": "Information Retrieval: Search the web for real-time information, only need name, API URL and key",
     "speech_recognition": "Speech Recognition: Convert speech to text (e.g., GLM-ASR)"
   },
   "form": {
@@ -97,7 +98,6 @@
     "baseUrl": "API URL",
     "resolvedUrlLabel": "Request URL: ",
     "forceUrlHint": "Append # to force use the exact URL you entered",
-    "searchApiHint": "Zhipu AI search API URL, or other compatible search API URL",
     "apiKey": "API Key",
     "apiKeyPlaceholder": "Enter your API Key",
     "provider": "Request Format",
@@ -114,6 +114,11 @@
     "enableHint": "Requires model to support thinking mode",
     "preserve": "Preserve Historical Thinking",
     "preserveHint": "When enabled, preserves thinking content from past conversations"
+  },
+  "reasoningEffort": {
+    "label": "Reasoning Effort",
+    "hint": "Controls model reasoning depth, only for Responses API (e.g. GPT-5)",
+    "placeholder": "Use API default"
   },
   "details": {
     "basicInfo": "Basic Information",
@@ -143,13 +148,14 @@
     "text_chat": "Chat",
     "image_understanding": "Vision",
     "image_generation": "Image",
-    "search": "Search",
     "function_calling": "Tools",
     "speech_recognition": "Speech"
   },
   "formats": {
     "openaiCompatible": "OpenAI Compatible",
-    "claudeApi": "Claude API"
+    "responsesApi": "OpenAI Responses API",
+    "claudeApi": "Claude API",
+    "geminiApi": "Gemini GenerateContent API"
   },
   "actions": {
     "save": "Save",
@@ -158,7 +164,27 @@
     "delete": "Delete",
     "test": "Test Connection",
     "newConfig": "New Configuration",
-    "createFirst": "Create First Configuration"
+    "createFirst": "Create First Configuration",
+    "viewStats": "View Statistics"
+  },
+  "tokenStats": {
+    "title": "Token Usage Statistics",
+    "loading": "Loading...",
+    "noData": "No statistics data available",
+    "totalTokens": "Total Tokens",
+    "inputTokens": "Input Tokens",
+    "outputTokens": "Output Tokens",
+    "cachedTokens": "Cached Tokens",
+    "sessionCount": "Sessions",
+    "requestCount": "API Requests",
+    "firstUsed": "First Used",
+    "lastUsed": "Last Used",
+    "clearStats": "Clear Statistics",
+    "confirmClear": "Are you sure you want to clear all statistics for this model? This action cannot be undone.",
+    "rangeAll": "All",
+    "range30Days": "Last 30 Days",
+    "range7Days": "Last 7 Days",
+    "includeSubagent": "Include Subagent"
   },
   "empty": {
     "noModels": "No model configurations",

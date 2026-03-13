@@ -34,11 +34,13 @@ import { MERMAID_INTERACTIVE_EXAMPLE } from '../constants/mermaidExamples';
 import { useMessageSender } from '../hooks/useMessageSender';
 import { useTemplateEditor } from '../hooks/useTemplateEditor';
 import { useChatInputState } from '../store/chatInputStateStore';
+import { useInputHistoryStore } from '../store/inputHistoryStore';
 import { createLogger } from '@/shared/utils/logger';
 import { Tooltip, IconButton } from '@/component-library';
 import './ChatInput.scss';
 
 const log = createLogger('ChatInput');
+const IME_ENTER_GUARD_MS = 120;
 
 export interface ChatInputProps {
   className?: string;
@@ -57,6 +59,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   
   const richTextInputRef = useRef<HTMLDivElement>(null);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
+  const isImeComposingRef = useRef(false);
+  const lastImeCompositionEndAtRef = useRef(0);
+  
+  // History navigation state
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [savedDraft, setSavedDraft] = useState('');
+  const { messages: inputHistory, addMessage: addToHistory } = useInputHistoryStore();
   
   const contexts = useContextStore(state => state.contexts);
   const addContext = useContextStore(state => state.addContext);
@@ -548,10 +557,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   }, [currentSessionId, workspacePath, derivedState?.isProcessing]);
   
-  const handleInputChange = useCallback((text: string) => {
+  const handleInputChange = useCallback((text: string, activeContexts: import('../../shared/types/context').ContextItem[]) => {
     if (!inputState.isActive && text.length > 0) {
       dispatchInput({ type: 'ACTIVATE' });
     }
+
+    const activeContextIds = new Set(activeContexts.map(context => context.id));
+    contexts.forEach(context => {
+      if (!activeContextIds.has(context.id)) {
+        removeContext(context.id);
+      }
+    });
     
     dispatchInput({ type: 'SET_VALUE', payload: text });
     
@@ -575,7 +591,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         });
       }
     }
-  }, [derivedState, setQueuedInput, inputState.isActive, slashCommandState.isActive]);
+  }, [contexts, derivedState, inputState.isActive, removeContext, setQueuedInput, slashCommandState.isActive]);
   
   const handleSendOrCancel = useCallback(async () => {
     if (!derivedState) return;
@@ -595,6 +611,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     
     const message = inputState.value.trim();
     
+    // Add to history before clearing
+    addToHistory(message);
+    setHistoryIndex(-1);
+    setSavedDraft('');
+    
     dispatchInput({ type: 'CLEAR_VALUE' });
     
     try {
@@ -604,7 +625,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       log.error('Failed to send message', { error });
       dispatchInput({ type: 'SET_VALUE', payload: message });
     }
-  }, [inputState.value, derivedState, transition, sendMessage]);
+  }, [inputState.value, derivedState, transition, sendMessage, addToHistory]);
   
   const getFilteredModes = useCallback(() => {
     if (!canSwitchModes) {
@@ -736,10 +757,89 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       }
     }
     
-    const isComposing = (e.nativeEvent as KeyboardEvent).isComposing;
+    // History navigation with up/down arrows
+    // Only handle when not in slash command mode and not composing
+    if (!slashCommandState.isActive && inputHistory.length > 0) {
+      const selection = window.getSelection();
+      const editor = richTextInputRef.current;
+      
+      if (selection && selection.rangeCount > 0 && editor) {
+        const range = selection.getRangeAt(0);
+        
+        // Check cursor position
+        const isAtStart = range.collapsed && range.startOffset === 0 && 
+                          (range.startContainer === editor || 
+                           (range.startContainer.nodeType === Node.TEXT_NODE && 
+                            range.startContainer.previousSibling === null &&
+                            range.startContainer.parentNode === editor));
+        
+        // For end position, we need to check if cursor is at the end of content
+        const isAtEnd = (() => {
+          if (!range.collapsed) return false;
+          const editorContent = editor.textContent || '';
+          let cursorPos = 0;
+          const traverse = (node: Node): boolean => {
+            if (node === range.startContainer) {
+              if (node.nodeType === Node.TEXT_NODE) {
+                cursorPos += range.startOffset;
+              }
+              return true;
+            }
+            if (node.nodeType === Node.TEXT_NODE) {
+              cursorPos += (node.textContent || '').length;
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+              for (const child of Array.from(node.childNodes)) {
+                if (traverse(child)) return true;
+              }
+            }
+            return false;
+          };
+          traverse(editor);
+          return cursorPos === editorContent.length;
+        })();
+        
+        // Arrow Up at start of line -> go back in history
+        if (e.key === 'ArrowUp' && isAtStart) {
+          e.preventDefault();
+          
+          // Save draft if starting navigation
+          if (historyIndex === -1 && inputState.value.trim()) {
+            setSavedDraft(inputState.value);
+          }
+          
+          // Navigate back (older messages)
+          if (historyIndex < inputHistory.length - 1) {
+            const newIndex = historyIndex + 1;
+            setHistoryIndex(newIndex);
+            dispatchInput({ type: 'SET_VALUE', payload: inputHistory[newIndex] });
+          }
+          return;
+        }
+        
+        // Arrow Down at end of line -> go forward in history
+        if (e.key === 'ArrowDown' && isAtEnd) {
+          e.preventDefault();
+          
+          if (historyIndex > 0) {
+            // Navigate forward (newer messages)
+            const newIndex = historyIndex - 1;
+            setHistoryIndex(newIndex);
+            dispatchInput({ type: 'SET_VALUE', payload: inputHistory[newIndex] });
+          } else if (historyIndex === 0) {
+            // Return to draft/empty
+            setHistoryIndex(-1);
+            dispatchInput({ type: 'SET_VALUE', payload: savedDraft });
+          }
+          return;
+        }
+      }
+    }
+    
+    const isComposing = (e.nativeEvent as KeyboardEvent).isComposing || isImeComposingRef.current;
+    const justFinishedComposition = Date.now() - lastImeCompositionEndAtRef.current < IME_ENTER_GUARD_MS;
     
     if (e.key === 'Enter' && !e.shiftKey) {
-      if (isComposing) {
+      if (isComposing || justFinishedComposition) {
         return;
       }
       
@@ -757,7 +857,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       e.preventDefault();
       transition(SessionExecutionEvent.USER_CANCEL);
     }
-  }, [handleSendOrCancel, derivedState, transition, templateState.fillState, moveToNextPlaceholder, moveToPrevPlaceholder, exitTemplateMode, slashCommandState, getFilteredModes, selectSlashCommandMode, canSwitchModes]);
+  }, [handleSendOrCancel, derivedState, transition, templateState.fillState, moveToNextPlaceholder, moveToPrevPlaceholder, exitTemplateMode, slashCommandState, getFilteredModes, selectSlashCommandMode, canSwitchModes, historyIndex, inputHistory, savedDraft, inputState.value]);
+
+  const handleImeCompositionStart = useCallback(() => {
+    isImeComposingRef.current = true;
+  }, []);
+
+  const handleImeCompositionEnd = useCallback(() => {
+    isImeComposingRef.current = false;
+    lastImeCompositionEndAtRef.current = Date.now();
+  }, []);
 
   const handleImageInput = useCallback(() => {
     const remaining = CHAT_INPUT_CONFIG.image.maxCount - currentImageCount;
@@ -974,6 +1083,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 value={inputState.value}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
+                onCompositionStart={handleImeCompositionStart}
+                onCompositionEnd={handleImeCompositionEnd}
                 placeholder={t('input.placeholder')}
                 disabled={false}
                 contexts={contexts}

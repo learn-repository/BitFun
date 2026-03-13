@@ -5,7 +5,6 @@
 pub mod ai_memory; // AI memory point management
 pub mod ai_rules; // AI rules management
 pub mod config; // Config management
-pub mod conversation; // Conversation history persistence
 pub mod diff;
 pub mod filesystem; // FileSystem management
 pub mod git; // Git service
@@ -14,9 +13,11 @@ pub mod lsp; // LSP (Language Server Protocol) system
 pub mod mcp; // MCP (Model Context Protocol) system
 pub mod project_context; // Project context management
 pub mod runtime; // Managed runtime and capability management
+pub mod session; // Session persistence
 pub mod snapshot; // Snapshot-based change tracking
 pub mod system; // System command detection and execution
 pub mod remote_connect; // Remote Connect (phone → desktop)
+pub mod token_usage; // Token usage tracking
 pub mod workspace; // Workspace management // Diff calculation and merge service
 
 // Terminal is a standalone crate; re-export it here.
@@ -40,5 +41,9 @@ pub use snapshot::SnapshotService;
 pub use system::{
     check_command, check_commands, run_command, run_command_simple, CheckCommandResult,
     CommandOutput, SystemError,
+};
+pub use token_usage::{
+    ModelTokenStats, SessionTokenStats, TimeRange, TokenUsageQuery, TokenUsageRecord,
+    TokenUsageService, TokenUsageSummary,
 };
 pub use workspace::{WorkspaceManager, WorkspaceProvider, WorkspaceService};

@@ -77,15 +77,15 @@ Options:
 
 function getMainAppBuildCommand(mode) {
   if (mode === "fast") {
-    return "npm run desktop:build:release-fast";
+    return "pnpm run desktop:build:release-fast";
   }
-  return "npm run desktop:build:exe";
+  return "pnpm run desktop:build:exe";
 }
 
 function getInstallerBuildCommand(mode, devMode) {
-  if (devMode) return "npm run tauri:dev";
-  if (mode === "fast") return "npm run tauri:build:exe:fast";
-  return "npm run tauri:build:exe";
+  if (devMode) return "pnpm run tauri:dev";
+  if (mode === "fast") return "pnpm run tauri:build:exe:fast";
+  return "pnpm run tauri:build:exe";
 }
 
 function ensureCleanDir(dir) {
@@ -255,7 +255,9 @@ if (appExePath) {
     log(`Copied runtime file: ${file}`);
   }
 
-  const runtimeDirs = ["resources", "locales", "swiftshader"];
+  // Keep installer payload aligned with the desktop app's runtime lookup paths.
+  // `mobile-web` may be emitted as a sibling directory in no-bundle builds.
+  const runtimeDirs = ["resources", "locales", "swiftshader", "mobile-web"];
   for (const dirName of runtimeDirs) {
     const srcDir = path.join(releaseDir, dirName);
     if (!fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) {

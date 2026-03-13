@@ -215,11 +215,10 @@ interface ModelPillProps {
   slotDesc: string;
   currentId: string;
   models: AIModelConfig[];
-  defaultModels: DefaultModelsConfig | null;
   onChange: (id: string) => void;
 }
 const ModelPill: React.FC<ModelPillProps> = ({
-  slotKey, slotLabel, slotDesc, currentId, models, defaultModels, onChange,
+  slotKey, slotLabel, slotDesc, currentId, models, onChange,
 }) => {
   const { t } = useTranslation('scenes/profile');
 
@@ -293,8 +292,7 @@ const ModelPill: React.FC<ModelPillProps> = ({
     </div>
   );
 };
-
-const PersonaView: React.FC<{ workspacePath: string }> = () => {
+const PersonaView: React.FC<{ workspacePath: string }> = ({ workspacePath }) => {
   const { t } = useTranslation('scenes/profile');
 
   // Initialize identity from localStorage immediately (lazy initializer avoids flash)
@@ -311,7 +309,7 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
   const descInputRef = useRef<HTMLInputElement>(null);
 
   const [models, setModels] = useState<AIModelConfig[]>([]);
-  const [defaultModels, setDefaultModels] = useState<DefaultModelsConfig | null>(null);
+  const [, setDefaultModels] = useState<DefaultModelsConfig | null>(null);
   const [funcAgentModels, setFuncAgentModels] = useState<Record<string, string>>({});
   const [rules, setRules] = useState<AIRule[]>([]);
   const [memories, setMemories] = useState<AIMemory[]>([]);
@@ -374,14 +372,14 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
       try {
         const [u, p, m] = await Promise.all([
           AIRulesAPI.getRules(RuleLevel.User),
-          AIRulesAPI.getRules(RuleLevel.Project),
+          AIRulesAPI.getRules(RuleLevel.Project, workspacePath || undefined),
           getAllMemories(),
         ]);
         setRules([...u, ...p]);
         setMemories(m);
       } catch (e) { log.error('rules/memory', e); }
     })();
-  }, []);
+  }, [workspacePath]);
 
   useEffect(() => {
     const init = async () => {
@@ -399,7 +397,9 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
       const [tools, mcps, sks, modeConf, allModels, defModels, funcModels, exp] = await Promise.all([
         invoke<ToolInfo[]>('get_all_tools_info').catch(() => [] as ToolInfo[]),
         MCPAPI.getServers().catch(() => [] as MCPServerInfo[]),
-        configAPI.getSkillConfigs().catch(() => [] as SkillInfo[]),
+        configAPI.getSkillConfigs({
+          workspacePath: workspacePath || undefined,
+        }).catch(() => [] as SkillInfo[]),
         configAPI.getModeConfig('agentic').catch(() => null as ModeConfigItem | null),
         (configManager.getConfig<AIModelConfig[]>('ai.models') as Promise<AIModelConfig[]>).catch(() => [] as AIModelConfig[]),
         (configManager.getConfig<DefaultModelsConfig>('ai.default_models') as Promise<DefaultModelsConfig | null>).catch(() => null),
@@ -415,7 +415,7 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
       setFuncAgentModels(funcModels ?? {});
       if (exp) setAiExp(exp);
     } catch (e) { log.error('capabilities', e); }
-  }, []);
+  }, [workspacePath]);
   useEffect(() => { loadCaps(); }, [loadCaps]);
 
   const startEdit = (field: 'name' | 'desc') => {
@@ -505,14 +505,16 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
     try {
       await AIRulesAPI.updateRule(
         rule.level === RuleLevel.User ? RuleLevel.User : RuleLevel.Project,
-        rule.name, { enabled: newEnabled },
+        rule.name,
+        { enabled: newEnabled },
+        rule.level === RuleLevel.Project ? workspacePath || undefined : undefined,
       );
     } catch (e) {
       log.error('rule toggle', e);
       setRules(p => p.map(r => r.name === rule.name && r.level === rule.level ? { ...r, enabled: rule.enabled } : r));
       notificationService.error(t('notifications.toggleFailed'));
     } finally { setRulesLoading(p => { const n = { ...p }; delete n[key]; return n; }); }
-  }, [t]);
+  }, [t, workspacePath]);
 
   const toggleMem = useCallback(async (mem: AIMemory) => {
     setMemoriesLoading(p => ({ ...p, [mem.id]: true }));
@@ -567,13 +569,19 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
     const newEnabled = !sk.enabled;
     setSkillsLoading(p => ({ ...p, [sk.name]: true }));
     setSkills(p => p.map(s => s.name === sk.name ? { ...s, enabled: newEnabled } : s));
-    try { await configAPI.setSkillEnabled(sk.name, newEnabled); }
+    try {
+      await configAPI.setSkillEnabled({
+        skillName: sk.name,
+        enabled: newEnabled,
+        workspacePath: workspacePath || undefined,
+      });
+    }
     catch (e) {
       log.error('skill toggle', e);
       setSkills(p => p.map(s => s.name === sk.name ? { ...s, enabled: sk.enabled } : s));
       notificationService.error(t('notifications.toggleFailed'));
     } finally { setSkillsLoading(p => { const n = { ...p }; delete n[sk.name]; return n; }); }
-  }, [t]);
+  }, [t, workspacePath]);
 
   const togglePref = useCallback(async (key: keyof AIExperienceConfig) => {
     const cur = aiExp[key] as boolean;
@@ -1051,7 +1059,6 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
                       slotDesc={t(`modelSlots.${key}.desc`)}
                       currentId={slotIds[key]}
                       models={models}
-                      defaultModels={defaultModels}
                       onChange={id => handleModelChange(key, id)}
                     />
                   ))}
@@ -1066,7 +1073,6 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
                       slotDesc={t(`modelSlots.${key}.desc`)}
                       currentId={slotIds[key]}
                       models={models}
-                      defaultModels={defaultModels}
                       onChange={id => handleModelChange(key, id)}
                     />
                   ))}
@@ -1221,7 +1227,7 @@ const PersonaView: React.FC<{ workspacePath: string }> = () => {
                       </span>
                     );
                   })}
-                  <button type="button" className={`${C}-link`} onClick={() => navToSettings('mcp')}>
+                  <button type="button" className={`${C}-link`} onClick={() => navToSettings('mcp-tools')}>
                     {t('actions.manage')} <ChevronRight size={11} />
                   </button>
                 </div>

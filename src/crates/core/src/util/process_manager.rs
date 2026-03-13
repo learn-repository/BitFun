@@ -1,10 +1,14 @@
 //! Unified process management to avoid Windows child process leaks
 
-use log::warn;
-use once_cell::sync::Lazy;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::LazyLock;
 use tokio::process::Command as TokioCommand;
+
+#[cfg(windows)]
+use log::warn;
+
+#[cfg(windows)]
+use std::sync::{Arc, Mutex};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -15,7 +19,7 @@ use win32job::Job;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-static GLOBAL_PROCESS_MANAGER: Lazy<ProcessManager> = Lazy::new(ProcessManager::new);
+static GLOBAL_PROCESS_MANAGER: LazyLock<ProcessManager> = LazyLock::new(ProcessManager::new);
 
 pub struct ProcessManager {
     #[cfg(windows)]
@@ -80,25 +84,31 @@ impl ProcessManager {
 
 /// Create synchronous Command (Windows automatically adds CREATE_NO_WINDOW)
 pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
-    let mut cmd = Command::new(program.as_ref());
+    let cmd = Command::new(program.as_ref());
 
     #[cfg(windows)]
     {
+        let mut cmd = cmd;
         cmd.creation_flags(CREATE_NO_WINDOW);
+        return cmd;
     }
 
+    #[cfg(not(windows))]
     cmd
 }
 
 /// Create Tokio async Command (Windows automatically adds CREATE_NO_WINDOW)
 pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> TokioCommand {
-    let mut cmd = TokioCommand::new(program.as_ref());
+    let cmd = TokioCommand::new(program.as_ref());
 
     #[cfg(windows)]
     {
+        let mut cmd = cmd;
         cmd.creation_flags(CREATE_NO_WINDOW);
+        return cmd;
     }
 
+    #[cfg(not(windows))]
     cmd
 }
 

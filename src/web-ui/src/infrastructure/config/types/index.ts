@@ -24,6 +24,7 @@ export interface AppConfig {
   sidebar: SidebarConfig;
   right_panel: RightPanelConfig;
   notifications: NotificationConfig;
+  session_config: AppSessionConfig;
   ai_experience: AIExperienceConfig;
 }
 
@@ -31,6 +32,10 @@ export type BackendLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'o
 
 export interface AppLoggingConfig {
   level: BackendLogLevel;
+}
+
+export interface AppSessionConfig {
+  default_mode: 'code' | 'cowork';
 }
 
 export interface SidebarConfig {
@@ -65,7 +70,6 @@ export type ModelCapability =
   | 'text_chat'
   | 'image_understanding'
   | 'image_generation'
-  | 'search'
   | 'function_calling'
   | 'speech_recognition';
 
@@ -73,7 +77,6 @@ export type ModelCategory =
   | 'general_chat'
   | 'multimodal'
   | 'image_generation'
-  | 'search_enhanced'
   | 'speech_recognition';
 
 export interface ModelMetadata {
@@ -88,7 +91,6 @@ export const CAPABILITY_LABELS: Record<ModelCapability, string> = {
   text_chat: t('settings/ai-model:capabilities.text_chat'),
   image_understanding: t('settings/ai-model:capabilities.image_understanding'),
   image_generation: t('settings/ai-model:capabilities.image_generation'),
-  search: t('settings/ai-model:capabilities.search'),
   function_calling: t('settings/ai-model:capabilities.function_calling'),
   speech_recognition: t('settings/ai-model:capabilities.speech_recognition')
 };
@@ -98,7 +100,6 @@ export const CATEGORY_LABELS: Record<ModelCategory, string> = {
   general_chat: t('settings/ai-model:category.general_chat'),
   multimodal: t('settings/ai-model:category.multimodal'),
   image_generation: t('settings/ai-model:category.image_generation'),
-  search_enhanced: t('settings/ai-model:category.search_enhanced'),
   speech_recognition: t('settings/ai-model:category.speech_recognition')
 };
 
@@ -107,7 +108,6 @@ export const CATEGORY_ICONS: Record<ModelCategory, string> = {
   general_chat: t('settings/ai-model:categoryIcons.general_chat'),
   multimodal: t('settings/ai-model:categoryIcons.multimodal'),
   image_generation: t('settings/ai-model:categoryIcons.image_generation'),
-  search_enhanced: t('settings/ai-model:categoryIcons.search_enhanced'),
   speech_recognition: t('settings/ai-model:categoryIcons.speech_recognition')
 };
 
@@ -150,6 +150,9 @@ export interface AIModelConfig {
 
   
   support_preserved_thinking?: boolean;
+
+  /** Reasoning effort for OpenAI Responses API ("low" | "medium" | "high" | "xhigh") */
+  reasoning_effort?: string;
 }
 
 export interface ProxyConfig {
@@ -165,8 +168,6 @@ export interface DefaultModelsConfig {
   primary?: string | null;
    
   fast?: string | null;
-   
-  search?: string | null;
    
   image_understanding?: string | null;
    
@@ -535,6 +536,8 @@ export type ConfigPath =
   | 'app.language'
   | 'app.auto_update'
   | 'app.telemetry'
+  | 'app.session_config'
+  | 'app.session_config.default_mode'
   | 'app.sidebar'
   | 'app.sidebar.width'
   | 'app.sidebar.collapsed'
@@ -584,8 +587,6 @@ export interface OptionalCapabilityModels {
    
   image_generation?: string;
    
-  search?: string;
-   
   speech_recognition?: string;
 }
 
@@ -593,5 +594,4 @@ export interface OptionalCapabilityModels {
 export type OptionalCapabilityType =
   | 'image_understanding'
   | 'image_generation'
-  | 'search'
   | 'speech_recognition';

@@ -21,6 +21,12 @@ pub struct BotChatState {
     pub current_session_id: Option<String>,
     #[serde(skip)]
     pub pending_action: Option<PendingAction>,
+    /// Pending file downloads awaiting user confirmation.
+    /// Key: short token embedded in the download button callback.
+    /// Value: absolute file path on the desktop.
+    /// Not persisted — cleared on bot restart.
+    #[serde(skip)]
+    pub pending_files: std::collections::HashMap<String, String>,
 }
 
 impl BotChatState {
@@ -31,6 +37,7 @@ impl BotChatState {
             current_workspace: None,
             current_session_id: None,
             pending_action: None,
+            pending_files: std::collections::HashMap::new(),
         }
     }
 }
@@ -101,6 +108,15 @@ pub struct ForwardRequest {
     pub agent_type: String,
     pub turn_id: String,
     pub image_contexts: Vec<crate::agentic::image_analysis::ImageContextData>,
+}
+
+/// Result returned by [`execute_forwarded_turn`].
+pub struct ForwardedTurnResult {
+    /// Truncated text suitable for display in bot messages (≤ 4000 chars).
+    pub display_text: String,
+    /// Full untruncated response text from the tracker, suitable for
+    /// downloadable file link extraction.  Not affected by broadcast lag.
+    pub full_text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,7 +236,7 @@ pub fn main_menu_actions() -> Vec<BotAction> {
         BotAction::secondary("Resume Session", "/resume_session"),
         BotAction::secondary("New Code Session", "/new_code_session"),
         BotAction::secondary("New Cowork Session", "/new_cowork_session"),
-        BotAction::secondary("Help", "/help"),
+        BotAction::secondary("Help (send /help for menu)", "/help"),
     ]
 }
 
@@ -258,6 +274,7 @@ pub async fn handle_command(
         super::super::remote_server::images_to_contexts(
             if images.is_empty() { None } else { Some(&images) },
         );
+
     match cmd {
         BotCommand::Start | BotCommand::Help => {
             if state.paired {
@@ -464,10 +481,7 @@ fn parse_question_numbers(input: &str) -> Option<Vec<usize>> {
 }
 
 async fn handle_switch_workspace(state: &mut BotChatState) -> HandleResult {
-    use crate::infrastructure::get_workspace_path;
     use crate::service::workspace::get_global_workspace_service;
-
-    let current_ws = get_workspace_path().map(|p| p.to_string_lossy().to_string());
 
     let ws_service = match get_global_workspace_service() {
         Some(s) => s,
@@ -490,12 +504,7 @@ async fn handle_switch_workspace(state: &mut BotChatState) -> HandleResult {
         };
     }
 
-    // Prefer the bot session's own workspace record; fall back to the desktop
-    // global path only if the bot has not yet selected one.  Using || across
-    // both sources simultaneously can mark two different workspaces as
-    // [current] when the desktop and the bot session are on different paths.
-    let effective_current: Option<&str> =
-        state.current_workspace.as_deref().or(current_ws.as_deref());
+    let effective_current: Option<&str> = state.current_workspace.as_deref();
 
     let mut text = String::from("Select a workspace:\n\n");
     let mut options: Vec<(String, String)> = Vec::new();
@@ -518,8 +527,8 @@ async fn handle_switch_workspace(state: &mut BotChatState) -> HandleResult {
 }
 
 async fn handle_resume_session(state: &mut BotChatState, page: usize) -> HandleResult {
+    use crate::agentic::persistence::PersistenceManager;
     use crate::infrastructure::PathManager;
-    use crate::service::conversation::ConversationPersistenceManager;
 
     let ws_path = match &state.current_workspace {
         Some(p) => std::path::PathBuf::from(p),
@@ -540,8 +549,8 @@ async fn handle_resume_session(state: &mut BotChatState, page: usize) -> HandleR
         }
     };
 
-    let conv_mgr = match ConversationPersistenceManager::new(pm, ws_path.clone()).await {
-        Ok(mgr) => mgr,
+    let store = match PersistenceManager::new(pm) {
+        Ok(store) => store,
         Err(e) => {
             return HandleResult {
                 reply: format!("Failed to load sessions: {e}"),
@@ -551,7 +560,7 @@ async fn handle_resume_session(state: &mut BotChatState, page: usize) -> HandleR
         }
     };
 
-    let all_meta = match conv_mgr.get_session_list().await {
+    let all_meta = match store.list_session_metadata(&ws_path).await {
         Ok(m) => m,
         Err(e) => {
             return HandleResult {
@@ -651,13 +660,24 @@ async fn handle_new_session(state: &mut BotChatState, agent_type: &str) -> Handl
         _ => "Remote Code Session",
     };
 
+    let Some(workspace_path) = ws_path.clone() else {
+        return HandleResult {
+            reply: "Please select a workspace first.".to_string(),
+            actions: vec![],
+            forward_to_session: None,
+        };
+    };
+
     match coordinator
         .create_session_with_workspace(
             None,
             session_name.to_string(),
             agent_type.to_string(),
-            SessionConfig::default(),
-            ws_path.clone(),
+            SessionConfig {
+                workspace_path: Some(workspace_path.clone()),
+                ..Default::default()
+            },
+            workspace_path.clone(),
         )
         .await
     {
@@ -669,7 +689,7 @@ async fn handle_new_session(state: &mut BotChatState, agent_type: &str) -> Handl
             } else {
                 "coding"
             };
-            let workspace = ws_path.as_deref().unwrap_or("(unknown)");
+            let workspace = workspace_path.as_str();
             HandleResult {
                 reply: format!(
                     "Created new {} session: {}\nWorkspace: {}\n\n\
@@ -767,7 +787,7 @@ async fn select_workspace(state: &mut BotChatState, path: &str, name: &str) -> H
     let path_buf = std::path::PathBuf::from(path);
     match ws_service.open_workspace(path_buf).await {
         Ok(info) => {
-            if let Err(e) = crate::service::snapshot::initialize_global_snapshot_manager(
+            if let Err(e) = crate::service::snapshot::initialize_snapshot_manager_for_workspace(
                 info.root_path.clone(),
                 None,
             )
@@ -801,20 +821,20 @@ async fn select_workspace(state: &mut BotChatState, path: &str, name: &str) -> H
 }
 
 async fn count_workspace_sessions(workspace_path: &str) -> usize {
+    use crate::agentic::persistence::PersistenceManager;
     use crate::infrastructure::PathManager;
-    use crate::service::conversation::ConversationPersistenceManager;
 
     let wp = std::path::PathBuf::from(workspace_path);
     let pm = match PathManager::new() {
         Ok(pm) => std::sync::Arc::new(pm),
         Err(_) => return 0,
     };
-    let conv_mgr = match ConversationPersistenceManager::new(pm, wp).await {
-        Ok(m) => m,
+    let store = match PersistenceManager::new(pm) {
+        Ok(store) => store,
         Err(_) => return 0,
     };
-    conv_mgr
-        .get_session_list()
+    store
+        .list_session_metadata(&wp)
         .await
         .map(|v| v.len())
         .unwrap_or(0)
@@ -868,22 +888,22 @@ async fn select_session(
     }
 }
 
-/// Load the last user/assistant dialog pair from ConversationPersistenceManager,
+/// Load the last user/assistant dialog pair from the unified project session store,
 /// the same data source the desktop frontend uses.
 async fn load_last_dialog_pair_from_turns(
     workspace_path: Option<&str>,
     session_id: &str,
 ) -> Option<(String, String)> {
+    use crate::agentic::persistence::PersistenceManager;
     use crate::infrastructure::PathManager;
-    use crate::service::conversation::ConversationPersistenceManager;
 
     const MAX_USER_LEN: usize = 200;
     const MAX_AI_LEN: usize = 400;
 
     let wp = std::path::PathBuf::from(workspace_path?);
     let pm = std::sync::Arc::new(PathManager::new().ok()?);
-    let conv_mgr = ConversationPersistenceManager::new(pm, wp).await.ok()?;
-    let turns = conv_mgr.load_session_turns(session_id).await.ok()?;
+    let store = PersistenceManager::new(pm).ok()?;
+    let turns = store.load_session_turns(&wp, session_id).await.ok()?;
     let turn = turns.last()?;
 
     let user_text = strip_user_message_tags(&turn.user_message.content);
@@ -1302,7 +1322,7 @@ async fn handle_chat_message(
     if state.current_session_id.is_none() {
         return HandleResult {
             reply: "No active session. Use /resume_session to resume one or \
-                    /new_code_session to create a new one."
+                    /new_code_session /new_cowork_session to create a new one."
                 .to_string(),
             actions: session_entry_actions(),
             forward_to_session: None,
@@ -1337,13 +1357,11 @@ async fn handle_chat_message(
 /// `RemoteExecutionDispatcher` (the same path used by mobile), then
 /// subscribes to the tracker's broadcast channel for real-time events.
 ///
-/// `message_sender` is called to send intermediate messages (e.g. thinking
-/// content) before the final response is returned.
 pub async fn execute_forwarded_turn(
     forward: ForwardRequest,
     interaction_handler: Option<BotInteractionHandler>,
-    message_sender: Option<BotMessageSender>,
-) -> String {
+    _message_sender: Option<BotMessageSender>,
+) -> ForwardedTurnResult {
     use crate::agentic::coordination::DialogTriggerSource;
     use crate::service::remote_connect::remote_server::{
         get_or_init_global_dispatcher, TrackerEvent,
@@ -1365,24 +1383,19 @@ pub async fn execute_forwarded_turn(
         )
         .await
     {
-        return format!("Failed to send message: {e}");
+        let msg = format!("Failed to send message: {e}");
+        return ForwardedTurnResult {
+            display_text: msg.clone(),
+            full_text: msg,
+        };
     }
 
     let result = tokio::time::timeout(std::time::Duration::from_secs(300), async {
-        let mut thinking = String::new();
         let mut response = String::new();
         loop {
             match event_rx.recv().await {
                 Ok(event) => match event {
-                    TrackerEvent::ThinkingChunk(t) => thinking.push_str(&t),
-                    TrackerEvent::ThinkingEnd => {
-                        if !thinking.is_empty() {
-                            if let Some(sender) = message_sender.as_ref() {
-                                sender(thinking.clone()).await;
-                            }
-                            thinking.clear();
-                        }
-                    }
+                    TrackerEvent::ThinkingChunk(_) | TrackerEvent::ThinkingEnd => {}
                     TrackerEvent::TextChunk(t) => response.push_str(&t),
                     TrackerEvent::ToolStarted {
                         tool_id,
@@ -1410,9 +1423,19 @@ pub async fn execute_forwarded_turn(
                         }
                     }
                     TrackerEvent::TurnCompleted => break,
-                    TrackerEvent::TurnFailed(e) => return format!("Error: {e}"),
+                    TrackerEvent::TurnFailed(e) => {
+                        let msg = format!("Error: {e}");
+                        return ForwardedTurnResult {
+                            display_text: msg.clone(),
+                            full_text: msg,
+                        };
+                    }
                     TrackerEvent::TurnCancelled => {
-                        return "Task was cancelled.".to_string();
+                        let msg = "Task was cancelled.".to_string();
+                        return ForwardedTurnResult {
+                            display_text: msg.clone(),
+                            full_text: msg,
+                        };
                     }
                     _ => {}
                 },
@@ -1424,24 +1447,37 @@ pub async fn execute_forwarded_turn(
                 }
             }
         }
-        response
+
+        // Use the tracker's authoritative accumulated_text as the full
+        // response — it is maintained directly from AgenticEvent and is not
+        // subject to broadcast channel lag.
+        let full_text = tracker.accumulated_text();
+        let full_text = if full_text.is_empty() { response } else { full_text };
+
+        let mut display_text = full_text.clone();
+        const MAX_BOT_MSG_LEN: usize = 4000;
+        if display_text.len() > MAX_BOT_MSG_LEN {
+            let mut end = MAX_BOT_MSG_LEN;
+            while !display_text.is_char_boundary(end) {
+                end -= 1;
+            }
+            display_text.truncate(end);
+            display_text.push_str("\n\n... (truncated)");
+        }
+
+        ForwardedTurnResult {
+            display_text: if display_text.is_empty() {
+                "(No response)".to_string()
+            } else {
+                display_text
+            },
+            full_text,
+        }
     })
     .await;
 
-    match result {
-        Ok(text) if text.is_empty() => "(No response)".to_string(),
-        Ok(mut text) => {
-            const MAX_BOT_MSG_LEN: usize = 4000;
-            if text.len() > MAX_BOT_MSG_LEN {
-                let mut end = MAX_BOT_MSG_LEN;
-                while !text.is_char_boundary(end) {
-                    end -= 1;
-                }
-                text.truncate(end);
-                text.push_str("\n\n... (truncated)");
-            }
-            text
-        }
-        Err(_) => "Response timed out after 5 minutes.".to_string(),
-    }
+    result.unwrap_or_else(|_| ForwardedTurnResult {
+        display_text: "Response timed out after 5 minutes.".to_string(),
+        full_text: String::new(),
+    })
 }

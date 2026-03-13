@@ -7,10 +7,23 @@ export interface OpenWorkspaceRequest {
 }
 
 export interface WorkspaceInfo {
+  id: string;
   name: string;
   rootPath: string;
-  type: string;
-  filesCount: number;
+  workspaceType: string;
+  languages: string[];
+  openedAt: string;
+  lastAccessed: string;
+  description?: string | null;
+  tags: string[];
+  statistics?: {
+    totalFiles: number;
+    totalLines: number;
+    totalSize: number;
+    filesByLanguage: Record<string, number>;
+    filesByExtension: Record<string, number>;
+    lastUpdated: string;
+  } | null;
 }
 
 export interface FileOperationRequest {
@@ -70,11 +83,13 @@ export interface GetToolInfoRequest {
 export interface ExecuteToolRequest {
   toolName: string;
   parameters: any;
+  workspacePath?: string;
 }
 
 export interface ValidateToolInputRequest {
   toolName: string;
   input: any;
+  workspacePath?: string;
 }
 
 

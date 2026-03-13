@@ -3,7 +3,7 @@
  * Used to render Markdown-formatted text
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, Component, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -21,8 +21,90 @@ import './Markdown.scss';
 
 const log = createLogger('Markdown');
 const COMPUTER_LINK_PREFIX = 'computer://';
+
+/** Catches render errors from react-markdown/remark-gfm (e.g. RegExp in transformGfmAutolinkLiterals) and shows plain text fallback. */
+class MarkdownErrorBoundary extends Component<
+  { children: ReactNode; fallbackContent: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    log.error('Markdown render error, showing plain text fallback', { message: error.message });
+  }
+
+  componentDidUpdate(prevProps: { fallbackContent: string }) {
+    if (prevProps.fallbackContent !== this.props.fallbackContent && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="markdown-renderer markdown-renderer--fallback" style={{ whiteSpace: 'pre-wrap' }}>
+          {this.props.fallbackContent}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 const FILE_LINK_PREFIX = 'file://';
 const WORKSPACE_FOLDER_PLACEHOLDER = '{{workspaceFolder}}';
+const EDITOR_OPENABLE_EXTENSIONS = new Set([
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'mts', 'cts',
+  'py', 'pyw', 'pyi',
+  'rs', 'go', 'java', 'kt', 'kts', 'scala', 'groovy',
+  'c', 'cpp', 'cc', 'cxx', 'h', 'hpp', 'hxx', 'hh',
+  'cs', 'rb', 'php', 'swift', 'dart', 'lua', 'r', 'jl',
+  'vue', 'svelte',
+  'html', 'htm', 'css', 'scss', 'less', 'sass',
+  'json', 'jsonc', 'yaml', 'yml', 'toml', 'xml',
+  'md', 'mdx', 'rst', 'txt', 'csv', 'tsv',
+  'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
+  'sql', 'graphql', 'gql', 'proto',
+  'ini', 'cfg', 'conf', 'env', 'lock',
+  'gitignore', 'gitattributes', 'editorconfig',
+  'log', 'dockerfile', 'makefile', 'mk', 'gradle',
+  'properties', 'plist', 'tex', 'mermaid', 'svg',
+]);
+const EDITOR_OPENABLE_BASENAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'cmakelists.txt',
+  '.gitignore',
+  '.gitattributes',
+  '.editorconfig',
+  '.npmrc',
+  '.nvmrc',
+  '.prettierrc',
+  '.prettierignore',
+  '.eslintrc',
+  '.eslintignore',
+  '.stylelintrc',
+  '.stylelintignore',
+  '.babelrc',
+  '.env',
+  '.env.local',
+  '.env.development',
+  '.env.production',
+  '.env.test',
+  'gemfile',
+  'rakefile',
+  'podfile',
+  'brewfile',
+  'justfile',
+  'procfile',
+  'license',
+  'readme',
+  'readme.md',
+  'readme.txt',
+]);
 
 function remarkAutolinkComputerFileLinks() {
   return (tree: any) => {
@@ -112,6 +194,26 @@ function normalizeFileLikeHref(rawHref: string): string {
   } catch {
     return filePath;
   }
+}
+
+function isEditorOpenableFilePath(filePath: string): boolean {
+  const normalizedPath = filePath.trim().replace(/[?#].*$/, '');
+  const fileName = normalizedPath.split(/[\\/]/).pop()?.toLowerCase() || '';
+
+  if (!fileName) {
+    return false;
+  }
+
+  if (EDITOR_OPENABLE_BASENAMES.has(fileName)) {
+    return true;
+  }
+
+  const dotIdx = fileName.lastIndexOf('.');
+  if (dotIdx <= 0) {
+    return false;
+  }
+
+  return EDITOR_OPENABLE_EXTENSIONS.has(fileName.slice(dotIdx + 1));
 }
 
 const CopyButton: React.FC<{ code: string }> = ({ code }) => {
@@ -357,6 +459,7 @@ export const Markdown = React.memo<MarkdownProps>(({
         fileName = filePath.split(/[\\/]/).pop() || filePath;
 
         const isFolder = filePath.endsWith('/');
+        const shouldRevealInExplorer = isComputerLink || !isEditorOpenableFilePath(filePath);
         if (!isFolder) {
           return (
             <button
@@ -364,7 +467,7 @@ export const Markdown = React.memo<MarkdownProps>(({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (isComputerLink) {
+                if (shouldRevealInExplorer) {
                   void handleRevealInExplorer(filePath);
                   return;
                 }
@@ -514,14 +617,18 @@ export const Markdown = React.memo<MarkdownProps>(({
     isLight
   ]);
   
+  const wrapperClassName = `markdown-renderer ${className} ${isStreaming && contentStr ? 'markdown-renderer--streaming' : ''}`.trim();
+
   return (
-    <div className={`markdown-renderer ${className} ${isStreaming && contentStr ? 'markdown-renderer--streaming' : ''}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkAutolinkComputerFileLinks]}
-        components={components}
-      >
-        {markdownContent}
-      </ReactMarkdown>
+    <div className={wrapperClassName}>
+      <MarkdownErrorBoundary fallbackContent={markdownContent}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkAutolinkComputerFileLinks]}
+          components={components}
+        >
+          {markdownContent}
+        </ReactMarkdown>
+      </MarkdownErrorBoundary>
       
       {reproductionSteps && !isStreaming && (
         <ReproductionStepsBlock 

@@ -4,7 +4,6 @@
  */
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import type { ContextItem } from '../../shared/types/context';
 import './RichTextInput.scss';
 
@@ -19,6 +18,8 @@ export interface RichTextInputProps {
   value: string;
   onChange: (value: string, contexts: ContextItem[]) => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
+  onCompositionStart?: () => void;
+  onCompositionEnd?: () => void;
   onFocus?: () => void;
   onBlur?: () => void;
   placeholder?: string;
@@ -34,6 +35,8 @@ export const RichTextInput = React.forwardRef<HTMLDivElement, RichTextInputProps
   value,
   onChange,
   onKeyDown,
+  onCompositionStart,
+  onCompositionEnd,
   onFocus,
   onBlur,
   placeholder = 'Describe your request...',
@@ -299,13 +302,20 @@ export const RichTextInput = React.forwardRef<HTMLDivElement, RichTextInputProps
     if (isComposingRef.current) return;
     
     const textContent = extractTextContent();
-    onChange(textContent, contexts);
+    const visibleContextIds = new Set(
+      Array.from(internalRef.current?.querySelectorAll<HTMLElement>('[data-context-id]') ?? [])
+        .map(element => element.dataset.contextId)
+        .filter((id): id is string => !!id)
+    );
+    const visibleContexts = contexts.filter(context => visibleContextIds.has(context.id));
+
+    onChange(textContent, visibleContexts);
     
     // Ensure detection runs after DOM updates
     requestAnimationFrame(() => {
       detectMention();
     });
-  }, [contexts, onChange, detectMention]);
+  }, [contexts, onChange, detectMention, internalRef]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
@@ -327,17 +337,27 @@ export const RichTextInput = React.forwardRef<HTMLDivElement, RichTextInputProps
       return;
     }
     
-    // Plain text paste
+    // Plain text paste - close any active mention to prevent @ in pasted content from triggering mention mode
+    if (mentionStateRef.current.isActive) {
+      mentionStateRef.current = { isActive: false, query: '', startOffset: 0 };
+      onMentionStateChange?.({ isActive: false, query: '', startOffset: 0 });
+    }
+    
     const text = e.clipboardData.getData('text/plain');
     document.execCommand('insertText', false, text);
-  }, []);
+    
+    // Mark that we just pasted to prevent mention detection in the next input event
+    isComposingRef.current = true;
+    requestAnimationFrame(() => {
+      isComposingRef.current = false;
+    });
+  }, [onMentionStateChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // IME composition: let the IME handle certain keys
-    const isComposing = (e.nativeEvent as KeyboardEvent).isComposing;
+    const nativeIsComposing = (e.nativeEvent as KeyboardEvent).isComposing;
+    const composing = nativeIsComposing || isComposingRef.current;
     
-    // Handle tag deletion only when not composing
-    if (!isComposing && e.key === 'Backspace' && internalRef.current) {
+    if (!composing && e.key === 'Backspace' && internalRef.current) {
       const selection = window.getSelection();
       if (selection) {
         const range = selection.getRangeAt(0);
@@ -356,7 +376,10 @@ export const RichTextInput = React.forwardRef<HTMLDivElement, RichTextInputProps
       }
     }
     
-    // ChatInput checks isComposing to decide whether to send
+    if (composing && e.key === 'Enter') {
+      return;
+    }
+
     onKeyDown?.(e);
   }, [onKeyDown, onRemoveContext]);
 
@@ -450,6 +473,8 @@ export const RichTextInput = React.forwardRef<HTMLDivElement, RichTextInputProps
   useEffect(() => {
     const editor = internalRef.current;
     if (!editor) return;
+
+    if (isComposingRef.current) return;
     
     // Detect template fill mode via placeholder elements
     const hasPlaceholders = editor.querySelector('.rich-text-placeholder') !== null;
@@ -529,12 +554,14 @@ export const RichTextInput = React.forwardRef<HTMLDivElement, RichTextInputProps
   // Handle IME composition
   const handleCompositionStart = useCallback(() => {
     isComposingRef.current = true;
-  }, []);
+    onCompositionStart?.();
+  }, [onCompositionStart]);
 
   const handleCompositionEnd = useCallback(() => {
     isComposingRef.current = false;
+    onCompositionEnd?.();
     handleInput();
-  }, [handleInput]);
+  }, [handleInput, onCompositionEnd]);
 
   return (
     <div

@@ -24,9 +24,11 @@ const log = createLogger('DefaultModelConfig');
 const OPTIONAL_CAPABILITY_TYPES: OptionalCapabilityType[] = [
   'image_understanding',
   'image_generation',
-  'search',
   'speech_recognition'
 ];
+
+const normalizeSelectValue = (value: string | number | (string | number)[]): string | number =>
+  Array.isArray(value) ? (value[0] ?? '') : value;
 
 export const DefaultModelConfig: React.FC = () => {
   const { t } = useTranslation('settings/default-model');
@@ -70,7 +72,6 @@ export const DefaultModelConfig: React.FC = () => {
       setOptionalCapabilities({
         image_understanding: defaultModelsConfig?.image_understanding,
         image_generation: defaultModelsConfig?.image_generation,
-        search: defaultModelsConfig?.search,
         speech_recognition: defaultModelsConfig?.speech_recognition,
       });
     } catch (error) {
@@ -89,10 +90,8 @@ export const DefaultModelConfig: React.FC = () => {
 
   
   const handleDefaultModelChange = async (slot: 'primary' | 'fast', modelId: string | number) => {
+    const modelIdStr = modelId ? String(modelId) : null;
     try {
-      const modelIdStr = modelId ? String(modelId) : null;
-
-      
       const currentConfig = await configManager.getConfig<any>('ai.default_models') || {};
 
       
@@ -122,10 +121,8 @@ export const DefaultModelConfig: React.FC = () => {
 
   
   const handleCapabilityChange = async (capability: OptionalCapabilityType, modelId: string | number) => {
+    const modelIdStr = modelId ? String(modelId) : null;
     try {
-      const modelIdStr = modelId ? String(modelId) : null;
-
-      
       const currentConfig = await configManager.getConfig<any>('ai.default_models') || {};
 
       
@@ -157,8 +154,6 @@ export const DefaultModelConfig: React.FC = () => {
           return m.capabilities?.includes('image_understanding') || m.category === 'multimodal';
         case 'image_generation':
           return m.capabilities?.includes('image_generation') || m.category === 'image_generation';
-        case 'search':
-          return m.capabilities?.includes('search') || m.category === 'search_enhanced';
         case 'speech_recognition':
           return m.capabilities?.includes('speech_recognition') || m.category === 'speech_recognition';
         default:
@@ -192,9 +187,9 @@ export const DefaultModelConfig: React.FC = () => {
         description={t('core.primary.description')}
         align="center"
       >
-        <Select
-          value={defaultModels.primary || ''}
-          onChange={(value) => handleDefaultModelChange('primary', value)}
+          <Select
+            value={defaultModels.primary || ''}
+            onChange={(value) => handleDefaultModelChange('primary', normalizeSelectValue(value))}
           placeholder={t('core.primary.placeholder')}
           options={enabledModels.map(model => ({
             label: model.name,
@@ -212,7 +207,7 @@ export const DefaultModelConfig: React.FC = () => {
       >
         <Select
           value={defaultModels.fast || ''}
-          onChange={(value) => handleDefaultModelChange('fast', value)}
+          onChange={(value) => handleDefaultModelChange('fast', normalizeSelectValue(value))}
           placeholder={t('core.fast.placeholder')}
           options={[
             { label: t('core.fast.notSet'), value: '' },
@@ -238,7 +233,7 @@ export const DefaultModelConfig: React.FC = () => {
           >
             <Select
               value={configuredModelId || ''}
-              onChange={(value) => handleCapabilityChange(capability, value)}
+              onChange={(value) => handleCapabilityChange(capability, normalizeSelectValue(value))}
               placeholder={t('optional.selectModel')}
               disabled={availableModels.length === 0}
               options={[

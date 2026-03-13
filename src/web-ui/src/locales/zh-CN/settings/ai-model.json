@@ -22,6 +22,10 @@
     "formatHint": "已根据提供商自动选择，通常无需修改"
   },
   "providers": {
+    "gemini": {
+      "name": "Google Gemini",
+      "description": "Google Gemini 2.5 系列多模态模型"
+    },
     "anthropic": {
       "name": "Anthropic Claude",
       "description": "Anthropic Claude 系列模型"
@@ -72,21 +76,18 @@
     "general_chat": "文本生成",
     "multimodal": "多模态",
     "image_generation": "图像生成",
-    "search_enhanced": "信息检索",
     "speech_recognition": "语音识别"
   },
   "categoryIcons": {
     "general_chat": "文本",
     "multimodal": "多模态",
     "image_generation": "绘图",
-    "search_enhanced": "检索",
     "speech_recognition": "语音"
   },
   "categoryHints": {
     "general_chat": "文本生成：生成文本回复、代码等，适用于大多数对话场景",
     "multimodal": "多模态：理解图片内容并进行图文混合对话",
     "image_generation": "图像生成：根据文字描述生成图片",
-    "search_enhanced": "信息检索：搜索网络获取实时信息，只需配置名称、API地址和密钥",
     "speech_recognition": "语音识别：将语音转换为文字（如智谱 GLM-ASR）"
   },
   "form": {
@@ -97,10 +98,9 @@
     "baseUrl": "API地址",
     "resolvedUrlLabel": "实际请求地址：",
     "forceUrlHint": "以 # 结尾可强制使用输入地址",
-    "searchApiHint": "智谱AI搜索API地址，或其他兼容的搜索API地址",
     "apiKey": "API密钥",
     "apiKeyPlaceholder": "输入您的 API Key",
-    "provider": "请求规范",
+    "provider": "请求格式",
     "providerPlaceholder": "选择请求格式",
     "contextWindow": "上下文窗口大小",
     "contextWindowHint": "模型支持的最大上下文窗口大小（用于计算token占用百分比）",
@@ -115,10 +115,15 @@
     "preserve": "保留历史思考",
     "preserveHint": "开启后将保留历史对话的思考内容"
   },
+  "reasoningEffort": {
+    "label": "推理深度",
+    "hint": "控制模型推理深度，仅适用于 Responses API（如 GPT-5）",
+    "placeholder": "使用 API 默认值"
+  },
   "details": {
     "basicInfo": "基本信息",
     "modelName": "模型名称",
-    "provider": "请求规范",
+    "provider": "请求格式",
     "apiUrl": "API地址",
     "contextWindow": "上下文窗口",
     "maxOutput": "最大输出",
@@ -143,13 +148,14 @@
     "text_chat": "对话",
     "image_understanding": "多模态",
     "image_generation": "绘图",
-    "search": "搜索",
     "function_calling": "工具",
     "speech_recognition": "语音"
   },
   "formats": {
     "openaiCompatible": "OpenAI 兼容",
-    "claudeApi": "Claude API"
+    "responsesApi": "OpenAI Responses API",
+    "claudeApi": "Claude API",
+    "geminiApi": "Gemini GenerateContent API"
   },
   "actions": {
     "save": "保存",
@@ -158,7 +164,27 @@
     "delete": "删除",
     "test": "测试连接",
     "newConfig": "新建配置",
-    "createFirst": "创建第一个配置"
+    "createFirst": "创建第一个配置",
+    "viewStats": "查看统计"
+  },
+  "tokenStats": {
+    "title": "Token消耗统计",
+    "loading": "加载中...",
+    "noData": "暂无统计数据",
+    "totalTokens": "总消耗",
+    "inputTokens": "输入Token",
+    "outputTokens": "输出Token",
+    "cachedTokens": "缓存Token",
+    "sessionCount": "会话数",
+    "requestCount": "请求次数",
+    "firstUsed": "首次使用",
+    "lastUsed": "最近使用",
+    "clearStats": "清除统计",
+    "confirmClear": "确定要清除该模型的所有统计数据吗？此操作不可恢复。",
+    "rangeAll": "全部",
+    "range30Days": "近30天",
+    "range7Days": "近7天",
+    "includeSubagent": "包含子代理"
   },
   "empty": {
     "noModels": "暂无模型配置",

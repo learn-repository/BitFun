@@ -3,7 +3,6 @@
 import { api } from './ApiClient';
 import { createTauriCommandError } from '../errors/TauriCommandError';
 import type {
-  GetToolInfoRequest,
   ExecuteToolRequest,
   ValidateToolInputRequest
 } from './tauri-commands';
@@ -36,7 +35,7 @@ export class ToolAPI {
   async validateToolInput(request: ValidateToolInputRequest): Promise<any> {
     try {
       return await api.invoke('validate_tool_input', { 
-        request 
+        request
       });
     } catch (error) {
       throw createTauriCommandError('validate_tool_input', error, request);
@@ -47,7 +46,11 @@ export class ToolAPI {
   async executeTool(request: ExecuteToolRequest): Promise<any> {
     try {
       return await api.invoke('execute_tool', { 
-        request 
+        request: {
+          toolName: request.toolName,
+          input: request.parameters,
+          workspacePath: request.workspacePath,
+        }
       });
     } catch (error) {
       throw createTauriCommandError('execute_tool', error, request);

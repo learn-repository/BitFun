@@ -16,8 +16,22 @@ WebSocket relay server for BitFun Remote Connect. Bridges desktop (WebSocket) an
 ### Docker (Recommended)
 
 ```bash
-# One-click deploy
+# SSH into your target server first, then clone the repo:
+git clone https://github.com/GCWing/BitFun
+cd BitFun/src/apps/relay-server
+
+# SSH into your target server first, then run:
 bash deploy.sh
+```
+
+`deploy.sh` must be run on the target server itself. It only deploys to the current machine and does not SSH to a remote host.
+
+After deployment, you can manage the service with:
+
+```bash
+bash start.sh
+bash stop.sh
+bash restart.sh
 ```
 
 ### What URL should I fill in BitFun Desktop?
@@ -25,8 +39,6 @@ bash deploy.sh
 In **Remote Connect → Self-Hosted → Server URL**, use one of:
 
 - Direct relay port: `http://<YOUR_SERVER_IP>:9700`
-- Reverse proxy on domain root: `https://relay.example.com`
-- Reverse proxy with `/relay` prefix: `https://relay.example.com/relay`
 
 `/relay` is **not mandatory**. It is only needed when your reverse proxy is configured with that path prefix.
 
@@ -118,13 +130,80 @@ Only desktop clients connect via WebSocket. Mobile clients use the HTTP endpoint
 
 ## Self-Hosted Deployment
 
-1. Clone the repository
-2. Navigate to `src/apps/relay-server/`
-3. Run `bash deploy.sh`
-4. Configure DNS/firewall as needed
-5. In BitFun desktop, select "Custom Server" and enter your server URL
+### Option A: Deploy on the Server Itself
 
-### Deployment Checklist (Recommended)
+If you have the repo cloned **on the server**:
+
+```bash
+git clone https://github.com/GCWing/BitFun
+cd BitFun/src/apps/relay-server/
+bash deploy.sh
+```
+
+Or, if the repo is already present on the server:
+
+```bash
+cd src/apps/relay-server/
+bash deploy.sh
+```
+
+This script must be executed in an SSH session on the target server. It builds the Docker image on that server and starts the container there. It will **automatically stop any previously running relay container** before restarting.
+
+### Service Operations
+
+Run these commands on the target server inside `src/apps/relay-server/`:
+
+```bash
+# Start the service only when it is not already running
+bash start.sh
+
+# Stop the running service
+bash stop.sh
+
+# Restart the service, or start it if it is currently stopped
+bash restart.sh
+
+# View current status
+docker compose ps
+
+# View logs
+docker compose logs -f relay-server
+```
+
+Behavior notes:
+
+- `start.sh` is idempotent. If the relay service is already running, it exits without starting it again.
+- `stop.sh` exits cleanly when the service is already stopped.
+- `restart.sh` restarts the service when it is running, and starts it when it is stopped.
+- The container uses `restart: unless-stopped`, so it will automatically come back after a server reboot as long as the Docker service itself is enabled and running.
+
+### Option B: Remote Deploy (from your dev machine)
+
+Push code changes from your local dev machine to a remote server via SSH:
+
+```bash
+cd src/apps/relay-server/
+
+# First-time setup (creates /opt/bitfun-relay, copies static/)
+bash remote-deploy.sh 116.204.120.240 --first
+
+# Subsequent updates (syncs src + rebuilds)
+bash remote-deploy.sh 116.204.120.240
+```
+
+The script will:
+1. Test SSH connectivity
+2. **Stop the old container** if running
+3. Sync source code (`src/`), `Cargo.toml`, `Dockerfile`, `docker-compose.yml`
+4. Rebuild the Docker image on the server
+5. Start the new container
+6. Run a health check
+
+**Prerequisites:**
+- SSH key-based auth to the server (configured in `~/.ssh/config`)
+- Docker + Docker Compose installed on the server
+
+### Deployment Checklist
 
 1. Open required ports:
    - `9700` (relay direct access, optional if only via reverse proxy)
@@ -132,9 +211,29 @@ Only desktop clients connect via WebSocket. Mobile clients use the HTTP endpoint
 2. Verify health endpoint:
    - `http://<server-ip>:9700/health`
 3. Configure your final URL strategy:
-   - root domain (`https://relay.example.com`) or
-   - path prefix (`https://relay.example.com/relay`)
-4. Fill the same URL into BitFun Desktop "Custom Server".
+   - root domain (`https://relay.example.com`)
+4. Fill the same URL into BitFun Desktop "Custom Server"
+
+### Directory Structure
+
+```
+relay-server/
+├── src/                    # Rust source code
+├── static/                 # Mobile-web static files
+├── Cargo.toml              # Crate manifest (standalone, no workspace deps)
+├── Dockerfile              # Docker build (standalone single-crate build)
+├── docker-compose.yml      # Docker Compose config
+├── Caddyfile               # Caddy reverse proxy config (optional)
+├── deploy.sh               # Deploy current machine (run on the target server itself)
+├── start.sh                # Start service if not already running
+├── stop.sh                 # Stop running service
+├── restart.sh              # Restart service, or start if stopped
+├── remote-deploy.sh        # Remote deploy (run from dev machine via SSH)
+└── README.md
+```
+
+Relay server is a **standalone crate** — one set of code, one Dockerfile, one docker-compose.yml.
+Whether deployed as a public relay, LAN relay, or NAT traversal relay, the build and runtime are identical.
 
 ### About `src/apps/server` vs `src/apps/relay-server`
 

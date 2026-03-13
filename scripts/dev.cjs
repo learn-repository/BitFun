@@ -16,6 +16,7 @@ const {
   printComplete,
   printBlank,
 } = require('./console-style.cjs');
+const { buildMobileWeb } = require('./mobile-web-build.cjs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 
@@ -106,32 +107,6 @@ function runCommand(command, cwd = ROOT_DIR) {
 }
 
 /**
- * Clean stale mobile-web resource copies in Tauri target directories.
- *
- * Tauri copies resources from src/mobile-web/dist/ into target/{profile}/mobile-web/dist/
- * on each dev/build run, but never removes old files. Since Vite generates content-hashed
- * filenames, previous builds leave behind orphaned assets that accumulate over time.
- * This causes the relay upload to send hundreds of stale files instead of just a few.
- */
-function cleanStaleMobileWebResources() {
-  const fs = require('fs');
-  const targetDir = path.join(ROOT_DIR, 'target');
-  if (!fs.existsSync(targetDir)) return;
-
-  let cleaned = 0;
-  for (const profile of fs.readdirSync(targetDir)) {
-    const mobileWebDir = path.join(targetDir, profile, 'mobile-web');
-    if (fs.existsSync(mobileWebDir) && fs.statSync(mobileWebDir).isDirectory()) {
-      fs.rmSync(mobileWebDir, { recursive: true, force: true });
-      cleaned++;
-    }
-  }
-  if (cleaned > 0) {
-    printInfo(`Cleaned stale mobile-web resources from ${cleaned} target profile(s)`);
-  }
-}
-
-/**
  * Main entry
  */
 async function main() {
@@ -146,7 +121,7 @@ async function main() {
 
   // Step 1: Copy resources
   printStep(1, totalSteps, 'Copy resources');
-  const copyResult = runSilent('npm run copy-monaco --silent');
+  const copyResult = runSilent('pnpm run copy-monaco --silent');
   if (copyResult.ok) {
     printSuccess('Monaco Editor resources ready');
   } else {
@@ -160,7 +135,7 @@ async function main() {
     if (copyResult.error && copyResult.error.status !== undefined) {
       printError(`Exit code: ${copyResult.error.status}`);
     }
-    printInfo('Hint: run `npm install` in repo root if dependencies are missing');
+    printInfo('Hint: run `pnpm install` in repo root if dependencies are missing');
     process.exit(1);
   }
   
@@ -183,24 +158,15 @@ async function main() {
   // Step 3: Build mobile-web (desktop only)
   if (mode === 'desktop') {
     printStep(3, 4, 'Build mobile-web');
-    const mobileWebDir = path.join(ROOT_DIR, 'src/mobile-web');
-    const mobileWebResult = runSilent('npm install --silent', mobileWebDir);
+    const mobileWebResult = buildMobileWeb({
+      install: true,
+      logInfo: printInfo,
+      logSuccess: printSuccess,
+      logError: printError,
+    });
     if (!mobileWebResult.ok) {
-      printError('mobile-web npm install failed');
-      const output = tailOutput(mobileWebResult.stderr || mobileWebResult.stdout);
-      if (output) printError(output);
       process.exit(1);
     }
-    const buildResult = runInherit('npm run build', mobileWebDir);
-    if (!buildResult.ok) {
-      printError('mobile-web build failed');
-      if (buildResult.error && buildResult.error.message) {
-        printError(buildResult.error.message);
-      }
-      process.exit(1);
-    }
-    cleanStaleMobileWebResources();
-    printSuccess('mobile-web build complete');
   }
 
   // Final step: Start dev server
@@ -211,9 +177,9 @@ async function main() {
   
   try {
     if (mode === 'desktop') {
-      await runCommand('npm exec -- tauri dev', path.join(ROOT_DIR, 'src/apps/desktop'));
+      await runCommand('npx tauri dev', path.join(ROOT_DIR, 'src/apps/desktop'));
     } else {
-      await runCommand('npx vite', path.join(ROOT_DIR, 'src/web-ui'));
+      await runCommand('pnpm exec vite', path.join(ROOT_DIR, 'src/web-ui'));
     }
   } catch (error) {
     printError('Dev server failed to start');

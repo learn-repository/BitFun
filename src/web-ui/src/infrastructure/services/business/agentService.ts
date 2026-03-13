@@ -25,24 +25,29 @@ export interface AgentExecutionRequest {
   agent_type: string;
   prompt: string;
   model_name?: string;
+  workspace_path?: string;
   context?: Record<string, string>;
   verbose?: boolean;
 }
 
  
 class SessionManager {
-  private sessions = new Map<string, string>(); // agentType -> sessionId
+  private sessions = new Map<string, string>(); // workspacePath::agentType -> sessionId
 
-  getSession(agentType: string): string | undefined {
-    return this.sessions.get(agentType);
+  private buildKey(agentType: string, workspacePath: string): string {
+    return `${workspacePath}::${agentType}`;
   }
 
-  setSession(agentType: string, sessionId: string): void {
-    this.sessions.set(agentType, sessionId);
+  getSession(agentType: string, workspacePath: string): string | undefined {
+    return this.sessions.get(this.buildKey(agentType, workspacePath));
   }
 
-  deleteSession(agentType: string): void {
-    this.sessions.delete(agentType);
+  setSession(agentType: string, workspacePath: string, sessionId: string): void {
+    this.sessions.set(this.buildKey(agentType, workspacePath), sessionId);
+  }
+
+  deleteSession(agentType: string, workspacePath: string): void {
+    this.sessions.delete(this.buildKey(agentType, workspacePath));
   }
 
   clear(): void {
@@ -54,9 +59,9 @@ export class AgentService {
   private static sessionManager = new SessionManager();
 
    
-  static async getOrCreateSession(agentType: string, modelName?: string): Promise<string> {
+  static async getOrCreateSession(agentType: string, workspacePath: string, modelName?: string): Promise<string> {
     
-    const existingSessionId = this.sessionManager.getSession(agentType);
+    const existingSessionId = this.sessionManager.getSession(agentType, workspacePath);
     if (existingSessionId) {
       logger.debug(`Using existing session: ${existingSessionId}`);
       return existingSessionId;
@@ -69,6 +74,7 @@ export class AgentService {
       const response = await agentAPI.createSession({
         sessionName: `${agentType}-session-${Date.now()}`,
         agentType,
+        workspacePath,
         config: {
           modelName,
           enableTools: true,
@@ -77,7 +83,7 @@ export class AgentService {
           enableContextCompression: true,
         }
       });
-      this.sessionManager.setSession(agentType, response.sessionId);
+      this.sessionManager.setSession(agentType, workspacePath, response.sessionId);
       logger.info(`Session created: ${response.sessionId}`);
       return response.sessionId;
     } catch (error) {
@@ -107,7 +113,11 @@ export class AgentService {
 
     try {
       
-      const sessionId = await this.getOrCreateSession(request.agent_type, request.model_name);
+      const workspacePath = request.workspace_path;
+      if (!workspacePath) {
+        throw new Error('Workspace path is required to start an agent task');
+      }
+      const sessionId = await this.getOrCreateSession(request.agent_type, workspacePath, request.model_name);
 
       
       const unlistenFunctions: Array<() => void> = [];
@@ -169,7 +179,8 @@ export class AgentService {
       await agentAPI.startDialogTurn({
         sessionId,
         userInput: request.prompt,
-        agentType: request.agent_type 
+        agentType: request.agent_type,
+        workspacePath,
       });
 
       
@@ -222,54 +233,6 @@ export class AgentService {
   }
 
    
-  private static mapAgentType(frontendType: AgentType): string {
-    const typeMap: Record<AgentType, string> = {
-      'project_qa': 'general-purpose',
-      'requirement_clarification': 'general-purpose',
-      'core': 'general-purpose'
-    };
-    return typeMap[frontendType] || 'general-purpose';
-  }
-
-   
-  private static simulateBatchProcessing(allResponses: Record<string, string | null>): AgentResponse {
-    const completedCount = Object.values(allResponses).filter(v => v !== null && v.trim()).length;
-    const skippedCount = Object.values(allResponses).filter(v => v === null).length;
-    const totalCount = Object.keys(allResponses).length;
-    
-    
-    const mockInteractiveSections = Object.entries(allResponses).map(([id, response], index) => ({
-      id,
-      title: i18nService.t('common:agentService.clarificationItemTitle', { index: index + 1 }),
-      content: i18nService.t('common:agentService.clarificationItemProcessed'),
-      section_type: response === null ? 'Skipped' : 'Completed',
-      user_input: response || '',
-      status: response === null ? 'Skipped' : 'Completed',
-      importance: 3,
-      required: false,
-      position: `${index + 1}`
-    }));
-
-    
-    const completenessScore = Math.round((completedCount / totalCount) * 100);
-    const mockEvaluation = {
-      completeness_score: completenessScore,
-      total_sections: totalCount,
-      completed_sections: completedCount,
-      skipped_sections: skippedCount,
-      phase: 'Completed'
-    };
-
-    return {
-      content: i18nService.t('common:agentService.clarificationBatchCompleted'),
-      metadata: {
-        interactive_sections: mockInteractiveSections,
-        evaluation: mockEvaluation,
-        phase: 'Completed'
-      }
-    };
-  }
-
    
   static requiresSpecialVisualization(agentType: AgentType, metadata?: Record<string, any>): boolean {
     if (agentType === 'requirement_clarification') {
@@ -282,5 +245,4 @@ export class AgentService {
 
 
 }
-
 export default AgentService;

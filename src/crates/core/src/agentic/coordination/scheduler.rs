@@ -31,6 +31,7 @@ pub struct QueuedTurn {
     pub user_input: String,
     pub turn_id: Option<String>,
     pub agent_type: String,
+    pub workspace_path: Option<String>,
     pub trigger_source: DialogTriggerSource,
     #[allow(dead_code)]
     pub enqueued_at: SystemTime,
@@ -99,6 +100,7 @@ impl DialogScheduler {
         user_input: String,
         turn_id: Option<String>,
         agent_type: String,
+        workspace_path: Option<String>,
         trigger_source: DialogTriggerSource,
     ) -> Result<(), String> {
         let state = self
@@ -107,18 +109,18 @@ impl DialogScheduler {
             .map(|s| s.state.clone());
 
         match state {
-            None => {
-                self.coordinator
-                    .start_dialog_turn(
-                        session_id,
-                        user_input,
-                        turn_id,
-                        agent_type,
-                        trigger_source,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
-            }
+            None => self
+                .coordinator
+                .start_dialog_turn(
+                    session_id,
+                    user_input,
+                    turn_id,
+                    agent_type,
+                    workspace_path,
+                    trigger_source,
+                )
+                .await
+                .map_err(|e| e.to_string()),
 
             Some(SessionState::Error { .. }) => {
                 self.clear_queue_and_debounce(&session_id);
@@ -128,6 +130,7 @@ impl DialogScheduler {
                         user_input,
                         turn_id,
                         agent_type,
+                        workspace_path,
                         trigger_source,
                     )
                     .await
@@ -148,6 +151,7 @@ impl DialogScheduler {
                         user_input,
                         turn_id,
                         agent_type,
+                        workspace_path,
                         trigger_source,
                     )?;
                     self.schedule_debounce(session_id);
@@ -159,6 +163,7 @@ impl DialogScheduler {
                             user_input,
                             turn_id,
                             agent_type,
+                            workspace_path,
                             trigger_source,
                         )
                         .await
@@ -172,6 +177,7 @@ impl DialogScheduler {
                     user_input,
                     turn_id,
                     agent_type,
+                    workspace_path,
                     trigger_source,
                 )?;
                 Ok(())
@@ -192,6 +198,7 @@ impl DialogScheduler {
         user_input: String,
         turn_id: Option<String>,
         agent_type: String,
+        workspace_path: Option<String>,
         trigger_source: DialogTriggerSource,
     ) -> Result<(), String> {
         let queue_len = self.queues.get(session_id).map(|q| q.len()).unwrap_or(0);
@@ -214,6 +221,7 @@ impl DialogScheduler {
                 user_input,
                 turn_id,
                 agent_type,
+                workspace_path,
                 trigger_source,
                 enqueued_at: SystemTime::now(),
             });
@@ -277,7 +285,7 @@ impl DialogScheduler {
                 session_id_clone
             );
 
-            let (merged_input, turn_id, agent_type, trigger_source) =
+            let (merged_input, turn_id, agent_type, workspace_path, trigger_source) =
                 merge_messages(messages);
 
             if let Err(e) = coordinator
@@ -286,6 +294,7 @@ impl DialogScheduler {
                     merged_input,
                     turn_id,
                     agent_type,
+                    workspace_path,
                     trigger_source,
                 )
                 .await
@@ -349,19 +358,29 @@ impl DialogScheduler {
 /// Queued #2
 /// <second message>
 /// ```
-fn merge_messages(messages: Vec<QueuedTurn>) -> (String, Option<String>, String, DialogTriggerSource) {
+fn merge_messages(
+    messages: Vec<QueuedTurn>,
+) -> (String, Option<String>, String, Option<String>, DialogTriggerSource) {
     if messages.len() == 1 {
         let m = messages.into_iter().next().unwrap();
         return (
             m.user_input,
             m.turn_id,
             m.agent_type,
+            m.workspace_path,
             m.trigger_source,
         );
     }
 
-    let agent_type = messages[0].agent_type.clone();
-    let trigger_source = messages[0].trigger_source;
+    let agent_type = messages
+        .last()
+        .map(|m| m.agent_type.clone())
+        .unwrap_or_else(|| "agentic".to_string());
+    let workspace_path = messages.last().and_then(|m| m.workspace_path.clone());
+    let trigger_source = messages
+        .last()
+        .map(|m| m.trigger_source)
+        .unwrap_or(DialogTriggerSource::DesktopUi);
 
     let entries: Vec<String> = messages
         .iter()
@@ -374,7 +393,7 @@ fn merge_messages(messages: Vec<QueuedTurn>) -> (String, Option<String>, String,
         entries.join("\n\n")
     );
 
-    (merged, None, agent_type, trigger_source)
+    (merged, None, agent_type, workspace_path, trigger_source)
 }
 
 // ── Global instance ──────────────────────────────────────────────────────────

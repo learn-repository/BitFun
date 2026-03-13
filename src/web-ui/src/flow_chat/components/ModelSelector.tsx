@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Cpu, ChevronDown, Check, Sparkles, Zap } from 'lucide-react';
+import { Cpu, ChevronDown, Check, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { globalEventBus } from '@/infrastructure/event-bus';
@@ -35,6 +35,7 @@ interface ModelInfo {
   provider: string;
   contextWindow?: number;
   enableThinking?: boolean;
+  reasoningEffort?: string;
 }
 
 // Helper: identify special model IDs.
@@ -45,8 +46,6 @@ const isSpecialModel = (value: string): value is 'primary' | 'fast' => {
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   currentMode,
   className = '',
-  sessionId,
-  ...restProps
 }) => {
   const { t } = useTranslation('flow-chat');
   const [allModels, setAllModels] = useState<AIModelConfig[]>([]);
@@ -137,7 +136,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         modelName: model.model_name,
         provider: model.provider,
         contextWindow: model.context_window,
-        enableThinking: model.enable_thinking_process
+        enableThinking: model.enable_thinking_process,
+        reasoningEffort: model.reasoning_effort,
       };
     }
 
@@ -150,7 +150,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       modelName: model.model_name,
       provider: model.provider,
       contextWindow: model.context_window,
-      enableThinking: model.enable_thinking_process
+      enableThinking: model.enable_thinking_process,
+      reasoningEffort: model.reasoning_effort,
     };
   }, [getCurrentModelId, allModels, defaultModels]);
   
@@ -168,7 +169,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         modelName: m.model_name,
         provider: m.provider,
         contextWindow: m.context_window,
-        enableThinking: m.enable_thinking_process
+        enableThinking: m.enable_thinking_process,
+        reasoningEffort: m.reasoning_effort,
       }));
   }, [allModels]);
   
@@ -221,6 +223,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           </span>
           {currentModel?.enableThinking && (
             <Sparkles size={9} className="bitfun-model-selector__thinking-icon" />
+          )}
+          {currentModel?.reasoningEffort && (
+            <span className="bitfun-model-selector__effort-badge">
+              {currentModel.reasoningEffort}
+            </span>
           )}
           <ChevronDown size={10} className="bitfun-model-selector__chevron" />
         </button>
@@ -291,6 +298,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     <span className="bitfun-model-selector__option-desc">
                       {model.modelName}
                       {model.contextWindow && ` · ${Math.round(model.contextWindow / 1000)}k`}
+                      {model.reasoningEffort && ` · ${model.reasoningEffort}`}
                     </span>
                   </div>
                   {isSelected && (
@@ -305,5 +313,4 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     </div>
   );
 };
-
 export default ModelSelector;

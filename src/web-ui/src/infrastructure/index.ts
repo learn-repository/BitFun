@@ -5,30 +5,20 @@
 // Event bus
 export * from './event-bus';
 
-// State management
-export * from './state-management';
-
 // API layer
 export * from './api';
 
 // Contexts (explicit exports to avoid name collisions)
 export { ChatProvider, useChat } from './contexts/ChatContext';
-export { 
-  WorkspaceProvider, 
-  useWorkspaceContext,
-  // Renamed to avoid collisions with state-management exports.
-  useCurrentWorkspace as useCurrentWorkspaceFromContext 
-} from './contexts/WorkspaceContext';
+export { WorkspaceProvider, useWorkspaceContext } from './contexts/WorkspaceContext';
 
 // Configuration
 export * from './config';
 
-// Infrastructure hooks (explicit exports to avoid name collisions)
-export { useWorkspace } from './hooks/useWorkspace';
+// Infrastructure hooks
 export * from './hooks/useAIInitialization';
 
 // Infrastructure lifecycle
-import { initializeGlobalState } from './state-management';
 import { initializeConfigInfrastructure } from './config';
 import { globalEventBus } from './event-bus';
 
@@ -40,9 +30,6 @@ export async function initializeInfrastructure(): Promise<void> {
   log.info('Initializing infrastructure systems');
   
   try {
-    // Initialize global state
-    initializeGlobalState();
-    
     // Initialize configuration infrastructure
     await initializeConfigInfrastructure();
     

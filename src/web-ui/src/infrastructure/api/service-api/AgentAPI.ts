@@ -15,6 +15,7 @@ export interface SessionTitleGeneratedEvent {
 
  
 export interface SessionConfig {
+  modelName?: string;
   maxContextTokens?: number;
   autoCompact?: boolean;
   enableTools?: boolean;
@@ -29,6 +30,7 @@ export interface CreateSessionRequest {
   sessionId?: string; 
   sessionName: string;
   agentType: string;
+  workspacePath: string;
   config?: SessionConfig;
 }
 
@@ -45,6 +47,7 @@ export interface StartDialogTurnRequest {
   userInput: string;
   turnId?: string; 
   agentType: string; 
+  workspacePath?: string;
   /** Optional multimodal image contexts (snake_case fields, aligned with backend ImageContextData). */
   imageContexts?: ImageInputContextData[];
 }
@@ -166,31 +169,32 @@ export class AgentAPI {
   }
 
    
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(sessionId: string, workspacePath: string): Promise<void> {
     try {
       await api.invoke<void>('delete_session', { 
-        request: { sessionId } 
+        request: { sessionId, workspacePath } 
       });
     } catch (error) {
-      throw createTauriCommandError('delete_session', error, { sessionId });
+      throw createTauriCommandError('delete_session', error, { sessionId, workspacePath });
     }
   }
 
    
-  async restoreSession(sessionId: string): Promise<SessionInfo> {
+  async restoreSession(sessionId: string, workspacePath: string): Promise<SessionInfo> {
     try {
-      return await api.invoke<SessionInfo>('restore_session', { request: { sessionId } });
+      return await api.invoke<SessionInfo>('restore_session', { request: { sessionId, workspacePath } });
     } catch (error) {
-      throw createTauriCommandError('restore_session', error, { sessionId });
+      throw createTauriCommandError('restore_session', error, { sessionId, workspacePath });
     }
   }
 
+
    
-  async listSessions(): Promise<SessionInfo[]> {
+  async listSessions(workspacePath: string): Promise<SessionInfo[]> {
     try {
-      return await api.invoke<SessionInfo[]>('list_sessions');
+      return await api.invoke<SessionInfo[]>('list_sessions', { request: { workspacePath } });
     } catch (error) {
-      throw createTauriCommandError('list_sessions', error);
+      throw createTauriCommandError('list_sessions', error, { workspacePath });
     }
   }
 
@@ -351,6 +355,31 @@ export class AgentAPI {
     callback: (event: SessionTitleGeneratedEvent) => void
   ): () => void {
     return api.listen<SessionTitleGeneratedEvent>('session_title_generated', callback);
+  }
+
+  async cancelSession(sessionId: string): Promise<void> {
+    try {
+      await api.invoke<void>('cancel_session', {
+        request: { sessionId }
+      });
+    } catch (error) {
+      throw createTauriCommandError('cancel_session', error, { sessionId });
+    }
+  }
+
+  async getAgentInfo(agentType: string): Promise<ModeInfo & { agent_type: string; when_to_use: string; tools: string; location: string }> {
+    return {
+      id: agentType,
+      name: agentType,
+      description: `${agentType} agent`,
+      isReadonly: false,
+      toolCount: 0,
+      enabled: true,
+      agent_type: agentType,
+      when_to_use: `Use ${agentType} for related tasks`,
+      tools: 'all',
+      location: 'builtin',
+    };
   }
 
   

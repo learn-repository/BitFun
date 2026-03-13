@@ -48,10 +48,27 @@ function getApplicationPath(): string {
   const appName = isWindows ? 'bitfun-desktop.exe' : 'bitfun-desktop';
   const projectRoot = path.resolve(__dirname, '..', '..', '..');
   const releasePath = path.join(projectRoot, 'target', 'release', appName);
+  const debugPath = path.join(projectRoot, 'target', 'debug', appName);
+  const forcedPath = process.env.BITFUN_E2E_APP_PATH;
+  const forcedMode = process.env.BITFUN_E2E_APP_MODE?.toLowerCase();
+
+  if (forcedPath) {
+    return forcedPath;
+  }
+
+  if (forcedMode === 'debug') {
+    return debugPath;
+  }
+
+  if (forcedMode === 'release') {
+    return releasePath;
+  }
+
   if (fs.existsSync(releasePath)) {
     return releasePath;
   }
-  return path.join(projectRoot, 'target', 'debug', appName);
+
+  return debugPath;
 }
 
 /**
@@ -129,7 +146,7 @@ export const config: Options.Testrunner = {
     if (!fs.existsSync(appPath)) {
       console.error(`Application not found at: ${appPath}`);
       console.error('Please build the application first with:');
-      console.error('npm run desktop:build');
+      console.error('pnpm run desktop:build');
       throw new Error('Application not built');
     }
     console.log(`application: ${appPath}`);
@@ -160,7 +177,7 @@ export const config: Options.Testrunner = {
         console.log('Dev server is already running on port 1422');
       } else {
         console.warn('Dev server not running on port 1422');
-        console.warn('Please start it with: npm run dev');
+        console.warn('Please start it with: pnpm run dev');
         console.warn('Continuing anyway...');
       }
     }
@@ -219,7 +236,8 @@ export const config: Options.Testrunner = {
 
   /** After test: capture screenshot on failure. */
   afterTest: async function (test, context, { error, passed }) {
-    if (!passed) {
+    const isRealFailure = !passed && !!error;
+    if (isRealFailure) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const screenshotName = `failure-${test.title.replace(/\s+/g, '_')}-${timestamp}.png`;
       

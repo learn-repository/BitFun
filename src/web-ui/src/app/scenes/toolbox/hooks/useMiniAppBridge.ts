@@ -7,6 +7,7 @@ import { useLayoutEffect, useRef, useEffect, RefObject } from 'react';
 import { miniAppAPI } from '@/infrastructure/api/service-api/MiniAppAPI';
 import { open as dialogOpen, save as dialogSave, message as dialogMessage } from '@tauri-apps/plugin-dialog';
 import type { MiniApp } from '@/infrastructure/api/service-api/MiniAppAPI';
+import { useCurrentWorkspace } from '@/infrastructure/contexts/WorkspaceContext';
 import { useTheme } from '@/infrastructure/theme/hooks/useTheme';
 import { buildMiniAppThemeVars } from '../utils/buildMiniAppThemeVars';
 
@@ -21,9 +22,12 @@ export function useMiniAppBridge(
   iframeRef: RefObject<HTMLIFrameElement>,
   app: MiniApp,
 ) {
+  const { workspacePath } = useCurrentWorkspace();
   const { theme: currentTheme } = useTheme();
   const themeRef = useRef(currentTheme);
   themeRef.current = currentTheme;
+  const workspacePathRef = useRef(workspacePath);
+  workspacePathRef.current = workspacePath;
 
   const appIdRef = useRef(app.id);
   useLayoutEffect(() => {
@@ -63,25 +67,26 @@ export function useMiniAppBridge(
             appId,
             (params.method as string) ?? '',
             (params.params as Record<string, unknown>) ?? {},
+            workspacePathRef.current || undefined,
           );
           reply(result);
           return;
         }
         if (method === 'dialog.open') {
-          reply(await dialogOpen(params as Parameters<typeof dialogOpen>[0]));
+          reply(await dialogOpen(params as unknown as Parameters<typeof dialogOpen>[0]));
           return;
         }
         if (method === 'dialog.save') {
-          reply(await dialogSave(params as Parameters<typeof dialogSave>[0]));
+          reply(await dialogSave(params as unknown as Parameters<typeof dialogSave>[0]));
           return;
         }
         if (method === 'dialog.message') {
-          reply(await dialogMessage(params as Parameters<typeof dialogMessage>[0]));
+          reply(await dialogMessage(params as unknown as Parameters<typeof dialogMessage>[0]));
           return;
         }
         replyError(`Unknown method: ${method}`);
       } catch (error) {
-        replyError(String(error));
+        replyError(typeof error === 'string' ? error : String(error));
       }
     };
     window.addEventListener('message', handler);

@@ -38,7 +38,6 @@ export class FlowChatManager {
   private context: FlowChatContext;
   private agentService: AgentService;
   private eventListenerInitialized = false;
-  private initialized = false;
 
   private constructor() {
     this.context = {
@@ -53,6 +52,8 @@ export class FlowChatManager {
       saveDebouncers: new Map(),
       lastSaveTimestamps: new Map(),
       lastSaveHashes: new Map(),
+      turnSaveInFlight: new Map(),
+      turnSavePending: new Set(),
       currentWorkspacePath: null
     };
     
@@ -88,14 +89,12 @@ export class FlowChatManager {
           : undefined) || sortedWorkspaceSessions[0];
 
         if (!latestSession) {
-          this.initialized = true;
           this.context.currentWorkspacePath = workspacePath;
           return hasHistoricalSessions;
         }
 
         // If no session matches preferred mode, keep activeSessionId unset for caller to create one.
         if (preferredMode && latestSession.mode !== preferredMode) {
-          this.initialized = true;
           this.context.currentWorkspacePath = workspacePath;
           return hasHistoricalSessions;
         }
@@ -107,7 +106,6 @@ export class FlowChatManager {
         this.context.flowChatStore.switchSession(latestSession.sessionId);
       }
 
-      this.initialized = true;
       this.context.currentWorkspacePath = workspacePath;
 
       return hasHistoricalSessions;
@@ -318,6 +316,5 @@ export class FlowChatManager {
     }
   }
 }
-
 export const flowChatManager = FlowChatManager.getInstance();
 export default flowChatManager;

@@ -78,15 +78,15 @@ jobs:
           - os: macos-15
             name: macos-arm64
             target: aarch64-apple-darwin
-            build_command: cd src/apps/desktop && npm exec -- tauri build --target aarch64-apple-darwin --bundles dmg
+            build_command: pnpm run desktop:build:arm64
           - os: macos-15-intel
             name: macos-x64
             target: x86_64-apple-darwin
-            build_command: npm run desktop:build:x86_64
+            build_command: pnpm run desktop:build:x86_64
           - os: windows-latest
             name: windows-x64
             target: x86_64-pc-windows-msvc
-            build_command: npm run desktop:build:nsis
+            build_command: pnpm run installer:build
 
     steps:
       - name: Checkout
@@ -94,11 +94,14 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.release_tag }}
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -111,7 +114,10 @@ jobs:
           shared-key: "package-${{ matrix.platform.name }}"
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check web UI
+        run: pnpm run type-check:web
 
       - name: Build desktop app
         run: ${{ matrix.platform.build_command }}
@@ -125,6 +131,7 @@ jobs:
             target/*/release/bundle
             target/release/bundle
             src/apps/desktop/target/release/bundle
+            BitFun-Installer/src-tauri/target/release/bitfun-installer.exe
 
   # ── Upload assets to GitHub Release ────────────────────────────────
   upload-release-assets:
@@ -152,5 +159,5 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
           files: |
             release-assets/**/*.dmg
-            release-assets/**/*setup.exe
+            release-assets/**/*bitfun-installer.exe
           fail_on_unmatched_files: true

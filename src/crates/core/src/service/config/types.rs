@@ -45,6 +45,8 @@ pub struct AppConfig {
     pub sidebar: SidebarConfig,
     pub right_panel: RightPanelConfig,
     pub notifications: NotificationConfig,
+    #[serde(default)]
+    pub session_config: AppSessionConfig,
     pub ai_experience: AIExperienceConfig,
 }
 
@@ -55,6 +57,15 @@ pub struct AppLoggingConfig {
     /// Runtime backend log level.
     /// Allowed values: trace, debug, info, warn, error, off.
     pub level: String,
+}
+
+/// Session-related UI preferences.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppSessionConfig {
+    /// Default new session mode used by the frontend.
+    /// Supported values: "code", "cowork".
+    pub default_mode: String,
 }
 
 /// AI experience configuration.
@@ -745,6 +756,11 @@ pub struct AIModelConfig {
     #[serde(default)]
     pub skip_ssl_verify: bool,
 
+    /// Reasoning effort level for OpenAI Responses API (o-series / GPT-5+).
+    /// Valid values: "low", "medium", "high", "xhigh". None = use API default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+
     /// Custom request body (JSON string, used to override default request body fields).
     #[serde(default)]
     pub custom_request_body: Option<String>,
@@ -871,6 +887,7 @@ impl Default for AppConfig {
                 position: "topRight".to_string(),
                 duration: 5000,
             },
+            session_config: AppSessionConfig::default(),
             ai_experience: AIExperienceConfig::default(),
         }
     }
@@ -881,6 +898,14 @@ impl Default for AppLoggingConfig {
         Self {
             // Set to Debug in early development for easier diagnostics
             level: "debug".to_string(),
+        }
+    }
+}
+
+impl Default for AppSessionConfig {
+    fn default() -> Self {
+        Self {
+            default_mode: "code".to_string(),
         }
     }
 }
@@ -1133,6 +1158,7 @@ impl Default for AIModelConfig {
             custom_headers: None,
             custom_headers_mode: None,
             skip_ssl_verify: false,
+            reasoning_effort: None,
             custom_request_body: None,
         }
     }
