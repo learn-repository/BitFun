@@ -11,9 +11,10 @@
   border: none !important;
   outline: none !important;
   color: var(--color-text-primary);
-  font-size: $font-size-base;
+  font-size: 14px;
   line-height: $line-height-base;
-  padding: 8px 12px;
+  padding: 0;
+  vertical-align: top;
   min-height: 24px;
   max-height: 200px;
   overflow-y: auto;
@@ -41,6 +42,15 @@
     cursor: default;
   }
   
+}
+
+// Improve placeholder contrast in light theme.
+:root[data-theme="light"] .rich-text-input,
+:root[data-theme-type="light"] .rich-text-input,
+.light .rich-text-input {
+  &:empty::before {
+    color: var(--color-text-secondary, #6b7280);
+  }
 }
 
 // Placeholder styles

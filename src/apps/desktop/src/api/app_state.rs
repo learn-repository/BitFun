@@ -1,5 +1,6 @@
 //! Application state management
 
+use bitfun_core::agentic::side_question::SideQuestionRuntime;
 use bitfun_core::agentic::{agents, tools};
 use bitfun_core::infrastructure::ai::{AIClient, AIClientFactory};
 use bitfun_core::miniapp::{initialize_global_miniapp_manager, JsWorkerPool, MiniAppManager};
@@ -30,6 +31,7 @@ pub struct AppStatistics {
 pub struct AppState {
     pub ai_client: Arc<RwLock<Option<AIClient>>>,
     pub ai_client_factory: Arc<AIClientFactory>,
+    pub side_question_runtime: Arc<SideQuestionRuntime>,
     pub tool_registry: Arc<Vec<Arc<dyn tools::framework::Tool>>>,
     pub workspace_service: Arc<workspace::WorkspaceService>,
     pub workspace_identity_watch_service: Arc<workspace::WorkspaceIdentityWatchService>,
@@ -47,7 +49,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new_async(token_usage_service: Arc<token_usage::TokenUsageService>) -> BitFunResult<Self> {
+    pub async fn new_async(
+        token_usage_service: Arc<token_usage::TokenUsageService>,
+    ) -> BitFunResult<Self> {
         let start_time = std::time::Instant::now();
 
         let config_service = config::get_global_config_service().await.map_err(|e| {
@@ -58,6 +62,7 @@ impl AppState {
         let ai_client_factory = AIClientFactory::get_global().await.map_err(|e| {
             BitFunError::service(format!("Failed to get global AIClientFactory: {}", e))
         })?;
+        let side_question_runtime = Arc::new(SideQuestionRuntime::new());
 
         let tool_registry = {
             let registry = tools::registry::get_global_tool_registry();
@@ -66,8 +71,9 @@ impl AppState {
         };
 
         let workspace_service = Arc::new(workspace::WorkspaceService::new().await?);
-        let workspace_identity_watch_service =
-            Arc::new(workspace::WorkspaceIdentityWatchService::new(workspace_service.clone()));
+        let workspace_identity_watch_service = Arc::new(
+            workspace::WorkspaceIdentityWatchService::new(workspace_service.clone()),
+        );
         workspace::set_global_workspace_service(workspace_service.clone());
         let filesystem_service = Arc::new(filesystem::FileSystemServiceFactory::create_default());
 
@@ -119,11 +125,12 @@ impl AppState {
             .map(|workspace| workspace.root_path);
 
         if let Some(workspace_path) = initial_workspace_path.clone() {
-            if let Err(e) = bitfun_core::service::snapshot::initialize_snapshot_manager_for_workspace(
-                workspace_path.clone(),
-                None,
-            )
-            .await
+            if let Err(e) =
+                bitfun_core::service::snapshot::initialize_snapshot_manager_for_workspace(
+                    workspace_path.clone(),
+                    None,
+                )
+                .await
             {
                 log::warn!(
                     "Failed to restore snapshot system on startup: path={}, error={}",
@@ -139,6 +146,7 @@ impl AppState {
         let app_state = Self {
             ai_client,
             ai_client_factory,
+            side_question_runtime,
             tool_registry,
             workspace_service,
             workspace_identity_watch_service,

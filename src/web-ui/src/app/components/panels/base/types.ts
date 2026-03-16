@@ -26,7 +26,9 @@ export type PanelContentType =
   | 'design-tokens'
   | 'task-detail'
   | 'plan-viewer'
-  | 'terminal';
+  | 'btw-session'
+  | 'terminal'
+  | 'browser';
 
 export interface PanelContent {
   type: PanelContentType;

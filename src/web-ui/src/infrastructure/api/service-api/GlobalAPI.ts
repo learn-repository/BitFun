@@ -66,6 +66,10 @@ export interface SetActiveWorkspaceRequest {
   workspaceId: string;
 }
 
+export interface ReorderOpenedWorkspacesRequest {
+  workspaceIds: string[];
+}
+
 export interface DeleteAssistantWorkspaceRequest {
   workspaceId: string;
 }
@@ -154,6 +158,16 @@ export class GlobalAPI {
     }
   }
 
+  async reorderOpenedWorkspaces(workspaceIds: string[]): Promise<void> {
+    try {
+      await api.invoke('reorder_opened_workspaces', {
+        request: { workspaceIds }
+      });
+    } catch (error) {
+      throw createTauriCommandError('reorder_opened_workspaces', error, { workspaceIds });
+    }
+  }
+
   async deleteAssistantWorkspace(workspaceId: string): Promise<void> {
     try {
       await api.invoke('delete_assistant_workspace', {
@@ -193,6 +207,14 @@ export class GlobalAPI {
       });
     } catch (error) {
       throw createTauriCommandError('get_recent_workspaces', error);
+    }
+  }
+
+  async cleanupInvalidWorkspaces(): Promise<number> {
+    try {
+      return await api.invoke('cleanup_invalid_workspaces');
+    } catch (error) {
+      throw createTauriCommandError('cleanup_invalid_workspaces', error);
     }
   }
 

@@ -89,21 +89,20 @@
       "persona": "Agent profile — identity, rules, memory, knowledge & capabilities",
       "agents": "Which Agents and Agent Teams it can call",
       "skills": "What it knows — specialized knowledge files",
-      "tools": "What it can use — built-in tools & MCP services",
-      "toolbox": "Generated in chat, ready to use"
-    },
-    "toolbox": {
-      "openGallery": "Open Mini App",
-      "newMiniApp": "New Mini App",
-      "noApps": "Mini Apps are generated instantly during conversations with AI. Open one to use it right away and keep iterating.",
-      "runningApps": "Running",
-      "myApps": "Opened",
-      "stop": "Stop"
+      "tools": "What it can use — built-in tools & MCP services"
     },
     "sections": {
       "workspace": "Workspace",
       "myAgent": "My Agent",
       "shell": "Shell"
+    },
+    "displayModes": {
+      "pro": "Expert Mode",
+      "assistant": "Assistant Mode",
+      "switchToPro": "Click to switch to Expert mode",
+      "switchToAssistant": "Click to switch to Assistant mode",
+      "proDesc": "Best for focused, one-shot tasks with a clear goal.",
+      "assistantDesc": "Best for ongoing work with context and personal preferences."
     },
     "myAgent": {
       "title": "My Agent",
@@ -175,6 +174,9 @@
       "assistantDeleted": "Personal assistant deleted",
       "resetWorkspaceFailed": "Failed to reset workspace",
       "workspaceReset": "Workspace reset",
+      "reorderFailed": "Failed to reorder workspaces",
+      "dropBefore": "Release to insert before",
+      "dropAfter": "Release to insert after",
       "revealFailed": "Failed to reveal workspace folder",
       "createSessionFailed": "Failed to create session",
       "worktreeCreated": "Worktree created",
@@ -188,6 +190,8 @@
       "actions": {
         "more": "More actions",
         "newSession": "New session",
+        "newCodeSession": "New Code session",
+        "newCoworkSession": "New Cowork session",
         "newAssistant": "New personal assistant",
         "deleteAssistant": "Delete personal assistant",
         "resetWorkspace": "Reset workspace",
@@ -219,6 +223,9 @@
     "tools": {
       "builtinTools": "Built-in Tools",
       "mcpServices": "MCP Services"
+    },
+    "actions": {
+      "openMyAgent": "My Agent"
     },
     "moreOptions": "More options",
     "notifications": "Notifications"
@@ -655,7 +662,8 @@
     "capabilities": "Capabilities",
     "agents": "Agents",
     "skills": "Skills",
-    "toolbox": "Mini App",
+    "miniApps": "Mini App",
+    "browser": "Browser",
     "myAgent": "My Agent",
     "shell": "Shell"
   },
@@ -664,18 +672,49 @@
     "welcomeBack": "Welcome back to",
     "welcomeTabTitle": "Welcome",
     "quickStart": "Start",
+    "heroBadge": "BitFun Workspace",
+    "heroTitle": "A real workspace, not just a chat box",
+    "heroDescription": "An AI assistant with personality, memory, and real execution power. Sessions, agent teams, and mini apps all work around the same workflow, so AI is doing work, not just replying.",
     "newCodeSession": "New Code Session",
-    "newCodeSessionDesc": "For everyday coding, Q&A and debugging",
+    "newCodeSessionDesc": "Start coding, debug issues, or open a project and jump straight into building",
     "newCoworkSession": "New Cowork Session",
-    "newCoworkSessionDesc": "Suitable for assisting with everyday work",
+    "newCoworkSessionDesc": "Great for clarifying requests, moving tasks forward, drafting content, and everyday collaboration",
     "newClawSession": "New Claw Session",
-    "newClawSessionDesc": "Personal assistant session with a dedicated assistant workspace",
+    "newClawSessionDesc": "Enter your personal assistant workspace and keep context and preferences over time",
+    "assistantEntryLabel": "Personal Assistant",
+    "assistantEntryTitle": "BitFun can be your assistant too, not only your project workspace",
+    "assistantEntryDescription": "You do not need to pick a project first. Enter the assistant workspace to chat, organize thoughts, draft writing, or let the assistant keep moving your tasks forward.",
+    "assistantEntryAction": "Enter Assistant Mode",
+    "assistantHint": "Besides Code and Cowork, you can also jump straight into assistant mode for thinking, drafting, and everyday collaboration outside project work.",
+    "workspaceSectionTitle": "Projects and Workspaces",
+    "workspaceSectionHint": "Open a project to start Code or Cowork, or switch to one of your recent workspaces.",
+    "noRecentWorkspaces": "No recent workspaces yet",
+    "messages": {
+      "message1": "Welcome back. Let's turn another idea into something real.",
+      "message2": "Hi. Feels like a good day to build something fun.",
+      "message3": "Your creative partner is online and ready to work.",
+      "message4": "Welcome to BitFun. Let's make something interesting."
+    },
+    "features": {
+      "workspace": {
+        "title": "AI in action",
+        "description": "Thinking chains, terminal commands, code diffs, and planning all show up live so the process stays transparent."
+      },
+      "team": {
+        "title": "Your AI team",
+        "description": "Set up Code, Cowork, and other agents for different jobs, then let them collaborate on more complex tasks."
+      },
+      "assistant": {
+        "title": "An assistant that keeps growing",
+        "description": "The assistant workspace keeps context and personal preferences, making it fit for thinking, writing, and everyday collaboration."
+      }
+    },
     "comingSoon": "Coming Soon",
     "recentWorkspaces": "Switch Workspace",
     "openOtherProject": "Open",
     "newProject": "New",
     "noOtherWorkspaces": "No other workspaces",
-    "emptyHint": "Open a scene to get started",
+    "emptyHint": "Pick a scene and let's build something great",
     "firstTime": {
       "title": "Welcome to BitFun",
       "subtitle": "Your AI coding companion — turn ideas into reality in an instant.",

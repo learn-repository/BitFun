@@ -57,9 +57,19 @@ const TerminalTabPanel = React.lazy(() =>
   }))
 );
 
+const BrowserPanel = React.lazy(() =>
+  import('@/app/scenes/browser/BrowserPanel')
+);
+
 const TaskDetailPanel = React.lazy(() => 
   import('@/flow_chat/components/TaskDetailPanel').then(module => ({ 
     default: module.TaskDetailPanel 
+  }))
+);
+
+const BtwSessionPanel = React.lazy(() =>
+  import('@/flow_chat/components/btw/BtwSessionPanel').then(module => ({
+    default: module.BtwSessionPanel
   }))
 );
 
@@ -77,6 +87,8 @@ import './FlexiblePanel.scss';
 
 interface ExtendedFlexiblePanelProps extends FlexiblePanelProps {
   onDirtyStateChange?: (isDirty: boolean) => void;
+  /** Whether this panel is the active/visible tab in its EditorGroup */
+  isActive?: boolean;
 }
 
 const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
@@ -86,7 +98,8 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
   onInteraction,
   workspacePath,
   onBeforeClose,
-  onDirtyStateChange
+  onDirtyStateChange,
+  isActive = true,
 }) => {
   const { t } = useI18n('components');
 
@@ -247,7 +260,7 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
         const markdownWorkspacePath = markdownEditorData.workspacePath || workspacePath;
         const markdownJumpToLine = markdownEditorData.jumpToLine;
         const markdownJumpToColumn = markdownEditorData.jumpToColumn;
-        
+
         return (
           <div className="bitfun-flexible-panel__markdown-editor">
             {markdownFilePath || markdownInitialContent !== undefined ? (
@@ -435,7 +448,7 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
         const fileName = editorData.fileName || content.title;
         const editorLanguage = editorData.language;
         const editorWorkspacePath = editorData.workspacePath || workspacePath;
-        
+
         return (
           <CodeEditor
             filePath={filePath}
@@ -710,6 +723,27 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
                 autoFocus={true}
               />
             </div>
+          </React.Suspense>
+        );
+
+      case 'btw-session':
+        return (
+          <React.Suspense fallback={<div className="bitfun-flexible-panel__loading">{t('flexiblePanel.loading.taskDetail')}</div>}>
+            <BtwSessionPanel
+              childSessionId={content.data?.childSessionId}
+              parentSessionId={content.data?.parentSessionId}
+              workspacePath={content.data?.workspacePath || workspacePath}
+            />
+          </React.Suspense>
+        );
+
+      case 'browser':
+        return (
+          <React.Suspense fallback={<div className="bitfun-flexible-panel__loading">{t('flexiblePanel.loading.terminal')}</div>}>
+            <BrowserPanel
+              isActive={isActive}
+              initialUrl={content.data?.url}
+            />
           </React.Suspense>
         );
 

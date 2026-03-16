@@ -3,7 +3,7 @@
 //! Responsible for session CRUD, lifecycle management, and resource association
 
 use crate::agentic::core::{
-    CompressionState, DialogTurn, Message, ProcessingPhase, Session,
+    CompressionState, DialogTurn, Message, MessageSemanticKind, ProcessingPhase, Session,
     SessionConfig, SessionState, SessionSummary, TurnStats,
 };
 use crate::agentic::image_analysis::ImageContextData;
@@ -17,6 +17,7 @@ use crate::service::snapshot::ensure_snapshot_manager_for_workspace;
 use crate::util::errors::{BitFunError, BitFunResult};
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -119,7 +120,11 @@ impl SessionManager {
             } else {
                 Message::user(turn.user_message.content.clone())
             };
-            messages.push(user_message.with_turn_id(turn.turn_id.clone()));
+            messages.push(
+                user_message
+                    .with_turn_id(turn.turn_id.clone())
+                    .with_semantic_kind(MessageSemanticKind::ActualUserInput),
+            );
 
             let assistant_text = turn
                 .model_rounds
@@ -131,7 +136,8 @@ impl SessionManager {
                 .join("\n\n");
 
             if !assistant_text.trim().is_empty() {
-                messages.push(Message::assistant(assistant_text).with_turn_id(turn.turn_id.clone()));
+                messages
+                    .push(Message::assistant(assistant_text).with_turn_id(turn.turn_id.clone()));
             }
         }
 
@@ -325,9 +331,10 @@ impl SessionManager {
         }
 
         if self.config.enable_persistence {
-            if let (Some(workspace_path), Some(session)) =
-                (self.session_workspace_path(session_id), self.sessions.get(session_id))
-            {
+            if let (Some(workspace_path), Some(session)) = (
+                self.session_workspace_path(session_id),
+                self.sessions.get(session_id),
+            ) {
                 self.persistence_manager
                     .save_session(&workspace_path, &session)
                     .await?;
@@ -342,6 +349,42 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Update session model id (in-memory + persistence)
+    pub async fn update_session_model_id(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> BitFunResult<()> {
+        if let Some(mut session) = self.sessions.get_mut(session_id) {
+            session.config.model_id = Some(model_id.to_string());
+            session.updated_at = SystemTime::now();
+            session.last_activity_at = SystemTime::now();
+        } else {
+            return Err(BitFunError::NotFound(format!(
+                "Session not found: {}",
+                session_id
+            )));
+        }
+
+        if self.config.enable_persistence {
+            if let (Some(workspace_path), Some(session)) = (
+                self.session_workspace_path(session_id),
+                self.sessions.get(session_id),
+            ) {
+                self.persistence_manager
+                    .save_session(&workspace_path, &session)
+                    .await?;
+            }
+        }
+
+        debug!(
+            "Session model id updated: session_id={}, model_id={}",
+            session_id, model_id
+        );
+
+        Ok(())
+    }
+
     /// Update session activity time
     pub fn touch_session(&self, session_id: &str) {
         if let Some(mut session) = self.sessions.get_mut(session_id) {
@@ -350,7 +393,11 @@ impl SessionManager {
     }
 
     /// Delete session (cascade delete all resources)
-    pub async fn delete_session(&self, workspace_path: &Path, session_id: &str) -> BitFunResult<()> {
+    pub async fn delete_session(
+        &self,
+        workspace_path: &Path,
+        session_id: &str,
+    ) -> BitFunResult<()> {
         // 1. Clean up snapshot system resources (including physical snapshot files)
         if let Ok(snapshot_manager) = ensure_snapshot_manager_for_workspace(workspace_path) {
             let snapshot_service = snapshot_manager.get_snapshot_service();
@@ -400,7 +447,11 @@ impl SessionManager {
     }
 
     /// Restore session (from persistent storage)
-    pub async fn restore_session(&self, workspace_path: &Path, session_id: &str) -> BitFunResult<Session> {
+    pub async fn restore_session(
+        &self,
+        workspace_path: &Path,
+        session_id: &str,
+    ) -> BitFunResult<Session> {
         // Check if session is already in memory
         let session_already_in_memory = self.sessions.contains_key(session_id);
 
@@ -432,9 +483,10 @@ impl SessionManager {
                 latest_turn_index = Some(turn_index);
                 msgs
             }
-            None => self
-                .rebuild_messages_from_turns(workspace_path, session_id)
-                .await?,
+            None => {
+                self.rebuild_messages_from_turns(workspace_path, session_id)
+                    .await?
+            }
         };
 
         if messages.is_empty() {
@@ -602,12 +654,13 @@ impl SessionManager {
         let session = self
             .get_session(session_id)
             .ok_or_else(|| BitFunError::NotFound(format!("Session not found: {}", session_id)))?;
-        let workspace_path = Self::session_workspace_from_config(&session.config).ok_or_else(|| {
-            BitFunError::Validation(format!(
-                "Session workspace_path is missing: {}",
-                session_id
-            ))
-        })?;
+        let workspace_path =
+            Self::session_workspace_from_config(&session.config).ok_or_else(|| {
+                BitFunError::Validation(format!(
+                    "Session workspace_path is missing: {}",
+                    session_id
+                ))
+            })?;
 
         let turn_index = session.dialog_turn_ids.len();
         // Pass frontend's turnId
@@ -633,9 +686,13 @@ impl SessionManager {
         // 2. Add user message to history and compression managers
         let user_message =
             if let Some(images) = image_contexts.as_ref().filter(|v| !v.is_empty()).cloned() {
-                Message::user_multimodal(user_input.clone(), images).with_turn_id(turn_id.clone())
+                Message::user_multimodal(user_input.clone(), images)
+                    .with_turn_id(turn_id.clone())
+                    .with_semantic_kind(MessageSemanticKind::ActualUserInput)
             } else {
-                Message::user(user_input.clone()).with_turn_id(turn_id.clone())
+                Message::user(user_input.clone())
+                    .with_turn_id(turn_id.clone())
+                    .with_semantic_kind(MessageSemanticKind::ActualUserInput)
             };
         self.history_manager
             .add_message(session_id, user_message.clone())
@@ -706,10 +763,12 @@ impl SessionManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        let has_assistant_text = turn
-            .model_rounds
-            .iter()
-            .any(|round| round.text_items.iter().any(|item| !item.content.trim().is_empty()));
+        let has_assistant_text = turn.model_rounds.iter().any(|round| {
+            round
+                .text_items
+                .iter()
+                .any(|item| !item.content.trim().is_empty())
+        });
         if !has_assistant_text && !final_response.trim().is_empty() {
             let round_index = turn.model_rounds.len();
             turn.model_rounds.push(ModelRoundData {
@@ -852,6 +911,95 @@ impl SessionManager {
             "Dialog turn marked as failed: turn_id={}, turn_index={}, error={}",
             turn_id, turn.turn_index, error
         );
+
+        Ok(())
+    }
+
+    /// Persist a completed `/btw` side-question turn into an existing child session.
+    pub async fn persist_btw_turn(
+        &self,
+        workspace_path: &Path,
+        child_session_id: &str,
+        request_id: &str,
+        question: &str,
+        full_text: &str,
+        parent_session_id: &str,
+        parent_dialog_turn_id: Option<&str>,
+        parent_turn_index: Option<usize>,
+    ) -> BitFunResult<()> {
+        let session = self
+            .sessions
+            .get(child_session_id)
+            .ok_or_else(|| BitFunError::NotFound(format!("Session not found: {}", child_session_id)))?;
+
+        let turn_id = format!("btw-turn-{}", request_id);
+        let user_message_id = format!("btw-user-{}", request_id);
+        let round_id = format!("btw-round-{}", request_id);
+        let text_id = format!("btw-text-{}", request_id);
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let mut turn = DialogTurnData::new(
+            turn_id.clone(),
+            0,
+            child_session_id.to_string(),
+            UserMessageData {
+                id: user_message_id,
+                content: question.to_string(),
+                timestamp: now,
+                metadata: Some(json!({
+                    "kind": "btw",
+                    "parentSessionId": parent_session_id,
+                    "parentRequestId": request_id,
+                    "parentDialogTurnId": parent_dialog_turn_id,
+                    "parentTurnIndex": parent_turn_index,
+                })),
+            },
+        );
+        turn.timestamp = now;
+        turn.start_time = now;
+        turn.end_time = Some(now);
+        turn.duration_ms = Some(0);
+        turn.status = TurnStatus::Completed;
+        turn.model_rounds = vec![ModelRoundData {
+            id: round_id,
+            turn_id: turn_id.clone(),
+            round_index: 0,
+            timestamp: now,
+            text_items: vec![TextItemData {
+                id: text_id,
+                content: full_text.to_string(),
+                is_streaming: false,
+                timestamp: now,
+                is_markdown: true,
+                order_index: None,
+                is_subagent_item: None,
+                parent_task_tool_id: None,
+                subagent_session_id: None,
+                status: Some("completed".to_string()),
+            }],
+            tool_items: vec![],
+            thinking_items: vec![],
+            start_time: now,
+            end_time: Some(now),
+            status: "completed".to_string(),
+        }];
+
+        drop(session);
+
+        self.persistence_manager
+            .save_dialog_turn(workspace_path, &turn)
+            .await?;
+
+        if let Some(mut session) = self.sessions.get_mut(child_session_id) {
+            if !session.dialog_turn_ids.iter().any(|existing| existing == &turn_id) {
+                session.dialog_turn_ids.push(turn_id);
+            }
+            session.updated_at = SystemTime::now();
+            session.last_activity_at = SystemTime::now();
+        }
 
         Ok(())
     }

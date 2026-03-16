@@ -58,36 +58,64 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   
   &--collapsed {
-    cursor: pointer;
-    max-width: 480px;
+    cursor: text;
+    max-width: 300px;
     margin: 0 auto;
     
     .bitfun-chat-input__box {
       min-height: 42px;
       max-height: 42px;
-      padding: 0 16px 0 22px;
+      padding: 0 18px;
       border-radius: 999px;
-      background: var(--color-bg-tertiary);
-      border: none;
+      cursor: text;
+      background: rgba(18, 18, 28, 0.22);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       box-shadow: 
-        0 2px 8px rgba(0, 0, 0, 0.12),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        0 8px 24px rgba(0, 0, 0, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
       flex-direction: row;
       align-items: center;
       gap: 8px;
       
       &:hover {
-        background: var(--color-bg-elevated);
-        border: 1px solid rgba(100, 150, 255, 0.25);
+        background: rgba(25, 25, 40, 0.38);
+        border: 1px solid rgba(100, 150, 255, 0.2);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         box-shadow: 
-          0 6px 20px rgba(0, 0, 0, 0.35),
-          0 0 15px rgba(100, 140, 255, 0.1),
-          inset 0 1px 0 rgba(255, 255, 255, 0.1);
-        transform: translateY(-2px);
+          0 12px 30px rgba(0, 0, 0, 0.24),
+          inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        transform: translateY(-1px);
+      }
+    }
+    
+    // Light theme overrides for the collapsed capsule
+    :root[data-theme="light"] &,
+    :root[data-theme-type="light"] &,
+    .light & {
+      .bitfun-chat-input__box {
+        background: rgba(255, 255, 255, 0.28);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        box-shadow:
+          0 2px 8px rgba(0, 0, 0, 0.06),
+          inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        
+        &:hover {
+          background: rgba(255, 255, 255, 0.45);
+          border: 1px solid rgba(80, 120, 255, 0.18);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          box-shadow:
+            0 12px 24px rgba(0, 0, 0, 0.1),
+            inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
       }
     }
     
@@ -95,33 +123,66 @@
     .bitfun-chat-input__template-hint,
     .bitfun-chat-input__cowork-examples,
     .bitfun-chat-input__recommendations,
+    .bitfun-chat-input__target-switcher,
     .bitfun-chat-input__actions-left,
     .bitfun-chat-input__mode-selector,
-    .bitfun-chat-input__queued-indicator {
+    .bitfun-chat-input__queued-indicator,
+    .bitfun-chat-input__actions-right {
       display: none !important;
     }
     
     .bitfun-chat-input__input-area {
-      flex: 1;
-      min-height: auto;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: calc(100% - 36px);
+      min-height: 24px;
       max-height: 24px;
       display: flex;
       align-items: center;
+      justify-content: center;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
       
       .rich-text-input {
         min-height: 24px !important;
         max-height: 24px !important;
+        max-width: 100%;
         font-size: 14px;
         line-height: 24px;
         overflow: hidden;
         padding: 0 !important;
+        margin: 0 auto;
+        text-align: center;
+        width: 100%;
         
         &:empty::before {
+          display: block;
           color: var(--color-text-primary);
           opacity: 0.6;
           font-size: 14px;
           line-height: 24px;
+          text-align: center;
+          width: 100%;
         }
+      }
+
+      .bitfun-chat-input__space-hint {
+        display: inline-flex;
+        position: absolute;
+        inset: 0;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+        font-size: 13px;
+        line-height: 24px;
+        color: var(--color-text-muted);
+        opacity: 0.62;
+        white-space: nowrap;
+        pointer-events: none;
+        letter-spacing: 0.01em;
+        animation: bitfun-space-hint-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) 0.32s both;
       }
     }
     
@@ -131,44 +192,91 @@
       padding: 0;
       margin: 0;
     }
-    
-    .bitfun-chat-input__actions-right {
-      gap: 6px;
-      
+
+    &.bitfun-chat-input--processing {
+      .bitfun-chat-input__input-area {
+        left: 18px;
+        right: 118px;
+        width: auto;
+        transform: translateY(-50%);
+        justify-content: flex-start;
+      }
+
+      .rich-text-input {
+        display: none;
+      }
+
+      .bitfun-chat-input__actions {
+        position: absolute;
+        top: 50%;
+        right: 14px;
+        transform: translateY(-50%);
+        z-index: 2;
+      }
+
+      .bitfun-chat-input__actions-right {
+        display: flex !important;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .bitfun-chat-input__space-hint {
+        justify-content: flex-start;
+        width: 100%;
+      }
+
       .bitfun-chat-input__action-button {
-        opacity: 0.4;
-        width: 24px;
-        height: 24px;
-        
-        &:hover {
-          opacity: 1;
-        }
+        display: none !important;
       }
-      
-      .bitfun-chat-input__send-button {
-        width: 24px;
-        height: 24px;
-        
-        &:not(:disabled) {
-          opacity: 1;
-        }
-        
-        &:disabled {
-          opacity: 0.3;
-        }
-      }
+    }
+
+    &:hover .bitfun-chat-input__space-hint {
+      opacity: 0.9;
     }
   }
-  
-  &--active {
-    .bitfun-chat-input__box {
-      animation: bitfun-chat-input-activate 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    
-    .bitfun-chat-input__actions,
-    .bitfun-chat-input__input-area,
-    .bitfun-chat-input__expand-button {
-      animation: bitfun-chat-input-fade-in 0.25s ease-out 0.1s both;
+
+  &__space-hint {
+    display: none;
+  }
+
+  &__space-key {
+    display: inline-block;
+    padding: 0 4px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+
+  &__cancel-shortcut {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 4px;
+    font-size: 13px;
+    line-height: 24px;
+    color: var(--color-text-muted);
+    opacity: 0.72;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  &__capsule-divider {
+    width: 1px;
+    height: 14px;
+    flex-shrink: 0;
+    background: color-mix(in srgb, var(--color-text-muted) 28%, transparent);
+    pointer-events: none;
+  }
+
+  :root[data-theme="light"] &,
+  :root[data-theme-type="light"] &,
+  .light & {
+    .bitfun-chat-input__capsule-divider {
+      background: rgba(15, 23, 42, 0.2);
     }
   }
   
@@ -177,7 +285,7 @@
       border-color: rgba(160, 140, 255, 0.25);
       
       &:focus-within {
-        border-color: transparent;
+        border-color: rgba(160, 140, 255, 0.36);
         box-shadow: 
           0 12px 32px rgba(0, 0, 0, 0.4),
           0 0 20px rgba(160, 140, 255, 0.15),
@@ -185,7 +293,7 @@
           inset 0 1px 0 rgba(255, 255, 255, 0.12);
         
         &::before {
-          opacity: 1;
+          opacity: 0.38;
           background: linear-gradient(
             135deg,
             rgba(160, 120, 255, 0.5) 0%,
@@ -215,7 +323,7 @@
 
       &:focus-within {
         background: var(--color-bg-elevated);
-        border-color: transparent;
+        border-color: rgba(120, 160, 255, 0.28);
         backdrop-filter: blur(20px) saturate(1.3);
         -webkit-backdrop-filter: blur(20px) saturate(1.3);
         box-shadow: 
@@ -287,10 +395,21 @@
     pointer-events: auto;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
-    padding: $size-gap-3 $size-gap-3 0;
+    padding: 12px 8px 0;
+    background: var(--color-bg-tertiary);
     backdrop-filter: blur(16px) saturate(1.2);
     -webkit-backdrop-filter: blur(16px) saturate(1.2);
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition:
+      border-radius 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      padding 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      min-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      backdrop-filter 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      -webkit-backdrop-filter 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 
       0 8px 24px rgba(0, 0, 0, 0.35),
       inset 0 1px 0 rgba(255, 255, 255, 0.08),
@@ -301,7 +420,7 @@
       content: '';
       position: absolute;
       inset: -1px;
-      border-radius: 13px;
+      border-radius: inherit;
       padding: 1px;
       background: linear-gradient(
         135deg,
@@ -314,7 +433,9 @@
       -webkit-mask-composite: xor;
       mask-composite: exclude;
       opacity: 0;
-      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      transition:
+        opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       pointer-events: none;
     }
     
@@ -334,7 +455,7 @@
     
     &:focus-within {
       background: var(--color-bg-elevated);
-      border-color: transparent;
+      border-color: rgba(120, 160, 255, 0.32);
       backdrop-filter: blur(20px) saturate(1.3);
       -webkit-backdrop-filter: blur(20px) saturate(1.3);
       box-shadow: 
@@ -345,7 +466,7 @@
         inset 0 -1px 0 rgba(100, 140, 255, 0.05);
       
       &::before {
-        opacity: 1;
+        opacity: 0.32;
         background: linear-gradient(
           135deg,
           rgba(100, 160, 255, 0.5) 0%,
@@ -354,12 +475,75 @@
           rgba(160, 140, 255, 0.4) 75%,
           rgba(100, 160, 255, 0.5) 100%
         );
-        animation: bitfun-focus-border-flow 4s linear infinite;
       }
     }
     
     & > * {
       pointer-events: auto;
+    }
+  }
+
+  &__target-switcher {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-bottom: 7px;
+    margin-bottom: 1px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    animation: bitfun-chat-input-fade-in 0.18s ease-out;
+  }
+
+  &__target-switcher-label {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    font-weight: 400;
+    padding: 2px 8px 2px 0;
+    margin-right: 4px;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+    opacity: 0.72;
+  }
+
+  &__target-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    font-weight: 400;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+    white-space: nowrap;
+    outline: none;
+
+    &:hover:not(#{&}--active) {
+      color: var(--color-text-secondary);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    &--active {
+      color: rgba(155, 190, 255, 0.95);
+      font-weight: 500;
+      background: rgba(80, 130, 255, 0.09);
+    }
+  }
+
+  &__target-tab-name {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.65;
+
+    &::before {
+      content: '·';
+      margin-right: 2px;
     }
   }
   
@@ -711,7 +895,7 @@
     width: 260px;
     max-height: 280px;
     background: var(--color-bg-elevated);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     overflow: hidden;
     backdrop-filter: blur(20px) saturate(1.2);
@@ -729,7 +913,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border-subtle);
     font-size: 10px;
     font-weight: 500;
     color: var(--color-text-muted);
@@ -777,11 +961,11 @@
     transition: all 0.15s ease;
     
     &:hover {
-      background: rgba(255, 255, 255, 0.04);
+      background: var(--element-bg-soft);
     }
     
     &--selected {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--element-bg-medium);
     }
     
     &--active {
@@ -950,6 +1134,26 @@
     border-radius: 50%;
     background: rgba(234, 179, 8, 0.6); // yellow-500 with opacity
     animation: breathing-pulse 2.5s ease-in-out infinite;
+  }
+
+  &__queued-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 11px;
+    height: 11px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: #ef4444;
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 0 0 1px rgba(18, 18, 28, 0.85);
+    pointer-events: none;
   }
 }
 
@@ -1209,19 +1413,6 @@
   }
 }
 
-@keyframes bitfun-chat-input-activate {
-  0% {
-    min-height: 44px;
-    border-radius: 22px;
-    padding: 10px 16px;
-  }
-  100% {
-    min-height: 56px;
-    border-radius: 12px;
-    padding: 12px 12px 0;
-  }
-}
-
 @keyframes bitfun-chat-input-fade-in {
   from {
     opacity: 0;
@@ -1233,4 +1424,14 @@
   }
 }
 
+@keyframes bitfun-space-hint-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 0.62;
+    transform: scale(1);
+  }
+}
 

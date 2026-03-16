@@ -3,6 +3,7 @@ import PairingPage from './pages/PairingPage';
 import WorkspacePage from './pages/WorkspacePage';
 import SessionListPage from './pages/SessionListPage';
 import ChatPage from './pages/ChatPage';
+import { I18nProvider } from './i18n';
 import { RelayHttpClient } from './services/RelayHttpClient';
 import { RemoteSessionManager } from './services/RemoteSessionManager';
 import { ThemeProvider } from './theme';
@@ -39,6 +40,12 @@ const AppContent: React.FC = () => {
   const [prevPage, setPrevPage] = useState<Page | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  // Track the page stack for browser history integration.
+  // When user triggers browser back (phone back button / edge swipe),
+  // we intercept popstate and perform in-app navigation instead.
+  const pageStackRef = useRef<Page[]>(['pairing']);
+  const isPopstateNavRef = useRef(false);
+
   const navigateTo = useCallback((target: Page, direction: NavDirection) => {
     setPage(prev => {
       setPrevPage(prev);
@@ -46,11 +53,22 @@ const AppContent: React.FC = () => {
     });
     setNavDir(direction);
     clearTimeout(timerRef.current);
-    const duration = NAV_DURATION;
     timerRef.current = setTimeout(() => {
       setPrevPage(null);
       setNavDir(null);
-    }, duration);
+    }, NAV_DURATION);
+
+    if (direction === 'push') {
+      pageStackRef.current = [...pageStackRef.current, target];
+      if (!isPopstateNavRef.current) {
+        history.pushState({ page: target }, '');
+      }
+    } else if (direction === 'pop') {
+      pageStackRef.current = pageStackRef.current.slice(0, -1);
+      if (!isPopstateNavRef.current) {
+        history.back();
+      }
+    }
   }, []);
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
@@ -59,10 +77,50 @@ const AppContent: React.FC = () => {
     (client: RelayHttpClient, sessionMgr: RemoteSessionManager) => {
       clientRef.current = client;
       sessionMgrRef.current = sessionMgr;
+      pageStackRef.current = ['pairing', 'sessions'];
+      history.pushState({ page: 'sessions' }, '');
       setPage('sessions');
     },
     [],
   );
+
+  // Pop navigation handlers that can be called from both UI buttons and popstate
+  const doPopFromChat = useCallback(() => {
+    navigateTo('sessions', 'pop');
+    setTimeout(() => setActiveSessionId(null), NAV_DURATION);
+  }, [navigateTo]);
+
+  const doPopFromWorkspace = useCallback(() => {
+    navigateTo('sessions', 'pop');
+  }, [navigateTo]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const stack = pageStackRef.current;
+      const currentPage = stack[stack.length - 1];
+
+      if (currentPage === 'pairing' || currentPage === 'sessions') {
+        // At the root-level pages: re-push a history entry so the user
+        // can't accidentally close the app with another back gesture.
+        history.pushState({ page: currentPage }, '');
+        return;
+      }
+
+      isPopstateNavRef.current = true;
+      try {
+        if (currentPage === 'chat') {
+          doPopFromChat();
+        } else if (currentPage === 'workspace') {
+          doPopFromWorkspace();
+        }
+      } finally {
+        isPopstateNavRef.current = false;
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [doPopFromChat, doPopFromWorkspace]);
 
   const handleOpenWorkspace = useCallback(() => {
     navigateTo('workspace', 'push');
@@ -126,7 +184,9 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => (
   <ThemeProvider>
-    <AppContent />
+    <I18nProvider>
+      <AppContent />
+    </I18nProvider>
   </ThemeProvider>
 );
 

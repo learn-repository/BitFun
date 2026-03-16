@@ -7,10 +7,13 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::api::app_state::AppState;
-use bitfun_core::agentic::tools::image_context::get_image_context;
-use bitfun_core::agentic::coordination::{ConversationCoordinator, DialogScheduler, DialogTriggerSource};
+use bitfun_core::agentic::coordination::{
+    AssistantBootstrapBlockReason, AssistantBootstrapEnsureOutcome, AssistantBootstrapSkipReason,
+    ConversationCoordinator, DialogScheduler, DialogSubmissionPolicy, DialogTriggerSource,
+};
 use bitfun_core::agentic::core::*;
 use bitfun_core::agentic::image_analysis::ImageContextData;
+use bitfun_core::agentic::tools::image_context::get_image_context;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,9 +48,17 @@ pub struct CreateSessionResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateSessionModelRequest {
+    pub session_id: String,
+    pub model_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartDialogTurnRequest {
     pub session_id: String,
     pub user_input: String,
+    pub original_user_input: Option<String>,
     pub agent_type: String,
     pub workspace_path: Option<String>,
     pub turn_id: Option<String>,
@@ -60,6 +71,23 @@ pub struct StartDialogTurnRequest {
 pub struct StartDialogTurnResponse {
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureAssistantBootstrapRequest {
+    pub session_id: String,
+    pub workspace_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureAssistantBootstrapResponse {
+    pub status: String,
+    pub reason: String,
+    pub session_id: String,
+    pub turn_id: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +223,17 @@ pub async fn create_session(
 }
 
 #[tauri::command]
+pub async fn update_session_model(
+    coordinator: State<'_, Arc<ConversationCoordinator>>,
+    request: UpdateSessionModelRequest,
+) -> Result<(), String> {
+    coordinator
+        .update_session_model(&request.session_id, &request.model_name)
+        .await
+        .map_err(|e| format!("Failed to update session model: {}", e))
+}
+
+#[tauri::command]
 pub async fn start_dialog_turn(
     _app: AppHandle,
     coordinator: State<'_, Arc<ConversationCoordinator>>,
@@ -204,6 +243,7 @@ pub async fn start_dialog_turn(
     let StartDialogTurnRequest {
         session_id,
         user_input,
+        original_user_input,
         agent_type,
         workspace_path,
         turn_id,
@@ -220,11 +260,12 @@ pub async fn start_dialog_turn(
             .start_dialog_turn_with_image_contexts(
                 session_id,
                 user_input,
+                original_user_input,
                 resolved_image_contexts,
                 turn_id,
                 agent_type,
                 workspace_path,
-                DialogTriggerSource::DesktopUi,
+                DialogSubmissionPolicy::for_source(DialogTriggerSource::DesktopUi),
             )
             .await
             .map_err(|e| format!("Failed to start dialog turn: {}", e))?;
@@ -233,10 +274,12 @@ pub async fn start_dialog_turn(
             .submit(
                 session_id,
                 user_input,
+                original_user_input,
                 turn_id,
                 agent_type,
                 workspace_path,
-                DialogTriggerSource::DesktopUi,
+                DialogSubmissionPolicy::for_source(DialogTriggerSource::DesktopUi),
+                None,
             )
             .await
             .map_err(|e| format!("Failed to start dialog turn: {}", e))?;
@@ -246,6 +289,19 @@ pub async fn start_dialog_turn(
         success: true,
         message: "Dialog turn started".to_string(),
     })
+}
+
+#[tauri::command]
+pub async fn ensure_assistant_bootstrap(
+    coordinator: State<'_, Arc<ConversationCoordinator>>,
+    request: EnsureAssistantBootstrapRequest,
+) -> Result<EnsureAssistantBootstrapResponse, String> {
+    let outcome = coordinator
+        .ensure_assistant_bootstrap(request.session_id, request.workspace_path)
+        .await
+        .map_err(|e| format!("Failed to ensure assistant bootstrap: {}", e))?;
+
+    Ok(assistant_bootstrap_outcome_to_response(outcome))
 }
 
 fn is_blank_text(value: Option<&String>) -> bool {
@@ -288,7 +344,10 @@ fn resolve_missing_image_payloads(
             image.mime_type = stored.mime_type.clone();
         }
 
-        let mut metadata = image.metadata.take().unwrap_or_else(|| serde_json::json!({}));
+        let mut metadata = image
+            .metadata
+            .take()
+            .unwrap_or_else(|| serde_json::json!({}));
         if !metadata.is_object() {
             metadata = serde_json::json!({ "raw_metadata": metadata });
         }
@@ -506,6 +565,57 @@ pub struct ModeInfoDTO {
     pub tool_count: usize,
     pub default_tools: Vec<String>,
     pub enabled: bool,
+}
+
+fn assistant_bootstrap_outcome_to_response(
+    outcome: AssistantBootstrapEnsureOutcome,
+) -> EnsureAssistantBootstrapResponse {
+    match outcome {
+        AssistantBootstrapEnsureOutcome::Started {
+            session_id,
+            turn_id,
+        } => EnsureAssistantBootstrapResponse {
+            status: "started".to_string(),
+            reason: "bootstrap_started".to_string(),
+            session_id,
+            turn_id: Some(turn_id),
+            detail: None,
+        },
+        AssistantBootstrapEnsureOutcome::Skipped { session_id, reason } => {
+            EnsureAssistantBootstrapResponse {
+                status: "skipped".to_string(),
+                reason: assistant_bootstrap_skip_reason_to_str(reason).to_string(),
+                session_id,
+                turn_id: None,
+                detail: None,
+            }
+        }
+        AssistantBootstrapEnsureOutcome::Blocked {
+            session_id,
+            reason,
+            detail,
+        } => EnsureAssistantBootstrapResponse {
+            status: "blocked".to_string(),
+            reason: assistant_bootstrap_block_reason_to_str(reason).to_string(),
+            session_id,
+            turn_id: None,
+            detail: Some(detail),
+        },
+    }
+}
+
+fn assistant_bootstrap_skip_reason_to_str(reason: AssistantBootstrapSkipReason) -> &'static str {
+    match reason {
+        AssistantBootstrapSkipReason::BootstrapNotRequired => "bootstrap_not_required",
+        AssistantBootstrapSkipReason::SessionHasExistingTurns => "session_has_existing_turns",
+        AssistantBootstrapSkipReason::SessionNotIdle => "session_not_idle",
+    }
+}
+
+fn assistant_bootstrap_block_reason_to_str(reason: AssistantBootstrapBlockReason) -> &'static str {
+    match reason {
+        AssistantBootstrapBlockReason::ModelUnavailable => "model_unavailable",
+    }
 }
 
 fn session_to_response(session: Session) -> SessionResponse {

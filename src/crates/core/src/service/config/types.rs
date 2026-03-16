@@ -404,7 +404,7 @@ pub struct AIConfig {
     pub tool_confirmation_timeout_secs: Option<u64>,
 
     /// Skip tool execution confirmation (global, applies to all modes).
-    #[serde(default)]
+    #[serde(default = "default_skip_tool_confirmation")]
     pub skip_tool_confirmation: bool,
 
     /// Debug-mode configuration (log path, language templates, etc.).
@@ -415,6 +415,45 @@ pub struct AIConfig {
     /// Used to detect added and removed tools.
     #[serde(default)]
     pub known_tools: Vec<String>,
+}
+
+impl AIConfig {
+    /// Resolves a configured model reference by `id`, `name`, or `model_name`.
+    pub fn resolve_model_reference(&self, model_ref: &str) -> Option<String> {
+        self.models
+            .iter()
+            .find(|m| m.id == model_ref || m.name == model_ref || m.model_name == model_ref)
+            .map(|m| m.id.clone())
+    }
+
+    /// Resolves a model selector value.
+    ///
+    /// Special values:
+    /// - `primary`: must resolve to a valid primary model
+    /// - `fast`: first tries the configured fast model, then falls back to primary
+    ///
+    /// Regular values are resolved by `id`, `name`, or `model_name`.
+    pub fn resolve_model_selection(&self, model_ref: &str) -> Option<String> {
+        match model_ref {
+            "primary" => self
+                .default_models
+                .primary
+                .as_deref()
+                .and_then(|value| self.resolve_model_reference(value)),
+            "fast" => self
+                .default_models
+                .fast
+                .as_deref()
+                .and_then(|value| self.resolve_model_reference(value))
+                .or_else(|| {
+                    self.default_models
+                        .primary
+                        .as_deref()
+                        .and_then(|value| self.resolve_model_reference(value))
+                }),
+            _ => self.resolve_model_reference(model_ref),
+        }
+    }
 }
 
 /// Mode configuration (tool configuration per mode).
@@ -451,6 +490,10 @@ fn default_tool_execution_timeout() -> Option<u64> {
 /// Default is no timeout (wait forever).
 fn default_tool_confirmation_timeout() -> Option<u64> {
     None
+}
+
+fn default_skip_tool_confirmation() -> bool {
+    true
 }
 
 impl Default for ModeConfig {
@@ -713,7 +756,7 @@ pub struct AIModelConfig {
     /// Stored by the frontend when config is saved; falls back to base_url if absent.
     #[serde(default)]
     pub request_url: Option<String>,
-    
+
     pub api_key: String,
     /// Context window size (total token limit for input + output).
     pub context_window: Option<u32>,
@@ -1114,7 +1157,7 @@ impl Default for AIConfig {
             proxy: ProxyConfig::default(),
             tool_execution_timeout_secs: default_tool_execution_timeout(),
             tool_confirmation_timeout_secs: default_tool_confirmation_timeout(),
-            skip_tool_confirmation: false,
+            skip_tool_confirmation: true,
             debug_mode_config: DebugModeConfig::default(),
             known_tools: Vec::new(),
         }

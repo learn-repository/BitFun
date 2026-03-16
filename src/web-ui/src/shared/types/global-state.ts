@@ -144,9 +144,11 @@ export interface GlobalStateAPI {
   resetAssistantWorkspace(workspaceId: string): Promise<WorkspaceInfo>;
   closeWorkspace(workspaceId: string): Promise<void>;
   setActiveWorkspace(workspaceId: string): Promise<WorkspaceInfo>;
+  reorderOpenedWorkspaces(workspaceIds: string[]): Promise<void>;
   getCurrentWorkspace(): Promise<WorkspaceInfo | null>;
   getOpenedWorkspaces(): Promise<WorkspaceInfo[]>;
   getRecentWorkspaces(): Promise<WorkspaceInfo[]>;
+  cleanupInvalidWorkspaces(): Promise<number>;
   scanWorkspaceInfo(workspacePath: string): Promise<WorkspaceInfo | null>;
   
   
@@ -312,6 +314,10 @@ export function createGlobalStateAPI(): GlobalStateAPI {
       return mapWorkspaceInfo(await globalAPI.setActiveWorkspace(workspaceId));
     },
 
+    async reorderOpenedWorkspaces(workspaceIds: string[]): Promise<void> {
+      return await globalAPI.reorderOpenedWorkspaces(workspaceIds);
+    },
+
     async getCurrentWorkspace(): Promise<WorkspaceInfo | null> {
       const workspace = await globalAPI.getCurrentWorkspace();
       return workspace ? mapWorkspaceInfo(workspace) : null;
@@ -325,6 +331,10 @@ export function createGlobalStateAPI(): GlobalStateAPI {
       const workspaces = (await globalAPI.getRecentWorkspaces()).map(mapWorkspaceInfo);
       logger.debug('getRecentWorkspaces returned', workspaces);
       return workspaces;
+    },
+
+    async cleanupInvalidWorkspaces(): Promise<number> {
+      return await globalAPI.cleanupInvalidWorkspaces();
     },
 
     async scanWorkspaceInfo(workspacePath: string): Promise<WorkspaceInfo | null> {

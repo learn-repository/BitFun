@@ -14,7 +14,9 @@ import {
   Settings,
   ClipboardList,
   Image,
-  Network
+  Network,
+  MessageSquareQuote,
+  Globe,
 } from 'lucide-react';
 import { PanelContentType, PanelContentConfig } from './types';
 
@@ -196,6 +198,14 @@ export const PANEL_CONTENT_CONFIGS: Record<PanelContentType, PanelContentConfig>
     supportsDownload: false,
     showHeader: false
   },
+  'btw-session': {
+    type: 'btw-session',
+    displayName: 'Side Session',
+    icon: MessageSquareQuote,
+    supportsCopy: false,
+    supportsDownload: false,
+    showHeader: false
+  },
   'terminal': {
     type: 'terminal',
     displayName: 'Terminal',
@@ -203,7 +213,15 @@ export const PANEL_CONTENT_CONFIGS: Record<PanelContentType, PanelContentConfig>
     supportsCopy: false,
     supportsDownload: false,
     showHeader: false
-  }
+  },
+  'browser': {
+    type: 'browser',
+    displayName: 'Browser',
+    icon: Globe,
+    supportsCopy: false,
+    supportsDownload: false,
+    showHeader: false
+  },
 };
 
 /**

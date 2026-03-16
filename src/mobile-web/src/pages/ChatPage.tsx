@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useI18n } from '../i18n';
 import {
   RemoteSessionManager,
   SessionPoller,
@@ -11,6 +12,8 @@ import {
   type RemoteToolStatus,
   type ChatMessage,
   type ChatMessageItem,
+  type RemoteModelCatalog,
+  type RemoteModelConfig,
 } from '../services/RemoteSessionManager';
 import { useMobileStore } from '../services/store';
 import { useTheme } from '../theme';
@@ -90,6 +93,7 @@ const CopyButton: React.FC<{ code: string }> = ({ code }) => {
 const COMPUTER_LINK_PREFIX = 'computer://';
 const FILE_LINK_PREFIX = 'file://';
 const WORKSPACE_FOLDER_PLACEHOLDER = '{{workspaceFolder}}';
+const MOBILE_LAST_SELECTED_MODEL_ID_KEY = 'bitfun.mobile.last_selected_model_id';
 
 const CODE_FILE_EXTENSIONS = new Set([
   'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'mts', 'cts',
@@ -98,7 +102,7 @@ const CODE_FILE_EXTENSIONS = new Set([
   'c', 'cpp', 'cc', 'cxx', 'h', 'hpp', 'hxx', 'hh',
   'cs', 'rb', 'php', 'swift',
   'vue', 'svelte',
-  'html', 'htm', 'css', 'scss', 'less', 'sass',
+  'css', 'scss', 'less', 'sass',
   'json', 'jsonc', 'yaml', 'yml', 'toml', 'xml',
   'md', 'mdx', 'rst', 'txt',
   'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
@@ -235,6 +239,7 @@ interface FileCardProps {
 
 const FileCard: React.FC<FileCardProps> = ({ path, onGetFileInfo, onDownload }) => {
   const { isDark } = useTheme();
+  const { t } = useI18n();
   const [state, setState] = useState<FileCardState>({ status: 'loading' });
   const onGetFileInfoRef = useRef(onGetFileInfo);
   onGetFileInfoRef.current = onGetFileInfo;
@@ -289,7 +294,7 @@ const FileCard: React.FC<FileCardProps> = ({ path, onGetFileInfo, onDownload }) 
     return (
       <span className="file-card" style={cardStyle}>
         <FileTextIcon size={20} style={{ color: iconColor, flexShrink: 0 }} />
-        <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>Loading…</span>
+        <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>{t('chat.fileLoading')}</span>
       </span>
     );
   }
@@ -297,7 +302,7 @@ const FileCard: React.FC<FileCardProps> = ({ path, onGetFileInfo, onDownload }) 
     return (
       <span className="file-card" style={{ ...cardStyle, cursor: 'default', opacity: 0.5 }} title={state.message}>
         <FileTextIcon size={20} style={{ color: iconColor, flexShrink: 0 }} />
-        <span style={{ fontSize: '0.8rem' }}>File unavailable</span>
+        <span style={{ fontSize: '0.8rem' }}>{t('chat.fileUnavailable')}</span>
       </span>
     );
   }
@@ -314,7 +319,7 @@ const FileCard: React.FC<FileCardProps> = ({ path, onGetFileInfo, onDownload }) 
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(); }}
-      title={isDownloading ? 'Downloading…' : isDone ? 'Downloaded' : 'Click to download'}
+      title={isDownloading ? t('chat.fileDownloading') : isDone ? t('chat.fileDownloaded') : t('chat.clickToDownload')}
     >
       <FileTextIcon size={20} style={{ color: iconColor, flexShrink: 0 }} />
       <span style={{ minWidth: 0, overflow: 'hidden' }}>
@@ -514,6 +519,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, onFileDownlo
 // ─── Thinking (ModelThinkingDisplay-style) ───────────────────────────────────
 
 const ThinkingBlock: React.FC<{ thinking: string; streaming?: boolean }> = ({ thinking, streaming }) => {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState({ atTop: true, atBottom: true });
@@ -531,8 +537,8 @@ const ThinkingBlock: React.FC<{ thinking: string; streaming?: boolean }> = ({ th
 
   const charCount = thinking.length;
   const label = streaming && charCount === 0
-    ? 'Thinking...'
-    : `Thought ${charCount} characters`;
+    ? t('chat.thinking')
+    : t('chat.thoughtCharacters', { count: charCount });
 
   return (
     <div className={`chat-thinking ${streaming ? 'chat-thinking--streaming' : ''}`}>
@@ -567,25 +573,26 @@ const ThinkingBlock: React.FC<{ thinking: string; streaming?: boolean }> = ({ th
 // ─── Tool Card ──────────────────────────────────────────────────────────────
 
 const TOOL_TYPE_MAP: Record<string, string> = {
-  explore: 'Explore',
-  read_file: 'Read',
-  write_file: 'Write',
-  list_directory: 'LS',
-  bash: 'Shell',
-  glob: 'Glob',
-  grep: 'Grep',
-  create_file: 'Write',
-  delete_file: 'Delete',
-  Task: 'Task',
-  search: 'Search',
-  edit_file: 'Edit',
-  web_search: 'Web',
-  TodoWrite: 'Todo',
+  explore: 'tools.explore',
+  read_file: 'tools.read',
+  write_file: 'tools.write',
+  list_directory: 'tools.ls',
+  bash: 'tools.shell',
+  glob: 'tools.glob',
+  grep: 'tools.grep',
+  create_file: 'tools.write',
+  delete_file: 'tools.delete',
+  Task: 'tools.task',
+  search: 'tools.search',
+  edit_file: 'tools.edit',
+  web_search: 'tools.web',
+  TodoWrite: 'tools.todo',
 };
 
 // ─── TodoWrite card ─────────────────────────────────────────────────────────
 
 const TodoCard: React.FC<{ tool: RemoteToolStatus }> = ({ tool }) => {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
 
   const todos: { id?: string; content: string; status: string }[] = useMemo(() => {
@@ -623,7 +630,7 @@ const TodoCard: React.FC<{ tool: RemoteToolStatus }> = ({ tool }) => {
           </svg>
         </span>
         {allDone && !expanded ? (
-          <span className="chat-todo-card__current chat-todo-card__current--done">All tasks completed</span>
+          <span className="chat-todo-card__current chat-todo-card__current--done">{t('chat.allTasksCompleted')}</span>
         ) : inProgress && !expanded ? (
           <span className="chat-todo-card__current">{inProgress.content}</span>
         ) : null}
@@ -671,10 +678,13 @@ function parseTaskInfo(tool: RemoteToolStatus): { description?: string; agentTyp
 /**
  * Summarize a subItem for display inside a Task card.
  */
-function subItemLabel(item: ChatMessageItem): string {
+function subItemLabel(
+  item: ChatMessageItem,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
   if (item.type === 'thinking') {
     const len = (item.content || '').length;
-    return `Thought ${len} characters`;
+    return t('chat.thoughtCharacters', { count: len });
   }
   if (item.type === 'tool' && item.tool) {
     const t = item.tool;
@@ -683,7 +693,7 @@ function subItemLabel(item: ChatMessageItem): string {
   }
   if (item.type === 'text') {
     const len = (item.content || '').length;
-    return `Text ${len} characters`;
+    return t('chat.textCharacters', { count: len });
   }
   return '';
 }
@@ -694,6 +704,7 @@ const TaskToolCard: React.FC<{
   subItems?: ChatMessageItem[];
   onCancelTool?: (toolId: string) => void;
 }> = ({ tool, now, subItems = [], onCancelTool }) => {
+  const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
   const [stepsExpanded, setStepsExpanded] = useState(false);
@@ -741,7 +752,7 @@ const TaskToolCard: React.FC<{
           )}
         </span>
         <span className="chat-tool-card__name">
-          {taskInfo?.description || 'Task'}
+          {taskInfo?.description || t('chat.task')}
         </span>
         {taskInfo?.agentType && (
           <span className="chat-tool-card__type">{taskInfo.agentType}</span>
@@ -753,7 +764,7 @@ const TaskToolCard: React.FC<{
           <button
             className="chat-tool-card__cancel"
             onClick={(e) => { e.stopPropagation(); onCancelTool?.(tool.id); }}
-            aria-label="Cancel"
+            aria-label={t('common.cancel')}
           >
             <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
@@ -766,11 +777,11 @@ const TaskToolCard: React.FC<{
         <>
           <div className="chat-task-card__summary" onClick={() => setStepsExpanded(e => !e)}>
             <span className="chat-task-card__stat">
-              {subTools.length} tool call{subTools.length === 1 ? '' : 's'}
+              {t('chat.toolCalls', { count: subTools.length, suffix: subTools.length === 1 ? '' : 's' })}
             </span>
             <span className="chat-task-card__stat-right">
-              <span className="chat-task-card__stat--done">{subToolsDone} done</span>
-              {subToolsRunning > 0 && <span className="chat-task-card__stat--running">{subToolsRunning} running</span>}
+              <span className="chat-task-card__stat--done">{t('chat.done', { count: subToolsDone })}</span>
+              {subToolsRunning > 0 && <span className="chat-task-card__stat--running">{t('chat.running', { count: subToolsRunning })}</span>}
             </span>
             <span className={`chat-task-card__chevron ${stepsExpanded ? 'is-expanded' : ''}`}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
@@ -783,7 +794,7 @@ const TaskToolCard: React.FC<{
                   return (
                     <div key={`sub-think-${idx}`} className="chat-task-card__step chat-task-card__step--thinking">
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                      <span>{subItemLabel(item)}</span>
+                      <span>{subItemLabel(item, t)}</span>
                     </div>
                   );
                 }
@@ -887,8 +898,10 @@ const ToolCard: React.FC<{
   now: number;
   onCancelTool?: (toolId: string) => void;
 }> = ({ tool, now, onCancelTool }) => {
+  const { t } = useI18n();
   const toolKey = tool.name.toLowerCase().replace(/[\s-]/g, '_');
-  const typeLabel = TOOL_TYPE_MAP[toolKey] || TOOL_TYPE_MAP[tool.name] || 'Tool';
+  const typeLabelKey = TOOL_TYPE_MAP[toolKey] || TOOL_TYPE_MAP[tool.name];
+  const typeLabel = typeLabelKey ? t(typeLabelKey) : 'Tool';
   const isRunning = tool.status === 'running';
   const isCompleted = tool.status === 'completed';
   const isError = tool.status === 'failed' || tool.status === 'error';
@@ -933,7 +946,7 @@ const ToolCard: React.FC<{
           <button
             className="chat-tool-card__cancel"
             onClick={(e) => { e.stopPropagation(); onCancelTool?.(tool.id); }}
-            aria-label="Cancel"
+            aria-label={t('common.cancel')}
           >
             <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
@@ -948,16 +961,20 @@ const ToolCard: React.FC<{
 const READ_LIKE_TOOLS = new Set(['Read', 'Grep', 'Glob', 'SemanticSearch']);
 
 function getToolSummaryLabel(toolName: string): string {
-  const toolKey = toolName.toLowerCase().replace(/[\s-]/g, '_');
-  return TOOL_TYPE_MAP[toolKey] || TOOL_TYPE_MAP[toolName] || toolName;
+  return toolName;
 }
 
-function buildGroupedToolSummary(tools: RemoteToolStatus[]): string {
+function buildGroupedToolSummary(
+  tools: RemoteToolStatus[],
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
   const counts = new Map<string, { label: string; count: number }>();
   const order: string[] = [];
 
   for (const tool of tools) {
-    const label = getToolSummaryLabel(tool.name);
+    const toolKey = tool.name.toLowerCase().replace(/[\s-]/g, '_');
+    const typeLabelKey = TOOL_TYPE_MAP[toolKey] || TOOL_TYPE_MAP[tool.name];
+    const label = typeLabelKey ? t(typeLabelKey) : getToolSummaryLabel(tool.name);
     const key = label.toLowerCase();
     const existing = counts.get(key);
     if (existing) {
@@ -977,13 +994,16 @@ function buildGroupedToolSummary(tools: RemoteToolStatus[]): string {
 }
 
 const ReadFilesToggle: React.FC<{ tools: RemoteToolStatus[] }> = ({ tools }) => {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   if (tools.length === 0) return null;
 
   const doneCount = tools.filter(t => t.status === 'completed').length;
   const allDone = doneCount === tools.length;
-  const summary = buildGroupedToolSummary(tools);
-  const label = allDone ? summary : `${summary} (${doneCount} done)`;
+  const summary = buildGroupedToolSummary(tools, t);
+  const label = allDone
+    ? t('chat.readToolsDone', { summary })
+    : t('chat.readToolsRunning', { summary, doneCount });
 
   return (
     <div className={`chat-thinking ${allDone ? '' : 'chat-thinking--streaming'}`}>
@@ -1020,6 +1040,7 @@ const ToolList: React.FC<{
   now: number;
   onCancelTool?: (toolId: string) => void;
 }> = ({ tools, now, onCancelTool }) => {
+  const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
   const [expanded, setExpanded] = useState(false);
@@ -1049,10 +1070,10 @@ const ToolList: React.FC<{
   return (
     <div className="chat-tool-list chat-tool-list--collapsed">
       <div className="chat-tool-list__header" onClick={() => setExpanded(e => !e)}>
-        <span className="chat-tool-list__count">{tools.length} tool call{tools.length === 1 ? '' : 's'}</span>
+        <span className="chat-tool-list__count">{t('chat.toolCalls', { count: tools.length, suffix: tools.length === 1 ? '' : 's' })}</span>
         <span className="chat-tool-list__stats">
-          {doneCount > 0 && <span className="chat-tool-list__stat chat-tool-list__stat--done">{doneCount} done</span>}
-          {runningCount > 0 && <span className="chat-tool-list__stat chat-tool-list__stat--running">{runningCount} running</span>}
+          {doneCount > 0 && <span className="chat-tool-list__stat chat-tool-list__stat--done">{t('chat.done', { count: doneCount })}</span>}
+          {runningCount > 0 && <span className="chat-tool-list__stat chat-tool-list__stat--running">{t('chat.running', { count: runningCount })}</span>}
         </span>
         <span className={`chat-tool-list__chevron ${expanded ? 'is-expanded' : ''}`}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
@@ -1168,6 +1189,7 @@ const isOtherQuestionOption = (label?: string) => {
 };
 
 const AskQuestionCard: React.FC<AskQuestionCardProps> = ({ tool, onAnswer }) => {
+  const { t } = useI18n();
   const questions: any[] = tool.tool_input?.questions || [];
   const [selected, setSelected] = useState<Record<number, string | string[]>>({});
   const [customTexts, setCustomTexts] = useState<Record<number, string>>({});
@@ -1232,9 +1254,9 @@ const AskQuestionCard: React.FC<AskQuestionCardProps> = ({ tool, onAnswer }) => 
   return (
     <div className="chat-ask-card">
       <div className="chat-ask-card__header">
-        <span className="chat-ask-card__count">{questions.length} question{questions.length > 1 ? 's' : ''}</span>
+        <span className="chat-ask-card__count">{t('chat.askQuestionCount', { count: questions.length, suffix: questions.length > 1 ? 's' : '' })}</span>
         {!submitted && !submitting && (
-          <span className="chat-ask-card__waiting">Waiting</span>
+          <span className="chat-ask-card__waiting">{t('chat.waiting')}</span>
         )}
       </div>
       {normalizedQuestions.map((q, qIdx) => {
@@ -1287,14 +1309,14 @@ const AskQuestionCard: React.FC<AskQuestionCardProps> = ({ tool, onAnswer }) => 
                       </svg>
                     )}
                   </span>
-                  <span className="chat-ask-card__option-label">Other</span>
-                  <span className="chat-ask-card__option-desc">Custom text input</span>
+                  <span className="chat-ask-card__option-label">{t('common.other')}</span>
+                  <span className="chat-ask-card__option-desc">{t('common.customTextInput')}</span>
                 </button>
               )}
               {isOtherSelected && (
                 <input
                   className="chat-ask-card__custom-input"
-                  placeholder="Type your answer..."
+                  placeholder={t('common.typeYourAnswer')}
                   value={customTexts[qIdx] || ''}
                   onChange={(e) => setCustomTexts(prev => ({ ...prev, [qIdx]: e.target.value }))}
                   disabled={submitted || submitting}
@@ -1310,7 +1332,7 @@ const AskQuestionCard: React.FC<AskQuestionCardProps> = ({ tool, onAnswer }) => 
         onClick={handleSubmit}
       >
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 8L6 12L14 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        {submitted ? 'Submitted' : submitting ? 'Submitting...' : 'Submit'}
+        {submitted ? t('common.submitted') : submitting ? t('common.submitting') : t('common.submit')}
       </button>
     </div>
   );
@@ -1548,19 +1570,340 @@ const ThemeToggleIcon: React.FC<{ isDark: boolean }> = ({ isDark }) => (
   </svg>
 );
 
+const SparklesIcon: React.FC<{ className?: string; size?: number }> = ({ className, size = 10 }) => (
+  <svg
+    className={className}
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.937A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.582a.5.5 0 0 1 0 .962L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z" />
+    <path d="M20 3v4" />
+    <path d="M22 5h-4" />
+    <path d="M4 17v2" />
+    <path d="M5 18H3" />
+  </svg>
+);
+
+type ModelSelectionValue = 'auto' | 'primary' | 'fast' | string;
+
+function formatProviderName(provider: string): string {
+  const normalized = provider.trim();
+  if (!normalized) return 'Unknown';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function getModelProviderLabel(model: RemoteModelConfig): string {
+  const configuredName = model.name?.trim();
+  if (configuredName) return configuredName;
+  return formatProviderName(model.provider);
+}
+
+function formatContextWindow(contextWindow?: number): string | null {
+  if (!contextWindow) return null;
+  return `${Math.round(contextWindow / 1000)}k`;
+}
+
+function isChatCapableModel(model: RemoteModelConfig): boolean {
+  return model.enabled && Array.isArray(model.capabilities) && model.capabilities.includes('text_chat');
+}
+
+function normalizeSelectedModelId(
+  selectedModelId: string | null | undefined,
+  catalog: RemoteModelCatalog | null,
+): string {
+  const value = selectedModelId?.trim();
+  if (!value || value === 'auto' || value === 'default') return 'auto';
+  if (value === 'primary' || value === 'fast') {
+    const defaultId = value === 'primary'
+      ? catalog?.default_models?.primary
+      : catalog?.default_models?.fast;
+    return defaultId && resolveModelSelection(defaultId, catalog) ? value : 'auto';
+  }
+  return resolveModelSelection(value, catalog) ? value : 'auto';
+}
+
+function loadLastSelectedModelId(): string | null {
+  if (typeof window === 'undefined') return null;
+  const value = window.localStorage.getItem(MOBILE_LAST_SELECTED_MODEL_ID_KEY)?.trim();
+  return value || null;
+}
+
+function persistLastSelectedModelId(modelId: string): void {
+  if (typeof window === 'undefined') return;
+  const value = modelId.trim();
+  if (!value) {
+    window.localStorage.removeItem(MOBILE_LAST_SELECTED_MODEL_ID_KEY);
+    return;
+  }
+  window.localStorage.setItem(MOBILE_LAST_SELECTED_MODEL_ID_KEY, value);
+}
+
+function resolvePreferredModelSelection(
+  preferredModelId: string | null,
+  catalog: RemoteModelCatalog | null,
+): { modelId: string | null; fellBackToAuto: boolean } {
+  const value = preferredModelId?.trim();
+  if (!value) {
+    return { modelId: null, fellBackToAuto: false };
+  }
+
+  const normalizedModelId = normalizeSelectedModelId(value, catalog);
+  const fellBackToAuto = normalizedModelId === 'auto' && value !== 'auto' && value !== 'default';
+  return {
+    modelId: normalizedModelId,
+    fellBackToAuto,
+  };
+}
+
+function resolveModelSelection(
+  modelId: string,
+  catalog: RemoteModelCatalog | null,
+): RemoteModelConfig | null {
+  if (!catalog) return null;
+  return catalog.models.find(model => model.id === modelId) || null;
+}
+
+function buildModelProviderMeta(model: RemoteModelConfig | null): string | null {
+  if (!model) return null;
+  const parts = [getModelProviderLabel(model)];
+  const context = formatContextWindow(model.context_window);
+  if (context) parts.push(context);
+  return parts.join(' · ');
+}
+
+function getModelDisplayName(model: RemoteModelConfig | null): string {
+  if (!model) return '';
+  return model.model_name || model.name || '';
+}
+
+function getSelectedModelInfo(
+  selectedModelId: string,
+  catalog: RemoteModelCatalog | null,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): {
+  label: string;
+  meta: string | null;
+  enableThinking: boolean;
+  reasoningEffort?: string;
+} {
+  if (selectedModelId === 'auto') {
+    return {
+      label: t('chat.modelAuto'),
+      meta: t('chat.modelAutoDesc'),
+      enableThinking: false,
+    };
+  }
+
+  if (selectedModelId === 'primary' || selectedModelId === 'fast') {
+    const defaultId = selectedModelId === 'primary'
+      ? catalog?.default_models?.primary
+      : catalog?.default_models?.fast;
+    const resolved = defaultId ? resolveModelSelection(defaultId, catalog) : null;
+    return {
+      label: resolved
+        ? (selectedModelId === 'primary' ? t('chat.modelPrimary') : t('chat.modelFast'))
+        : t('chat.modelAuto'),
+      meta: buildModelProviderMeta(resolved) || t('chat.modelAutoDesc'),
+      enableThinking: !!resolved?.enable_thinking_process,
+      reasoningEffort: resolved?.reasoning_effort,
+    };
+  }
+
+  const resolved = resolveModelSelection(selectedModelId, catalog);
+  if (!resolved) {
+    return {
+      label: t('chat.modelAuto'),
+      meta: t('chat.modelAutoDesc'),
+      enableThinking: false,
+    };
+  }
+
+  return {
+    label: getModelDisplayName(resolved),
+    meta: buildModelProviderMeta(resolved),
+    enableThinking: resolved.enable_thinking_process,
+    reasoningEffort: resolved.reasoning_effort,
+  };
+}
+
+const ModelSelectorPill: React.FC<{
+  catalog: RemoteModelCatalog | null;
+  selectedModelId: string;
+  disabled?: boolean;
+  onSelect: (modelId: string) => void | Promise<void>;
+}> = ({ catalog, selectedModelId, disabled, onSelect }) => {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const normalizedSelectedModelId = useMemo(
+    () => normalizeSelectedModelId(selectedModelId, catalog),
+    [catalog, selectedModelId],
+  );
+
+  const availableModels = useMemo(
+    () => (catalog?.models || []).filter(isChatCapableModel),
+    [catalog],
+  );
+  const resolvedPrimaryModel = useMemo(
+    () => resolveModelSelection(catalog?.default_models?.primary || '', catalog),
+    [catalog],
+  );
+  const resolvedFastModel = useMemo(
+    () => resolveModelSelection(catalog?.default_models?.fast || '', catalog),
+    [catalog],
+  );
+  const selectedInfo = useMemo(
+    () => getSelectedModelInfo(normalizedSelectedModelId, catalog, t),
+    [catalog, normalizedSelectedModelId, t],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [open]);
+
+  if (!catalog) return null;
+
+  const handleSelect = async (modelId: string) => {
+    await onSelect(modelId);
+    setOpen(false);
+  };
+
+  return (
+    <div className="chat-model-selector" ref={rootRef}>
+      <button
+        className={`chat-model-selector__trigger${open ? ' chat-model-selector__trigger--open' : ''}`}
+        type="button"
+        onClick={() => setOpen(prev => !prev)}
+        disabled={disabled}
+        aria-label={t('chat.modelSelection')}
+      >
+        <span className="chat-model-selector__icon" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+            <rect x="4" y="4" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
+            <rect x="14" y="4" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
+            <rect x="9" y="14" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
+            <path d="M10 7h4M12 10v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+          </svg>
+        </span>
+        <span className="chat-model-selector__name">
+          <span className="chat-model-selector__name-text">{selectedInfo.label}</span>
+          {selectedInfo.enableThinking && (
+            <SparklesIcon className="chat-model-selector__thinking" size={9} />
+          )}
+        </span>
+        {selectedInfo.reasoningEffort && (
+          <span className="chat-model-selector__effort">{selectedInfo.reasoningEffort}</span>
+        )}
+        <span className="chat-model-selector__chevron" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </button>
+
+      {open && (
+        <div className="chat-model-selector__dropdown">
+          <div className="chat-model-selector__header">{t('chat.modelSelection')}</div>
+          <button
+            className={`chat-model-selector__option${normalizedSelectedModelId === 'auto' ? ' is-selected' : ''}`}
+            type="button"
+            onClick={() => void handleSelect('auto')}
+          >
+            <span className="chat-model-selector__option-main">
+              <span className="chat-model-selector__option-name">{t('chat.modelAuto')}</span>
+              <span className="chat-model-selector__option-meta">{t('chat.modelAutoDesc')}</span>
+            </span>
+          </button>
+          <button
+            className={`chat-model-selector__option${normalizedSelectedModelId === 'primary' ? ' is-selected' : ''}`}
+            type="button"
+            onClick={() => void handleSelect('primary')}
+          >
+            <span className="chat-model-selector__option-main">
+              <span className="chat-model-selector__option-name">{t('chat.modelPrimary')}</span>
+              <span className="chat-model-selector__option-meta chat-model-selector__option-meta--stacked">
+                <span className="chat-model-selector__option-meta-line">
+                  {getModelDisplayName(resolvedPrimaryModel) || t('chat.modelAuto')}
+                </span>
+                <span className="chat-model-selector__option-meta-line">
+                  {buildModelProviderMeta(resolvedPrimaryModel) || t('chat.modelAutoDesc')}
+                </span>
+              </span>
+            </span>
+          </button>
+          <button
+            className={`chat-model-selector__option${normalizedSelectedModelId === 'fast' ? ' is-selected' : ''}`}
+            type="button"
+            onClick={() => void handleSelect('fast')}
+          >
+            <span className="chat-model-selector__option-main">
+              <span className="chat-model-selector__option-name">{t('chat.modelFast')}</span>
+              <span className="chat-model-selector__option-meta chat-model-selector__option-meta--stacked">
+                <span className="chat-model-selector__option-meta-line">
+                  {getModelDisplayName(resolvedFastModel) || t('chat.modelAuto')}
+                </span>
+                <span className="chat-model-selector__option-meta-line">
+                  {buildModelProviderMeta(resolvedFastModel) || t('chat.modelAutoDesc')}
+                </span>
+              </span>
+            </span>
+          </button>
+          <div className="chat-model-selector__divider" />
+          <div className="chat-model-selector__list">
+            {availableModels.map(model => {
+              const isSelected = normalizedSelectedModelId === model.id;
+              return (
+                <button
+                  key={model.id}
+                  className={`chat-model-selector__option${isSelected ? ' is-selected' : ''}`}
+                  type="button"
+                  onClick={() => void handleSelect(model.id)}
+                >
+                  <span className="chat-model-selector__option-main">
+                    <span className="chat-model-selector__option-name">
+                      <span className="chat-model-selector__option-name-text">
+                        {getModelDisplayName(model)}
+                      </span>
+                      {model.enable_thinking_process && (
+                        <SparklesIcon className="chat-model-selector__option-thinking" size={10} />
+                      )}
+                    </span>
+                    <span className="chat-model-selector__option-meta">
+                      {buildModelProviderMeta(model) || formatProviderName(model.provider)}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Agent Mode ─────────────────────────────────────────────────────────────
 
 type AgentMode = 'agentic' | 'Plan' | 'debug';
 
-const MODE_OPTIONS: { id: AgentMode; label: string }[] = [
-  { id: 'agentic', label: 'Agentic' },
-  { id: 'Plan', label: 'Plan' },
-  { id: 'debug', label: 'Debug' },
-];
-
 // ─── ChatPage ───────────────────────────────────────────────────────────────
 
 const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName, onBack, autoFocus }) => {
+  const { t } = useI18n();
   const {
     getMessages,
     setMessages,
@@ -1574,10 +1917,18 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
   } = useMobileStore();
 
   const { isDark, toggleTheme } = useTheme();
+  const modeOptions: { id: AgentMode; label: string }[] = useMemo(() => ([
+    { id: 'agentic', label: t('chat.modeAgentic') },
+    { id: 'Plan', label: t('chat.modePlan') },
+    { id: 'debug', label: t('chat.modeDebug') },
+  ]), [t]);
   const messages = getMessages(sessionId);
   const [input, setInput] = useState('');
   const [agentMode, setAgentMode] = useState<AgentMode>('agentic');
   const [liveTitle, setLiveTitle] = useState(sessionName);
+  const [modelCatalog, setModelCatalog] = useState<RemoteModelCatalog | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string>('auto');
+  const [modelUpdating, setModelUpdating] = useState(false);
   const [pendingImages, setPendingImages] = useState<{ name: string; dataUrl: string }[]>([]);
   const [imageAnalyzing, setImageAnalyzing] = useState(false);
   const [optimisticMsg, setOptimisticMsg] = useState<{
@@ -1591,6 +1942,9 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
 
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const isLoadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const modelSelectionInitializedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [expandedMsgIds, setExpandedMsgIds] = useState<Set<string>>(new Set());
@@ -1645,6 +1999,50 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
     }
   }, [sessionId, sessionMgr, setError]);
 
+  const loadModelCatalog = useCallback(async () => {
+    try {
+      const catalog = await sessionMgr.getModelCatalog(sessionId);
+      setModelCatalog(catalog);
+      if (!modelSelectionInitializedRef.current) {
+        const preferredSelection = resolvePreferredModelSelection(loadLastSelectedModelId(), catalog);
+        const sessionModelId = normalizeSelectedModelId(catalog.session_model_id || 'auto', catalog);
+        const nextModelId = preferredSelection.modelId || sessionModelId;
+
+        if (preferredSelection.modelId && preferredSelection.modelId !== sessionModelId) {
+          const normalizedModelId = await sessionMgr.setSessionModel(sessionId, preferredSelection.modelId);
+          setSelectedModelId(normalizedModelId || 'auto');
+          if (preferredSelection.fellBackToAuto && (!normalizedModelId || normalizedModelId === 'auto')) {
+            persistLastSelectedModelId('auto');
+          }
+        } else {
+          setSelectedModelId(nextModelId || 'auto');
+          if (preferredSelection.fellBackToAuto && nextModelId === 'auto') {
+            persistLastSelectedModelId('auto');
+          }
+        }
+        modelSelectionInitializedRef.current = true;
+      }
+      return catalog;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }, [sessionId, sessionMgr, setError]);
+
+  const handleSelectModel = useCallback(async (modelId: string) => {
+    if (modelUpdating || isStreaming || imageAnalyzing) return;
+    setModelUpdating(true);
+    try {
+      const normalizedModelId = await sessionMgr.setSessionModel(sessionId, modelId);
+      setSelectedModelId(normalizedModelId || 'auto');
+      persistLastSelectedModelId(normalizedModelId || 'auto');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModelUpdating(false);
+    }
+  }, [imageAnalyzing, isStreaming, modelUpdating, sessionId, sessionMgr, setError]);
+
   useEffect(() => {
     if (!isStreaming) return;
     const timer = setInterval(() => setNow(Date.now()), 500);
@@ -1658,8 +2056,9 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
   }, [error, setError]);
 
   const loadMessages = useCallback(async (beforeId?: string) => {
-    if (isLoadingMore || (!hasMore && beforeId)) return;
+    if (isLoadingMoreRef.current || (!hasMoreRef.current && beforeId)) return;
     try {
+      isLoadingMoreRef.current = true;
       setIsLoadingMore(true);
       const resp = await sessionMgr.getSessionMessages(sessionId, 50, beforeId);
       if (beforeId) {
@@ -1669,12 +2068,14 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
         setMessages(sessionId, resp.messages);
       }
       setHasMore(resp.has_more);
+      hasMoreRef.current = resp.has_more;
     } catch (e: any) {
       setError(e.message);
     } finally {
+      isLoadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [sessionMgr, sessionId, setMessages, setError, getMessages, isLoadingMore, hasMore]);
+  }, [sessionMgr, sessionId, setMessages, setError, getMessages]);
 
   const isNearBottomRef = useRef(true);
   const BOTTOM_THRESHOLD = 80;
@@ -1696,9 +2097,19 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
   const initialScrollDone = useRef(false);
   const pendingInitialScroll = useRef(false);
   useEffect(() => {
+    modelSelectionInitializedRef.current = false;
+    hasMoreRef.current = true;
+    isLoadingMoreRef.current = false;
+    setHasMore(true);
+    setIsLoadingMore(false);
+    setModelCatalog(null);
+    setSelectedModelId('auto');
+  }, [sessionId]);
+
+  useEffect(() => {
     initialScrollDone.current = false;
     pendingInitialScroll.current = false;
-    loadMessages().then(() => {
+    Promise.all([loadMessages(), loadModelCatalog()]).then(([_, initialCatalog]) => {
       const initialMsgCount = useMobileStore.getState().getMessages(sessionId).length;
       pendingInitialScroll.current = true;
 
@@ -1723,8 +2134,11 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
           setLiveTitle(resp.title);
           updateSessionName(sessionId, resp.title);
         }
+        if (resp.model_catalog) {
+          setModelCatalog(resp.model_catalog);
+        }
         setActiveTurn(resp.active_turn ?? null);
-      });
+      }, initialCatalog?.version || 0);
 
       poller.start(initialMsgCount);
       pollerRef.current = poller;
@@ -1735,7 +2149,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
       pollerRef.current = null;
       setActiveTurn(null);
     };
-  }, [sessionId, sessionMgr]);
+  }, [sessionId, sessionMgr, loadMessages, loadModelCatalog, appendNewMessages, setActiveTurn, updateSessionName]);
 
   const prevMsgCountRef = useRef(0);
 
@@ -1821,7 +2235,12 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
     }
 
     try {
-      await sessionMgr.sendMessage(sessionId, text || '(see attached images)', agentMode, imageContexts);
+      await sessionMgr.sendMessage(
+        sessionId,
+        text || t('chat.imageAttachmentFallback'),
+        agentMode,
+        imageContexts,
+      );
       pollerRef.current?.nudge();
     } catch (e: any) {
       setError(e.message);
@@ -1829,7 +2248,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
       setImageAnalyzing(false);
       setOptimisticMsg(null);
     }
-  }, [input, pendingImages, isStreaming, sessionId, sessionMgr, setError, agentMode]);
+  }, [agentMode, imageAnalyzing, input, isStreaming, pendingImages, sessionId, sessionMgr, setError, t]);
 
   const handleImageSelect = useCallback(() => {
     fileInputRef.current?.click();
@@ -1927,14 +2346,14 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
 
   const workspaceName = currentWorkspace?.project_name || currentWorkspace?.path?.split('/').pop() || '';
   const gitBranch = currentWorkspace?.git_branch;
-  const displayName = liveTitle || sessionName || 'Session';
+  const displayName = liveTitle || sessionName || t('chat.session');
 
   return (
     <div className="chat-page">
       {/* Header */}
       <div className="chat-page__header">
         <div className="chat-page__header-row">
-          <button className="chat-page__back" onClick={onBack} aria-label="Back">
+          <button className="chat-page__back" onClick={onBack} aria-label={t('common.back')}>
             <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
               <path d="M12 4L6 10L12 16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -1954,7 +2373,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
             )}
           </div>
           <div className="chat-page__header-right">
-            <button className="chat-page__theme-btn" onClick={toggleTheme} aria-label="Toggle theme">
+            <button className="chat-page__theme-btn" onClick={toggleTheme} aria-label={t('common.toggleTheme')}>
               <ThemeToggleIcon isDark={isDark} />
             </button>
           </div>
@@ -1964,7 +2383,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
       {/* Messages */}
       <div className="chat-page__messages" ref={messagesContainerRef} onScroll={handleScroll}>
         {isLoadingMore && (
-          <div className="chat-page__load-more-indicator">Loading older messages…</div>
+          <div className="chat-page__load-more-indicator">{t('chat.loadingOlderMessages')}</div>
         )}
 
         {(() => {
@@ -2030,7 +2449,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
                         <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
                     </span>
-                    <span className="chat-msg__response-label">Show response</span>
+                    <span className="chat-msg__response-label">{t('chat.showResponse')}</span>
                   </button>
                 </div>
               );
@@ -2052,7 +2471,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
                         <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
                     </span>
-                    <span className="chat-msg__response-label">Hide response</span>
+                    <span className="chat-msg__response-label">{t('chat.hideResponse')}</span>
                   </button>
                 )}
                 {hasItems ? (
@@ -2105,7 +2524,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
               ]
             : [];
           const onCancel = (toolId: string) => {
-            sessionMgr.cancelTool(toolId, 'User cancelled').catch(err => { setError(String(err)); });
+            sessionMgr.cancelTool(toolId, t('common.cancel')).catch(err => { setError(String(err)); });
           };
 
           return (
@@ -2178,7 +2597,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
                     <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
                   </svg>
                 </div>
-                <span>Analyzing image with image understanding model...</span>
+                <span>{t('chat.analyzingImage')}</span>
                 <TypingDots />
               </div>
             </div>
@@ -2211,7 +2630,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
               <textarea
                 ref={inputRef}
                 className="chat-page__input"
-                placeholder="How can I help you..."
+                placeholder={t('chat.inputPlaceholder')}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -2222,7 +2641,11 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
               />
             ) : (
               <span className="chat-page__input-placeholder">
-                {imageAnalyzing ? 'Analyzing image...' : isStreaming ? 'BitFun is working...' : 'How can I help you...'}
+                {imageAnalyzing
+                  ? t('chat.imageAnalyzingPlaceholder')
+                  : isStreaming
+                    ? t('chat.workingPlaceholder')
+                    : t('chat.inputPlaceholder')}
               </span>
             )}
           </div>
@@ -2230,6 +2653,14 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
           {/* Actions bar */}
           <div className="chat-page__input-actions">
             <div className="chat-page__input-actions-left">
+                {inputExpanded && (
+                  <ModelSelectorPill
+                    catalog={modelCatalog}
+                    selectedModelId={selectedModelId}
+                    disabled={isStreaming || imageAnalyzing || modelUpdating}
+                    onSelect={handleSelectModel}
+                  />
+                )}
               {inputExpanded && pendingImages.length > 0 && (
                 <div className="chat-page__image-preview-row">
                   {pendingImages.map((img, idx) => (
@@ -2253,13 +2684,13 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
                     }}
                     disabled={isStreaming}
                   >
-                    {MODE_OPTIONS.find(m => m.id === agentMode)?.label}
+                    {modeOptions.find(m => m.id === agentMode)?.label}
                   </button>
                   <button
                     className="chat-page__action-btn"
                     onClick={handleImageSelect}
                     disabled={isStreaming || pendingImages.length >= 5}
-                    aria-label="Attach image"
+                    aria-label={t('common.attachImage')}
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                       <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
@@ -2270,7 +2701,7 @@ const ChatPage: React.FC<ChatPageProps> = ({ sessionMgr, sessionId, sessionName,
                 </>
               )}
               {isStreaming || imageAnalyzing ? (
-                <button className="chat-page__send-btn is-stop" onClick={imageAnalyzing ? undefined : handleCancel} aria-label="Stop" disabled={imageAnalyzing}>
+                <button className="chat-page__send-btn is-stop" onClick={imageAnalyzing ? undefined : handleCancel} aria-label={t('common.stop')} disabled={imageAnalyzing}>
                   {imageAnalyzing ? (
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'analyzeSpin 2s linear infinite' }}>
                       <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"/>

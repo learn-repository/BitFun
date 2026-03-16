@@ -12,9 +12,30 @@ import { useCallback } from 'react';
 import { FlowChatManager } from '../services/FlowChatManager';
 import { notificationService } from '@/shared/notification-system';
 import type { ContextItem, ImageContext } from '@/shared/types/context';
+import type { AIModelConfig, DefaultModelsConfig } from '@/infrastructure/config/types';
 import { createLogger } from '@/shared/utils/logger';
 
 const log = createLogger('FlowChat');
+
+function normalizeModelSelection(
+  modelId: string | undefined,
+  models: AIModelConfig[],
+  defaultModels: DefaultModelsConfig,
+): string {
+  const value = modelId?.trim();
+  if (!value || value === 'auto') return 'auto';
+
+  if (value === 'primary' || value === 'fast') {
+    const resolvedDefaultId = value === 'primary' ? defaultModels.primary : defaultModels.fast;
+    const matchedModel = models.find(model => model.id === resolvedDefaultId);
+    return matchedModel ? value : 'auto';
+  }
+
+  const matchedModel = models.find(model =>
+    model.id === value || model.name === value || model.model_name === value,
+  );
+  return matchedModel ? value : 'auto';
+}
 
 interface UseMessageSenderProps {
   /** Current session ID */
@@ -76,13 +97,19 @@ export function useMessageSender(props: UseMessageSenderProps): UseMessageSender
       const flowChatManager = FlowChatManager.getInstance();
 
       if (!sessionId) {
-        const { getDefaultPrimaryModel } = await import('@/infrastructure/config/utils/modelConfigHelpers');
-        const modelId = await getDefaultPrimaryModel();
+        const { configManager } = await import('@/infrastructure/config/services/ConfigManager');
+        const [agentModels, allModels, defaultModels] = await Promise.all([
+          configManager.getConfig<Record<string, string>>('ai.agent_models') || {},
+          configManager.getConfig<AIModelConfig[]>('ai.models') || [],
+          configManager.getConfig<DefaultModelsConfig>('ai.default_models') || {},
+        ]);
+        const agentType = currentAgentType || 'agentic';
+        const modelId = normalizeModelSelection(agentModels[agentType], allModels, defaultModels);
 
         sessionId = await flowChatManager.createChatSession({
           modelName: modelId || undefined
-        }, currentAgentType || 'agentic');
-        log.debug('Session created', { sessionId, modelId });
+        }, agentType);
+        log.debug('Session created', { sessionId, modelId, agentType });
       } else {
         log.debug('Reusing existing session', { sessionId });
       }
@@ -148,6 +175,18 @@ export function useMessageSender(props: UseMessageSenderProps): UseMessageSender
               return `[Git Ref: ${ctx.refValue}]`;
             case 'url':
               return `[URL: ${ctx.url}]`;
+            case 'web-element': {
+              const attrStr = Object.entries(ctx.attributes)
+                .map(([k, v]) => `${k}="${v}"`)
+                .join(' ');
+              const lines = [
+                `[Web Element: <${ctx.tagName}${attrStr ? ' ' + attrStr : ''}>]`,
+                `CSS Path: ${ctx.path}`,
+              ];
+              if (ctx.textContent) lines.push(`Text Content: ${ctx.textContent}`);
+              if (ctx.outerHTML) lines.push(`Outer HTML:\n\`\`\`html\n${ctx.outerHTML}\n\`\`\``);
+              return lines.join('\n');
+            }
             default:
               return '';
           }

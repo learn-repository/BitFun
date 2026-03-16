@@ -26,7 +26,6 @@ use api::ai_rules_api::*;
 use api::clipboard_file_api::*;
 use api::commands::*;
 use api::config_api::*;
-use api::session_api::*;
 use api::diff_api::*;
 use api::git_agent_api::*;
 use api::git_api::*;
@@ -35,6 +34,7 @@ use api::lsp_api::*;
 use api::lsp_workspace_api::*;
 use api::mcp_api::*;
 use api::runtime_api::*;
+use api::session_api::*;
 use api::skill_api::*;
 use api::snapshot_service::*;
 use api::startchat_agent_api::*;
@@ -295,7 +295,9 @@ pub async fn run() {
         .invoke_handler(tauri::generate_handler![
             theme::show_main_window,
             api::agentic_api::create_session,
+            api::agentic_api::update_session_model,
             api::agentic_api::start_dialog_turn,
+            api::agentic_api::ensure_assistant_bootstrap,
             api::agentic_api::cancel_dialog_turn,
             api::agentic_api::delete_session,
             api::agentic_api::restore_session,
@@ -306,6 +308,9 @@ pub async fn run() {
             api::agentic_api::cancel_tool,
             api::agentic_api::generate_session_title,
             api::agentic_api::get_available_modes,
+            api::btw_api::btw_ask,
+            api::btw_api::btw_ask_stream,
+            api::btw_api::btw_cancel,
             api::image_analysis_api::analyze_images,
             api::image_analysis_api::send_enhanced_message,
             api::context_upload_api::upload_image_contexts,
@@ -323,6 +328,7 @@ pub async fn run() {
             get_statistics,
             test_ai_connection,
             test_ai_config_connection,
+            list_ai_models_by_config,
             initialize_ai,
             set_agent_model,
             get_agent_models,
@@ -545,6 +551,7 @@ pub async fn run() {
             subscribe_config_updates,
             get_model_configs,
             get_recent_workspaces,
+            cleanup_invalid_workspaces,
             get_opened_workspaces,
             open_workspace,
             create_assistant_workspace,
@@ -552,6 +559,7 @@ pub async fn run() {
             reset_assistant_workspace,
             close_workspace,
             set_active_workspace,
+            reorder_opened_workspaces,
             get_current_workspace,
             scan_workspace_info,
             api::prompt_template_api::get_prompt_template_config,
@@ -625,6 +633,9 @@ pub async fn run() {
             api::miniapp_api::miniapp_dialog_message,
             api::miniapp_api::miniapp_import_from_path,
             api::miniapp_api::miniapp_sync_from_fs,
+            // Browser API
+            api::browser_api::browser_webview_eval,
+            api::browser_api::browser_pull_debug_logs,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = run_result {
@@ -713,10 +724,10 @@ async fn init_agentic_system() -> anyhow::Result<(
             .map_err(|e| anyhow::anyhow!("Failed to initialize token usage service: {}", e))?,
     );
     let token_usage_subscriber = Arc::new(
-        bitfun_core::service::token_usage::TokenUsageSubscriber::new(token_usage_service.clone())
+        bitfun_core::service::token_usage::TokenUsageSubscriber::new(token_usage_service.clone()),
     );
     event_router.subscribe_internal("token_usage".to_string(), token_usage_subscriber);
-    
+
     log::info!("Token usage service initialized and subscriber registered");
 
     // Create the DialogScheduler and wire up the outcome notification channel
@@ -836,7 +847,10 @@ fn init_services(app_handle: tauri::AppHandle, default_log_level: log::LevelFilt
             .set_event_emitter(emitter.clone())
             .await
         {
-            log::error!("Failed to initialize workspace identity watch service: {}", e);
+            log::error!(
+                "Failed to initialize workspace identity watch service: {}",
+                e
+            );
         }
 
         if let Err(e) = service::lsp::initialize_global_lsp_manager().await {

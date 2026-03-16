@@ -9,15 +9,17 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useWorkspaceContext } from '../../infrastructure/contexts/WorkspaceContext';
 import { useWindowControls } from '../hooks/useWindowControls';
+import { useAssistantBootstrap } from '../hooks/useAssistantBootstrap';
 import { useApp } from '../hooks/useApp';
 import { useSceneStore } from '../stores/sceneStore';
 
 type TransitionDirection = 'entering' | 'returning' | null;
 import { FlowChatManager } from '../../flow_chat/services/FlowChatManager';
 import WorkspaceBody from './WorkspaceBody';
-import { ChatInput, ToolbarMode, useToolbarModeContext } from '../../flow_chat';
+import { ToolbarMode, useToolbarModeContext } from '../../flow_chat';
 import { FloatingMiniChat } from './FloatingMiniChat';
 import { NewProjectDialog } from '../components/NewProjectDialog';
 import { AboutDialog } from '../components/AboutDialog';
@@ -27,6 +29,7 @@ import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { createLogger } from '@/shared/utils/logger';
 import { useI18n } from '@/infrastructure/i18n';
 import { WorkspaceKind } from '@/shared/types';
+import { shortcutManager } from '@/infrastructure/services/ShortcutManager';
 import './AppLayout.scss';
 
 const log = createLogger('AppLayout');
@@ -53,6 +56,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
   const { currentWorkspace, hasWorkspace, openWorkspace, recentWorkspaces, loading } = useWorkspaceContext();
 
   const { isToolbarMode } = useToolbarModeContext();
+  const { ensureForWorkspace: ensureAssistantBootstrapForWorkspace } = useAssistantBootstrap();
 
   const { handleMinimize, handleMaximize, handleClose, isMaximized } =
     useWindowControls({ isToolbarMode });
@@ -83,6 +87,21 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [showWorkspaceStatus, setShowWorkspaceStatus] = useState(false);
+  const handleOpenProject = useCallback(async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: t('header.selectProjectDirectory'),
+      });
+
+      if (selected && typeof selected === 'string') {
+        await openWorkspace(selected);
+      }
+    } catch (error) {
+      log.error('Failed to open project', error);
+    }
+  }, [openWorkspace, t]);
   const handleNewProject = useCallback(() => setShowNewProjectDialog(true), []);
   const handleShowAbout  = useCallback(() => setShowAboutDialog(true), []);
 
@@ -100,12 +119,15 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
 
   // Listen for nav-panel events dispatched by the workspace area
   useEffect(() => {
+    const onOpenProject = () => { void handleOpenProject(); };
     const onNewProject = () => handleNewProject();
+    window.addEventListener('nav:open-project', onOpenProject);
     window.addEventListener('nav:new-project', onNewProject);
     return () => {
+      window.removeEventListener('nav:open-project', onOpenProject);
       window.removeEventListener('nav:new-project', onNewProject);
     };
-  }, [handleNewProject]);
+  }, [handleNewProject, handleOpenProject]);
 
   // macOS native menubar events (previously in TitleBar)
   const isMacOS = useMemo(() => {
@@ -167,6 +189,11 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
           sessionId = await flowChatManager.createChatSession({}, initialSessionMode);
         }
 
+        const activeSessionId = sessionId || flowChatStore.getState().activeSessionId;
+        if (currentWorkspace.workspaceKind === WorkspaceKind.Assistant && activeSessionId) {
+          ensureAssistantBootstrapForWorkspace(currentWorkspace, activeSessionId);
+        }
+
         const pendingDescription = sessionStorage.getItem('pendingProjectDescription');
         if (pendingDescription && pendingDescription.trim()) {
           sessionStorage.removeItem('pendingProjectDescription');
@@ -216,7 +243,13 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
     };
 
     initializeFlowChat();
-  }, [currentWorkspace?.rootPath, t]);
+  }, [
+    currentWorkspace?.id,
+    currentWorkspace?.rootPath,
+    currentWorkspace?.workspaceKind,
+    ensureAssistantBootstrapForWorkspace,
+    t,
+  ]);
 
   // Save in-progress conversations on window close
   React.useEffect(() => {
@@ -277,6 +310,27 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
     };
     window.addEventListener('toolbar-send-message', handleToolbarSendMessage);
     return () => window.removeEventListener('toolbar-send-message', handleToolbarSendMessage);
+  }, []);
+
+  // Global /btw shortcut (Ctrl/Cmd+Alt+B): fill ChatInput with "/btw ".
+  React.useEffect(() => {
+    const unregister = shortcutManager.register(
+      'btw-fill',
+      { key: 'B', ctrl: true, alt: true },
+      () => {
+        const selected = (window.getSelection?.()?.toString() ?? '').trim();
+        const message = selected ? `/btw Explain this:\n\n${selected}` : '/btw ';
+        window.dispatchEvent(new CustomEvent('fill-chat-input', { detail: { message } }));
+      },
+      {
+        description: 'Fill /btw into chat input',
+        priority: 20
+      }
+    );
+
+    return () => {
+      unregister();
+    };
   }, []);
 
   // Toolbar cancel task
@@ -355,9 +409,6 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
             isMaximized={isMaximized}
             isEntering={transitionDir === 'entering'}
             isExiting={transitionDir === 'returning'}
-            sceneOverlay={!isWelcomeScene && !state.layout.chatCollapsed && isAgentScene ? (
-              <ChatInput onSendMessage={(_message: string) => {}} />
-            ) : undefined}
           />
         </main>
 

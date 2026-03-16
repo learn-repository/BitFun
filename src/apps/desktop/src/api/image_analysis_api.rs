@@ -1,7 +1,9 @@
 //! Image Analysis API
 
 use crate::api::app_state::AppState;
-use bitfun_core::agentic::coordination::{DialogScheduler, DialogTriggerSource};
+use bitfun_core::agentic::coordination::{
+    DialogScheduler, DialogSubmissionPolicy, DialogTriggerSource,
+};
 use bitfun_core::agentic::image_analysis::{
     resolve_vision_model_from_ai_config, AnalyzeImagesRequest, ImageAnalysisResult, ImageAnalyzer,
     MessageEnhancer, SendEnhancedMessageRequest,
@@ -93,10 +95,12 @@ pub async fn send_enhanced_message(
         .submit(
             request.session_id.clone(),
             enhanced_message,
+            Some(request.original_message.clone()),
             Some(request.dialog_turn_id.clone()),
             request.agent_type.clone(),
             None,
-            DialogTriggerSource::DesktopApi,
+            DialogSubmissionPolicy::for_source(DialogTriggerSource::DesktopApi),
+            None,
         )
         .await
         .map_err(|e| format!("Failed to send enhanced message: {}", e))?;

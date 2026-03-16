@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Folder, FolderOpen, MoreHorizontal, GitBranch, FolderSearch, Plus, ChevronDown, Bot, Trash2, RotateCcw } from 'lucide-react';
+import { Folder, FolderOpen, MoreHorizontal, GitBranch, FolderSearch, Plus, ChevronDown, Trash2, RotateCcw } from 'lucide-react';
 import { ConfirmDialog, Tooltip } from '@/component-library';
 import { useI18n } from '@/infrastructure/i18n';
 import { useWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
@@ -18,9 +18,21 @@ interface WorkspaceItemProps {
   workspace: WorkspaceInfo;
   isActive: boolean;
   isSingle?: boolean;
+  draggable?: boolean;
+  isDragging?: boolean;
+  onDragStart?: React.DragEventHandler<HTMLDivElement>;
+  onDragEnd?: React.DragEventHandler<HTMLDivElement>;
 }
 
-const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSingle = false }) => {
+const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
+  workspace,
+  isActive,
+  isSingle = false,
+  draggable = false,
+  isDragging = false,
+  onDragStart,
+  onDragEnd,
+}) => {
   const { t } = useI18n('common');
   const { setActiveWorkspace, closeWorkspaceById, deleteAssistantWorkspace, resetAssistantWorkspace } = useWorkspaceContext();
   const { switchLeftPanelTab } = useApp();
@@ -186,21 +198,31 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSi
     }
   }, [t, workspace.rootPath]);
 
-  const handleCreateSession = useCallback(async () => {
+  const handleCreateSession = useCallback(async (mode?: 'agentic' | 'Cowork' | 'Claw') => {
     setMenuOpen(false);
     try {
-      await handleActivate();
       await flowChatManager.createChatSession(
-        {},
-        workspace.workspaceKind === WorkspaceKind.Assistant ? 'Claw' : undefined
+        {
+          workspacePath: workspace.rootPath,
+        },
+        mode ?? (workspace.workspaceKind === WorkspaceKind.Assistant ? 'Claw' : undefined)
       );
+      await setActiveWorkspace(workspace.id);
     } catch (error) {
       notificationService.error(
         error instanceof Error ? error.message : t('nav.workspaces.createSessionFailed'),
         { duration: 4000 }
       );
     }
-  }, [handleActivate, t, workspace.workspaceKind]);
+  }, [setActiveWorkspace, t, workspace.id, workspace.rootPath, workspace.workspaceKind]);
+
+  const handleCreateCodeSession = useCallback(() => {
+    void handleCreateSession('agentic');
+  }, [handleCreateSession]);
+
+  const handleCreateCoworkSession = useCallback(() => {
+    void handleCreateSession('Cowork');
+  }, [handleCreateSession]);
 
   const handleCreateWorktree = useCallback(async (result: BranchSelectResult) => {
     try {
@@ -229,15 +251,167 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSi
     }
   }, [handleActivate, openNavScene, switchLeftPanelTab, t]);
 
+  if (workspace.workspaceKind === WorkspaceKind.Assistant) {
+    return (
+      <div className={[
+        'bitfun-nav-panel__assistant-item',
+        isActive && 'is-active',
+        isDragging && 'is-dragging',
+        menuOpen && 'is-menu-open',
+        sessionsCollapsed && 'is-sessions-collapsed',
+        isSingle && 'is-single',
+      ].filter(Boolean).join(' ')}
+      aria-grabbed={draggable ? isDragging : undefined}>
+        <div
+          className="bitfun-nav-panel__assistant-item-card"
+          draggable={draggable}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+        >
+          <button
+            type="button"
+            className="bitfun-nav-panel__assistant-item-collapse-btn"
+            onClick={handleCollapseToggle}
+            aria-label={sessionsCollapsed ? t('nav.workspaces.expandSessions') : t('nav.workspaces.collapseSessions')}
+            aria-expanded={!sessionsCollapsed}
+          >
+            <span className="bitfun-nav-panel__assistant-item-avatar" aria-hidden="true">
+              <span className="bitfun-nav-panel__assistant-item-avatar-letter">
+                {workspaceDisplayName.charAt(0)}
+              </span>
+              <span className={`bitfun-nav-panel__assistant-item-icon-toggle${sessionsCollapsed ? ' is-collapsed' : ''}`}>
+                <ChevronDown size={12} />
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="bitfun-nav-panel__assistant-item-name-btn"
+            onClick={() => { void handleCardNameClick(); }}
+          >
+            <span className="bitfun-nav-panel__assistant-item-label">{workspaceDisplayName}</span>
+            {isDefaultAssistantWorkspace ? (
+              <span
+                className="bitfun-nav-panel__assistant-item-badge"
+                title={t('nav.workspaces.primaryAssistant')}
+              >
+                {t('nav.workspaces.primaryAssistant')}
+              </span>
+            ) : null}
+          </button>
+
+          <div className="bitfun-nav-panel__assistant-item-menu" ref={menuRef}>
+            <Tooltip content={t('nav.items.project')} placement="right" followCursor>
+              <button
+                type="button"
+                className="bitfun-nav-panel__assistant-item-menu-trigger"
+                onClick={() => { void handleOpenFiles(); }}
+              >
+                <Folder size={14} />
+              </button>
+            </Tooltip>
+            <div ref={menuAnchorRef}>
+              <button
+                type="button"
+                className={`bitfun-nav-panel__assistant-item-menu-trigger${menuOpen ? ' is-open' : ''}`}
+                onClick={() => setMenuOpen(prev => !prev)}
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            </div>
+
+            {menuOpen && menuPosition && createPortal(
+              <div
+                ref={menuPopoverRef}
+                className="bitfun-nav-panel__workspace-item-menu-popover"
+                role="menu"
+                style={{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }}
+              >
+                <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={() => { void handleCreateSession(); }}>
+                  <Plus size={13} />
+                  <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newSession')}</span>
+                </button>
+                {isDefaultAssistantWorkspace && (
+                  <button
+                    type="button"
+                    className="bitfun-nav-panel__workspace-item-menu-item is-danger"
+                    onClick={handleRequestResetWorkspace}
+                    disabled={isResettingWorkspace}
+                  >
+                    <RotateCcw size={13} />
+                    <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.resetWorkspace')}</span>
+                  </button>
+                )}
+                {isNamedAssistantWorkspace && (
+                  <button
+                    type="button"
+                    className="bitfun-nav-panel__workspace-item-menu-item is-danger"
+                    onClick={handleRequestDeleteAssistant}
+                    disabled={isDeletingAssistant}
+                  >
+                    <Trash2 size={13} />
+                    <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.deleteAssistant')}</span>
+                  </button>
+                )}
+                <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={() => { void handleReveal(); }}>
+                  <FolderSearch size={13} />
+                  <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.reveal')}</span>
+                </button>
+              </div>,
+              document.body
+            )}
+          </div>
+        </div>
+
+        <div className={`bitfun-nav-panel__assistant-item-sessions${sessionsCollapsed ? ' is-collapsed' : ''}`}>
+          <SessionsSection
+            workspaceId={workspace.id}
+            workspacePath={workspace.rootPath}
+            isActiveWorkspace={isActive}
+          />
+        </div>
+
+        <ConfirmDialog
+          isOpen={deleteDialogOpen}
+          onClose={() => setDeleteDialogOpen(false)}
+          onConfirm={() => { void handleConfirmDeleteAssistant(); }}
+          title={t('nav.workspaces.deleteAssistantDialog.title', { name: workspaceDisplayName })}
+          message={t('nav.workspaces.deleteAssistantDialog.message')}
+          confirmText={t('nav.workspaces.actions.deleteAssistant')}
+          cancelText={t('actions.cancel')}
+          confirmDanger
+        />
+        <ConfirmDialog
+          isOpen={resetDialogOpen}
+          onClose={() => setResetDialogOpen(false)}
+          onConfirm={() => { void handleConfirmResetWorkspace(); }}
+          title={t('nav.workspaces.resetWorkspaceDialog.title', { name: workspaceDisplayName })}
+          message={t('nav.workspaces.resetWorkspaceDialog.message')}
+          confirmText={t('nav.workspaces.actions.resetWorkspace')}
+          cancelText={t('actions.cancel')}
+          confirmDanger
+          preview={`${t('nav.workspaces.resetWorkspaceDialog.pathLabel')}\n${workspace.rootPath}`}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={[
       'bitfun-nav-panel__workspace-item',
       isActive && 'is-active',
+      isDragging && 'is-dragging',
       menuOpen && 'is-menu-open',
       sessionsCollapsed && 'is-sessions-collapsed',
       isSingle && 'is-single',
-    ].filter(Boolean).join(' ')}>
-      <div className="bitfun-nav-panel__workspace-item-card">
+    ].filter(Boolean).join(' ')}
+    aria-grabbed={draggable ? isDragging : undefined}>
+      <div
+        className="bitfun-nav-panel__workspace-item-card"
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
         <button
           type="button"
           className="bitfun-nav-panel__workspace-item-collapse-btn"
@@ -247,7 +421,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSi
         >
           <span className="bitfun-nav-panel__workspace-item-icon" aria-hidden="true">
             <span className="bitfun-nav-panel__workspace-item-icon-default">
-              {workspace.workspaceKind === WorkspaceKind.Assistant ? <Bot size={14} /> : <FolderOpen size={14} />}
+              <FolderOpen size={14} />
             </span>
             <span className={`bitfun-nav-panel__workspace-item-icon-toggle${sessionsCollapsed ? ' is-collapsed' : ''}`}>
               <ChevronDown size={14} />
@@ -261,14 +435,6 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSi
         >
           <span className="bitfun-nav-panel__workspace-item-title">
             <span className="bitfun-nav-panel__workspace-item-label">{workspaceDisplayName}</span>
-            {isDefaultAssistantWorkspace ? (
-              <span
-                className="bitfun-nav-panel__workspace-item-badge"
-                title={t('nav.workspaces.primaryAssistant')}
-              >
-                {t('nav.workspaces.primaryAssistant')}
-              </span>
-            ) : null}
           </span>
           {currentBranch ? (
             <span className="bitfun-nav-panel__workspace-item-branch">
@@ -277,84 +443,66 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSi
             </span>
           ) : null}
         </button>
-      </div>
 
-      <div className="bitfun-nav-panel__workspace-item-menu" ref={menuRef}>
-        <Tooltip content={t('nav.items.project')} placement="right" followCursor>
-          <button
-            type="button"
-            className="bitfun-nav-panel__workspace-item-menu-trigger"
-            onClick={() => { void handleOpenFiles(); }}
-          >
-            <Folder size={14} />
-          </button>
-        </Tooltip>
-        <div ref={menuAnchorRef}>
-          <button
-            type="button"
-            className={`bitfun-nav-panel__workspace-item-menu-trigger${menuOpen ? ' is-open' : ''}`}
-            onClick={() => setMenuOpen(prev => !prev)}
-          >
-            <MoreHorizontal size={14} />
-          </button>
-        </div>
-
-        {menuOpen && menuPosition && createPortal(
-          <div
-            ref={menuPopoverRef}
-            className="bitfun-nav-panel__workspace-item-menu-popover"
-            role="menu"
-            style={{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }}
-          >
-            <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={() => { void handleCreateSession(); }}>
-              <Plus size={13} />
-              <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newSession')}</span>
-            </button>
+        <div className="bitfun-nav-panel__workspace-item-menu" ref={menuRef}>
+          <Tooltip content={t('nav.items.project')} placement="right" followCursor>
             <button
               type="button"
-              className="bitfun-nav-panel__workspace-item-menu-item"
-              onClick={() => {
-                setMenuOpen(false);
-                setWorktreeModalOpen(true);
-              }}
-              disabled={!isRepository}
+              className="bitfun-nav-panel__workspace-item-menu-trigger"
+              onClick={() => { void handleOpenFiles(); }}
             >
-              <GitBranch size={13} />
-              <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newWorktree')}</span>
+              <Folder size={14} />
             </button>
-            <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={() => { void handleReveal(); }}>
-              <FolderSearch size={13} />
-              <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.reveal')}</span>
+          </Tooltip>
+          <div ref={menuAnchorRef}>
+            <button
+              type="button"
+              className={`bitfun-nav-panel__workspace-item-menu-trigger${menuOpen ? ' is-open' : ''}`}
+              onClick={() => setMenuOpen(prev => !prev)}
+            >
+              <MoreHorizontal size={14} />
             </button>
-            {isDefaultAssistantWorkspace && (
+          </div>
+
+          {menuOpen && menuPosition && createPortal(
+            <div
+              ref={menuPopoverRef}
+              className="bitfun-nav-panel__workspace-item-menu-popover"
+              role="menu"
+              style={{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }}
+            >
+              <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={handleCreateCodeSession}>
+                <Plus size={13} />
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newCodeSession')}</span>
+              </button>
+              <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={handleCreateCoworkSession}>
+                <Plus size={13} />
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newCoworkSession')}</span>
+              </button>
               <button
                 type="button"
-                className="bitfun-nav-panel__workspace-item-menu-item is-danger"
-                onClick={handleRequestResetWorkspace}
-                disabled={isResettingWorkspace}
+                className="bitfun-nav-panel__workspace-item-menu-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setWorktreeModalOpen(true);
+                }}
+                disabled={!isRepository}
               >
-                <RotateCcw size={13} />
-                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.resetWorkspace')}</span>
+                <GitBranch size={13} />
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newWorktree')}</span>
               </button>
-            )}
-            {isNamedAssistantWorkspace && (
-              <button
-                type="button"
-                className="bitfun-nav-panel__workspace-item-menu-item is-danger"
-                onClick={handleRequestDeleteAssistant}
-                disabled={isDeletingAssistant}
-              >
-                <Trash2 size={13} />
-                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.deleteAssistant')}</span>
+              <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={() => { void handleReveal(); }}>
+                <FolderSearch size={13} />
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.reveal')}</span>
               </button>
-            )}
-            <button type="button" className="bitfun-nav-panel__workspace-item-menu-item is-danger" onClick={() => { void handleCloseWorkspace(); }}>
-              <FolderOpen size={13} />
-              <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.close')}</span>
-            </button>
-          </div>,
-          document.body
-        )}
+              <button type="button" className="bitfun-nav-panel__workspace-item-menu-item is-danger" onClick={() => { void handleCloseWorkspace(); }}>
+                <FolderOpen size={13} />
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.close')}</span>
+              </button>
+            </div>,
+            document.body
+          )}
+        </div>
       </div>
 
       <div className={`bitfun-nav-panel__workspace-item-sessions${sessionsCollapsed ? ' is-collapsed' : ''}`}>
@@ -371,29 +519,6 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({ workspace, isActive, isSi
         onSelect={(result) => { void handleCreateWorktree(result); }}
         repositoryPath={workspace.rootPath}
         title={t('nav.workspaces.actions.newWorktree')}
-      />
-
-      <ConfirmDialog
-        isOpen={deleteDialogOpen}
-        onClose={() => setDeleteDialogOpen(false)}
-        onConfirm={() => { void handleConfirmDeleteAssistant(); }}
-        title={t('nav.workspaces.deleteAssistantDialog.title', { name: workspaceDisplayName })}
-        message={t('nav.workspaces.deleteAssistantDialog.message')}
-        confirmText={t('nav.workspaces.actions.deleteAssistant')}
-        cancelText={t('actions.cancel')}
-        confirmDanger
-        preview={`${t('nav.workspaces.deleteAssistantDialog.pathLabel')}\n${workspace.rootPath}`}
-      />
-      <ConfirmDialog
-        isOpen={resetDialogOpen}
-        onClose={() => setResetDialogOpen(false)}
-        onConfirm={() => { void handleConfirmResetWorkspace(); }}
-        title={t('nav.workspaces.resetWorkspaceDialog.title', { name: workspaceDisplayName })}
-        message={t('nav.workspaces.resetWorkspaceDialog.message')}
-        confirmText={t('nav.workspaces.actions.resetWorkspace')}
-        cancelText={t('actions.cancel')}
-        confirmDanger
-        preview={`${t('nav.workspaces.resetWorkspaceDialog.pathLabel')}\n${workspace.rootPath}`}
       />
     </div>
   );

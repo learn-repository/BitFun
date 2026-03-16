@@ -45,6 +45,7 @@ export interface CreateSessionResponse {
 export interface StartDialogTurnRequest {
   sessionId: string;
   userInput: string;
+  originalUserInput?: string;
   turnId?: string; 
   agentType: string; 
   workspacePath?: string;
@@ -60,6 +61,33 @@ export interface SessionInfo {
   state: string;
   turnCount: number;
   createdAt: number;
+}
+
+export interface EnsureAssistantBootstrapRequest {
+  sessionId: string;
+  workspacePath: string;
+}
+
+export type EnsureAssistantBootstrapStatus = 'started' | 'skipped' | 'blocked';
+
+export type EnsureAssistantBootstrapReason =
+  | 'bootstrap_started'
+  | 'bootstrap_not_required'
+  | 'session_has_existing_turns'
+  | 'session_not_idle'
+  | 'model_unavailable';
+
+export interface EnsureAssistantBootstrapResponse {
+  status: EnsureAssistantBootstrapStatus;
+  reason: EnsureAssistantBootstrapReason;
+  sessionId: string;
+  turnId?: string;
+  detail?: string;
+}
+
+export interface UpdateSessionModelRequest {
+  sessionId: string;
+  modelName: string;
 }
 
  
@@ -159,6 +187,18 @@ export class AgentAPI {
     }
   }
 
+  async ensureAssistantBootstrap(
+    request: EnsureAssistantBootstrapRequest
+  ): Promise<EnsureAssistantBootstrapResponse> {
+    try {
+      return await api.invoke<EnsureAssistantBootstrapResponse>('ensure_assistant_bootstrap', {
+        request
+      });
+    } catch (error) {
+      throw createTauriCommandError('ensure_assistant_bootstrap', error, request);
+    }
+  }
+
    
   async cancelDialogTurn(sessionId: string, dialogTurnId: string): Promise<void> {
     try {
@@ -185,6 +225,14 @@ export class AgentAPI {
       return await api.invoke<SessionInfo>('restore_session', { request: { sessionId, workspacePath } });
     } catch (error) {
       throw createTauriCommandError('restore_session', error, { sessionId, workspacePath });
+    }
+  }
+
+  async updateSessionModel(request: UpdateSessionModelRequest): Promise<void> {
+    try {
+      await api.invoke<void>('update_session_model', { request });
+    } catch (error) {
+      throw createTauriCommandError('update_session_model', error, request);
     }
   }
 

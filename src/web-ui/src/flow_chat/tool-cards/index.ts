@@ -32,6 +32,9 @@ import { CreatePlanDisplay } from './CreatePlanDisplay';
 import { TerminalToolCard } from './TerminalToolCard';
 import { TerminalControlDisplay } from './TerminalControlDisplay';
 import { InitMiniAppDisplay } from './MiniAppToolDisplay';
+import { BtwMarkerCard } from './BtwMarkerCard';
+import { SessionControlToolCard } from './SessionControlToolCard';
+import { SessionMessageToolCard } from './SessionMessageToolCard';
 
 // Tool card config map - uses backend tool names
 export const TOOL_CARD_CONFIGS: Record<string, ToolCardConfig> = {
@@ -237,6 +240,18 @@ export const TOOL_CARD_CONFIGS: Record<string, ToolCardConfig> = {
     primaryColor: '#8b5cf6'
   },
 
+  // /btw in-stream marker (frontend-inserted tool item)
+  'BtwMarker': {
+    toolName: 'BtwMarker',
+    displayName: 'Side thread',
+    icon: 'BTW',
+    requiresConfirmation: false,
+    resultDisplayType: 'hidden',
+    description: 'Side thread marker (child session link)',
+    displayMode: 'compact',
+    primaryColor: '#7aa6ff'
+  },
+
   // Git version control tool
   'Git': {
     toolName: 'Git',
@@ -283,6 +298,28 @@ export const TOOL_CARD_CONFIGS: Record<string, ToolCardConfig> = {
     description: 'Kill or interrupt a terminal session',
     displayMode: 'compact',
     primaryColor: '#ef4444'
+  },
+
+  'SessionControl': {
+    toolName: 'SessionControl',
+    displayName: 'Session Control',
+    icon: 'SC',
+    requiresConfirmation: false,
+    resultDisplayType: 'summary',
+    description: 'Create, delete, or list sessions',
+    displayMode: 'compact',
+    primaryColor: '#3b82f6'
+  },
+
+  'SessionMessage': {
+    toolName: 'SessionMessage',
+    displayName: 'Session Message',
+    icon: 'SM',
+    requiresConfirmation: false,
+    resultDisplayType: 'summary',
+    description: 'Send a message to another session',
+    displayMode: 'compact',
+    primaryColor: '#8b5cf6'
   },
 
   // Bash terminal tool
@@ -353,6 +390,8 @@ export const TOOL_CARD_COMPONENTS = {
   // AskUserQuestion tool
   'AskUserQuestion': AskUserQuestionCard,
 
+  // /btw marker
+  'BtwMarker': BtwMarkerCard,
 
   // Git version control
   'Git': GitToolDisplay,
@@ -365,6 +404,10 @@ export const TOOL_CARD_COMPONENTS = {
 
   // TerminalControl tool
   'TerminalControl': TerminalControlDisplay,
+
+  // Session tools
+  'SessionControl': SessionControlToolCard,
+  'SessionMessage': SessionMessageToolCard,
 
   // Bash tool
   'Bash': TerminalToolCard,

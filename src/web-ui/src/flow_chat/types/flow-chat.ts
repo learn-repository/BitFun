@@ -3,6 +3,8 @@
  * Supports mixed streaming output.
  */
 
+import type { SessionKind } from '@/shared/types/session-history';
+
 // Base type for streaming items.
 export interface FlowItem {
   id: string;
@@ -163,6 +165,7 @@ export interface Session {
   config: SessionConfig;
   createdAt: number;
   lastActiveAt: number;
+  lastFinishedAt?: number;
   updatedAt?: number;
   
   // Persist the last error; real-time errors come from context.errorMessage.
@@ -182,12 +185,49 @@ export interface Session {
   // Workspace this session belongs to. Used for sidebar display filtering.
   // Sessions are always kept in store for event processing; only display is filtered.
   workspacePath?: string;
+
+  /**
+   * Optional parent session id for hierarchical sessions.
+   * Used by /btw "side threads" and potentially other derived sessions.
+   */
+  parentSessionId?: string;
+
+  /** Session kind for UI grouping. */
+  sessionKind: SessionKind;
+
+  /**
+   * Lightweight markers for /btw threads created from this session.
+   * Stored only on the parent session for quick navigation.
+   */
+  btwThreads?: Array<{
+    requestId: string;
+    childSessionId: string;
+    title: string;
+    status: 'running' | 'done' | 'error';
+    createdAt: number;
+    parentDialogTurnId?: string;
+    /** 1-based turn index in the parent session when /btw was asked (best-effort). */
+    parentTurnIndex?: number;
+    error?: string;
+  }>;
+
+  /**
+   * For /btw child sessions: where this side thread was asked from in the parent session.
+   * This is best-effort and may be missing for older sessions.
+   */
+  btwOrigin?: {
+    requestId?: string;
+    parentSessionId?: string;
+    parentDialogTurnId?: string;
+    parentTurnIndex?: number;
+  };
 }
 
 export interface SessionConfig {
   modelName?: string;
   agentType?: string;
   context?: Record<string, string>;
+  workspacePath?: string;
 }
 
 export interface QueuedMessage {
@@ -278,4 +318,3 @@ export interface FlowChatConfig {
   enableVirtualScroll: boolean;
   theme: 'light' | 'dark' | 'auto';
 }
-

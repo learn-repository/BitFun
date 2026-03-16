@@ -115,35 +115,37 @@ $_section-header-height: 24px;
 
   &__workspace-toolbar {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: $size-gap-2;
-    margin: 0 $size-gap-2 $size-gap-1;
-    padding: 0 $size-gap-1;
+    margin: $size-gap-2;
+    padding: 0;
     overflow: visible;
   }
 
-  &__workspace-bot {
-    width: 52px;
-    height: 52px;
-    padding: 0;
-    border: none;
-    border-radius: 50%;
+  &__mode-switch {
+    width: 100%;
+    min-height: 56px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 16%, transparent);
+    border-radius: 12px;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    background: transparent;
-    color: var(--color-text-secondary);
-    position: relative;
-    z-index: 1;
-    overflow: hidden;
+    gap: 10px;
+    background: color-mix(in srgb, var(--element-bg-soft) 88%, transparent);
+    color: var(--color-text-primary);
+    text-align: left;
     cursor: pointer;
     transition: transform $motion-fast $easing-standard,
-                box-shadow $motion-fast $easing-standard;
+                box-shadow $motion-fast $easing-standard,
+                background $motion-fast $easing-standard,
+                border-color $motion-fast $easing-standard;
 
     &:hover {
       transform: translateY(-1px);
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent);
+      background: color-mix(in srgb, var(--element-bg-medium) 88%, transparent);
+      border-color: color-mix(in srgb, var(--color-primary) 34%, transparent);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
     }
 
     &:focus-visible {
@@ -151,38 +153,146 @@ $_section-header-height: 24px;
       outline-offset: 2px;
     }
 
-    img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      position: absolute;
-      top: 0;
-      left: 0;
+    &.is-assistant {
+      border-color: color-mix(in srgb, var(--color-accent-500) 30%, transparent);
+      background: color-mix(in srgb, var(--color-accent-500) 10%, var(--element-bg-soft));
     }
 
-    &-default {
-      z-index: 1;
-    }
+    &.is-switching {
+      // 整体 clip-path 涟漪收缩 → 展开，linear 因为各段 easing 写在关键帧内部
+      animation: bitfun-nav-mode-switch 0.48s linear;
 
-    &-hover {
-      z-index: 2;
+      .bitfun-nav-panel__mode-switch-logo {
+        animation: bitfun-nav-mode-switch-logo 0.48s linear;
+      }
+
+      .bitfun-nav-panel__mode-switch-copy {
+        animation: bitfun-nav-mode-switch-copy 0.48s linear;
+      }
+    }
+  }
+
+  &__mode-switch-logo {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--element-bg-medium) 92%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 75%, transparent);
+
+    .bitfun-nav-panel__mode-switch:not(.is-assistant) & {
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      overflow: visible;
+    }
+  }
+
+  &__mode-switch-logo-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 5px;
+    object-fit: contain;
+    display: block;
+    transition: opacity $motion-fast $easing-standard,
+                transform $motion-fast $easing-standard;
+
+    &--hover {
       opacity: 0;
-      transition: opacity $motion-fast $easing-standard;
+      transform: scale(0.92);
     }
 
-    &:hover &-hover {
+    &--static {
       opacity: 1;
+      transform: none;
+    }
+
+    .bitfun-nav-panel__mode-switch:hover &--default {
+      opacity: 0;
+      transform: scale(1.06);
+    }
+
+    .bitfun-nav-panel__mode-switch:hover &--hover {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  &__mode-switch-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+  }
+
+  &__mode-switch-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.15;
+    color: var(--color-text-primary);
+    white-space: nowrap;
+  }
+
+  &__mode-switch-sub {
+    display: grid;
+    grid-template-areas: 'sub';
+    align-items: start;
+  }
+
+  &__mode-switch-desc {
+    grid-area: sub;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    opacity: 1;
+    transition: opacity $motion-fast $easing-standard;
+
+    .bitfun-nav-panel__mode-switch:hover & {
+      opacity: 0;
+    }
+  }
+
+  &__mode-switch-desc-main {
+    font-size: 10px;
+    line-height: 1.35;
+    color: var(--color-text-muted);
+    opacity: 0.78;
+  }
+
+  &__mode-switch-hint {
+    grid-area: sub;
+    align-self: center;
+    justify-self: start;
+    font-size: 10px;
+    line-height: 1.2;
+    color: var(--color-text-muted);
+    opacity: 0;
+    font-weight: 400;
+    white-space: nowrap;
+    transition: opacity $motion-fast $easing-standard;
+
+    .bitfun-nav-panel__mode-switch:hover & {
+      opacity: 0.7;
     }
   }
 
   &__workspace-create-group {
-    flex: 1;
+    width: 100%;
     display: flex;
     align-items: stretch;
     gap: 1px;
     height: 36px;
     min-width: 0;
+    border-radius: $size-radius-base;
+    overflow: hidden;
   }
 
   &__workspace-create-main {
@@ -222,6 +332,31 @@ $_section-header-height: 24px;
     &:focus-visible {
       outline: 1px solid var(--color-accent-500);
       outline-offset: 1px;
+    }
+
+    &--split-left,
+    &--split-right {
+      border-radius: 0;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    &--split-left {
+      border-top-left-radius: $size-radius-base;
+      border-bottom-left-radius: $size-radius-base;
+    }
+
+    &--split-right {
+      border-top-right-radius: $size-radius-base;
+      border-bottom-right-radius: $size-radius-base;
+
+      &:hover {
+        color: var(--color-text-primary);
+      }
+    }
+
+    &--single {
+      border-radius: $size-radius-base;
     }
   }
 
@@ -338,13 +473,18 @@ $_section-header-height: 24px;
     flex: 1 1 auto;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: $size-gap-3 0 $size-gap-2;
+    padding: $size-gap-3 0 $size-gap-2 0;
 
     &::-webkit-scrollbar { width: 3px; }
     &::-webkit-scrollbar-track { background: transparent; }
     &::-webkit-scrollbar-thumb {
       background: var(--border-subtle);
       border-radius: 2px;
+    }
+
+    // 与按钮涟漪同步：列表内容淡出后换组，再淡入
+    &.is-mode-switching {
+      animation: bitfun-nav-sections-mode-switch 0.48s linear;
     }
   }
 
@@ -357,7 +497,7 @@ $_section-header-height: 24px;
     align-items: center;
     gap: $size-gap-1;
     height: $_section-header-height;
-    padding: 0 $size-gap-3;
+    padding: 0 $size-gap-2;
     margin: 0 $size-gap-2;
     border-radius: 4px;
     opacity: 0.72;
@@ -409,16 +549,92 @@ $_section-header-height: 24px;
     color: var(--color-text-primary);
   }
 
-  &__toolbox-footer {
+  &__miniapp-footer {
     flex-shrink: 0;
     padding: $size-gap-1 $size-gap-2 $size-gap-2;
   }
 
-  &__toolbox-entry-wrap {
+  &__assistant-footer {
+    flex-shrink: 0;
+    padding: 0 $size-gap-2 $size-gap-1;
+  }
+
+  &__assistant-entry {
+    width: 100%;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    gap: $size-gap-2;
+    padding: 0 12px;
+    border: 1px dashed color-mix(in srgb, var(--border-subtle) 90%, transparent);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: color $motion-fast $easing-standard,
+                background $motion-fast $easing-standard,
+                border-color $motion-fast $easing-standard,
+                transform $motion-fast $easing-standard;
+
+    &:hover {
+      color: var(--color-text-primary);
+      background: color-mix(in srgb, var(--color-accent-500) 10%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent-500) 36%, transparent);
+    }
+
+    &:active {
+      transform: translateY(1px);
+      background: color-mix(in srgb, var(--color-accent-500) 14%, transparent);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--color-accent-500);
+      outline-offset: 0;
+    }
+
+    &.is-active {
+      color: var(--color-text-primary);
+      background: color-mix(in srgb, var(--element-bg-soft) 88%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent-500) 44%, transparent);
+      border-style: solid;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-500) 18%, transparent);
+    }
+  }
+
+  &__assistant-entry-icon {
+    flex-shrink: 0;
+    color: inherit;
+    opacity: 0.72;
+    transition: opacity $motion-fast $easing-standard;
+
+    .bitfun-nav-panel__assistant-entry:hover &,
+    .bitfun-nav-panel__assistant-entry.is-active & {
+      opacity: 1;
+    }
+  }
+
+  &__assistant-entry-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.1;
+    opacity: 0.72;
+    transition: opacity $motion-fast $easing-standard;
+
+    .bitfun-nav-panel__assistant-entry:hover &,
+    .bitfun-nav-panel__assistant-entry.is-active & {
+      opacity: 1;
+    }
+  }
+
+  &__miniapp-entry-wrap {
     margin: 0;
   }
 
-  &__toolbox-entry {
+  &__miniapp-entry {
     width: 100%;
     min-height: 42px;
     display: flex;
@@ -465,7 +681,7 @@ $_section-header-height: 24px;
     }
   }
 
-  &__toolbox-entry-main {
+  &__miniapp-entry-main {
     min-width: 0;
     display: flex;
     align-items: center;
@@ -473,7 +689,7 @@ $_section-header-height: 24px;
     flex: 1;
   }
 
-  &__toolbox-entry-icon {
+  &__miniapp-entry-icon {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
@@ -482,20 +698,20 @@ $_section-header-height: 24px;
     opacity: 0.72;
     transition: opacity $motion-fast $easing-standard;
 
-    .bitfun-nav-panel__toolbox-entry:hover &,
-    .bitfun-nav-panel__toolbox-entry.is-active & {
+    .bitfun-nav-panel__miniapp-entry:hover &,
+    .bitfun-nav-panel__miniapp-entry.is-active & {
       opacity: 1;
     }
   }
 
-  &__toolbox-entry-copy {
+  &__miniapp-entry-copy {
     min-width: 0;
     display: flex;
     align-items: baseline;
     gap: 8px;
   }
 
-  &__toolbox-entry-title {
+  &__miniapp-entry-title {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -506,13 +722,13 @@ $_section-header-height: 24px;
     opacity: 0.72;
     transition: opacity $motion-fast $easing-standard;
 
-    .bitfun-nav-panel__toolbox-entry:hover &,
-    .bitfun-nav-panel__toolbox-entry.is-active & {
+    .bitfun-nav-panel__miniapp-entry:hover &,
+    .bitfun-nav-panel__miniapp-entry.is-active & {
       opacity: 1;
     }
   }
 
-  &__toolbox-entry-apps {
+  &__miniapp-entry-apps {
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -520,7 +736,7 @@ $_section-header-height: 24px;
     min-width: 0;
   }
 
-  &__toolbox-app-bubble {
+  &__miniapp-bubble {
     width: 26px;
     height: 26px;
     border-radius: 999px;
@@ -654,9 +870,16 @@ $_section-header-height: 24px;
     transition: color $motion-fast $easing-standard,
                 background $motion-fast $easing-standard;
 
-    &:hover {
+    &:hover:not(:disabled):not(.is-disabled) {
       color: var(--color-text-primary);
       background: var(--element-bg-soft);
+    }
+
+    &.is-disabled,
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      color: var(--color-text-muted);
     }
 
     svg {
@@ -814,7 +1037,7 @@ $_section-header-height: 24px;
     align-items: center;
     gap: $size-gap-2;
     height: $_item-height;
-    padding: 0 $size-gap-2 0 $size-gap-3;
+    padding: 0 $size-gap-2;
     border: none;
     border-radius: 4px;
     background: transparent;
@@ -968,9 +1191,104 @@ $_section-header-height: 24px;
 
 }
 
+// ── 形变涟漪：按钮 clip-path 收缩成圆点，再弹开回矩形 ──────────────────────
+// 各关键帧内用 animation-timing-function 分段控制 easing：
+//   收缩段用 ease-in（快速压缩）；展开段用 spring curve（弹性回弹）
+@keyframes bitfun-nav-mode-switch {
+  0% {
+    clip-path: circle(120% at 50% 50%);
+    animation-timing-function: cubic-bezier(0.55, 0, 0.75, 0.2);
+  }
+  42% {
+    clip-path: circle(26px at 50% 50%);
+    animation-timing-function: linear;
+  }
+  // 内容在此帧附近（200ms）悄然替换，圆点完全遮住跳变
+  58% {
+    clip-path: circle(26px at 50% 50%);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  100% {
+    clip-path: circle(120% at 50% 50%);
+  }
+}
+
+// Logo：缩小旋转消失，旋转反向放大出现
+@keyframes bitfun-nav-mode-switch-logo {
+  0% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.75, 0.2);
+  }
+  40% {
+    transform: scale(0.1) rotate(-160deg);
+    opacity: 0;
+    animation-timing-function: linear;
+  }
+  60% {
+    transform: scale(0.1) rotate(160deg);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+// 文字区：向下淡出，从上淡入
+@keyframes bitfun-nav-mode-switch-copy {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0px);
+    animation-timing-function: cubic-bezier(0.55, 0, 0.75, 0.2);
+  }
+  36% {
+    opacity: 0;
+    transform: translateY(5px);
+    filter: blur(3px);
+    animation-timing-function: linear;
+  }
+  64% {
+    opacity: 0;
+    transform: translateY(-5px);
+    filter: blur(3px);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0px);
+  }
+}
+
 // ──────────────────────────────────────────────
 // Footer: Notification + More-options menu
 // ──────────────────────────────────────────────
+
+// sections 与按钮涟漪联动：内容淡出后从对侧滑入
+@keyframes bitfun-nav-sections-mode-switch {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.55, 0, 0.75, 0.2);
+  }
+  36% {
+    opacity: 0;
+    transform: translateY(10px);
+    animation-timing-function: linear;
+  }
+  62% {
+    opacity: 0;
+    transform: translateY(-6px);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 @keyframes bitfun-footer-menu-in {
   from {
@@ -1218,9 +1536,15 @@ $_section-header-height: 24px;
     &__section,
     &__section-label,
     &__layer--scene,
-    &__collapsible {
+    &__collapsible,
+    &__mode-switch,
+    &__mode-switch-logo,
+    &__mode-switch-copy,
+    &__sections {
       transition: none;
       animation: none;
+      clip-path: none;
+      filter: none;
     }
   }
 }

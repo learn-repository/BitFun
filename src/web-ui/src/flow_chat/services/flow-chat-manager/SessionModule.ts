@@ -13,6 +13,7 @@ import type { FlowChatContext, SessionConfig } from './types';
 import { touchSessionActivity, cleanupSaveState } from './PersistenceModule';
 
 const log = createLogger('SessionModule');
+const pendingSessionCreations = new Map<string, Promise<string>>();
 
 type SessionDisplayMode = 'code' | 'cowork' | 'claw';
 
@@ -32,12 +33,22 @@ const normalizeSessionDisplayMode = (
   return 'code';
 };
 
-const resolveSessionWorkspacePath = (context: FlowChatContext): string | null => {
+const resolveSessionWorkspacePath = (
+  context: FlowChatContext,
+  config?: SessionConfig
+): string | null => {
+  const explicitWorkspacePath = config?.workspacePath?.trim();
+  if (explicitWorkspacePath) {
+    return explicitWorkspacePath;
+  }
   return context.currentWorkspacePath || null;
 };
 
-const resolveSessionWorkspace = (context: FlowChatContext): WorkspaceInfo | null => {
-  const workspacePath = resolveSessionWorkspacePath(context);
+const resolveSessionWorkspace = (
+  context: FlowChatContext,
+  config?: SessionConfig
+): WorkspaceInfo | null => {
+  const workspacePath = resolveSessionWorkspacePath(context, config);
   if (!workspacePath) return null;
 
   const state = workspaceManager.getState();
@@ -109,14 +120,20 @@ export async function createChatSession(
   mode?: string
 ): Promise<string> {
   try {
-    const workspacePath = resolveSessionWorkspacePath(context);
-    const workspace = resolveSessionWorkspace(context);
+    const workspacePath = resolveSessionWorkspacePath(context, config);
+    const workspace = resolveSessionWorkspace(context, config);
 
     if (!workspacePath) {
       throw new Error('Workspace path is required to create a session');
     }
     const agentType = resolveAgentType(mode, workspace);
     const sessionMode = normalizeSessionDisplayMode(agentType, workspace);
+    const creationKey = workspacePath;
+
+    const pendingCreation = pendingSessionCreations.get(creationKey);
+    if (pendingCreation) {
+      return pendingCreation;
+    }
 
     const sameModeCount =
       Array.from(context.flowChatStore.getState().sessions.values()).filter(
@@ -131,31 +148,42 @@ export async function createChatSession(
     
     const maxContextTokens = await getModelMaxTokens(config.modelName);
 
-    const response = await agentAPI.createSession({
-      sessionName,
-      agentType,
-      workspacePath,
-      config: {
-        modelName: config.modelName || 'default',
-        enableTools: true,
-        safeMode: true,
-        autoCompact: true,
-        maxContextTokens: maxContextTokens,
-        enableContextCompression: true,
-      }
-    });
-    
-    context.flowChatStore.createSession(
-      response.sessionId, 
-      config, 
-      undefined,
-      sessionName,
-      maxContextTokens,
-      agentType,
-      workspacePath
-    );
+    const createPromise = (async () => {
+      const response = await agentAPI.createSession({
+        sessionName,
+        agentType,
+        workspacePath,
+        config: {
+          modelName: config.modelName || 'auto',
+          enableTools: true,
+          safeMode: true,
+          autoCompact: true,
+          maxContextTokens: maxContextTokens,
+          enableContextCompression: true,
+        }
+      });
 
-    return response.sessionId;
+      context.flowChatStore.createSession(
+        response.sessionId, 
+        config, 
+        undefined,
+        sessionName,
+        maxContextTokens,
+        agentType,
+        workspacePath
+      );
+
+      return response.sessionId;
+    })();
+
+    pendingSessionCreations.set(creationKey, createPromise);
+    try {
+      return await createPromise;
+    } finally {
+      if (pendingSessionCreations.get(creationKey) === createPromise) {
+        pendingSessionCreations.delete(creationKey);
+      }
+    }
   } catch (error) {
     log.error('Failed to create chat session', { config, error });
     
@@ -203,7 +231,7 @@ export async function switchChatSession(
               agentType: currentSession.mode || 'agentic',
               workspacePath,
               config: {
-                modelName: currentSession.config.modelName || 'default',
+                modelName: currentSession.config.modelName || 'auto',
                 enableTools: true,
                 safeMode: true
               }
@@ -249,9 +277,12 @@ export async function deleteChatSession(
   sessionId: string
 ): Promise<void> {
   try {
+    const removedSessionIds = context.flowChatStore.getCascadeSessionIds(sessionId);
     await context.flowChatStore.deleteSession(sessionId);
-    context.processingManager.clearSessionStatus(sessionId);
-    cleanupSaveState(context, sessionId);
+    removedSessionIds.forEach(id => {
+      context.processingManager.clearSessionStatus(id);
+      cleanupSaveState(context, id);
+    });
   } catch (error) {
     log.error('Failed to delete chat session', { sessionId, error });
     notificationService.error('Failed to delete session', {
@@ -301,7 +332,7 @@ export async function ensureBackendSession(
         agentType: session.mode || 'agentic',
         workspacePath,
         config: {
-          modelName: session.config.modelName || 'default',
+          modelName: session.config.modelName || 'auto',
           enableTools: true,
           safeMode: true
         }
@@ -330,7 +361,7 @@ export async function retryCreateBackendSession(
     agentType: session.mode || 'agentic',
     workspacePath,
     config: {
-      modelName: session.config.modelName || 'default',
+      modelName: session.config.modelName || 'auto',
       enableTools: true,
       safeMode: true
     }
