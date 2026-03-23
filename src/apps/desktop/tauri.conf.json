@@ -3,7 +3,7 @@
   "productName": "BitFun",
   "identifier": "com.bitfun.desktop",
   "build": {
-    "beforeDevCommand": "pnpm run type-check:web && pnpm run dev:web",
+    "beforeDevCommand": "pnpm run dev:web",
     "devUrl": "http://localhost:1422",
     "beforeBuildCommand": "pnpm run build:web && pnpm run prepare:mobile-web",
     "frontendDist": "../../../dist"
@@ -13,10 +13,19 @@
     "targets": "all",
     "icon": [
       "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.png"
     ],
     "resources": {
       "../../mobile-web/dist": "mobile-web/dist"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      }
     }
   },
   "app": {

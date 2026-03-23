@@ -14,8 +14,8 @@ use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use super::command_router::{
-    current_bot_language, execute_forwarded_turn, handle_command, main_menu_actions,
-    paired_success_message, parse_command, welcome_message, BotAction, BotActionStyle,
+    complete_im_bot_pairing, current_bot_language, execute_forwarded_turn, handle_command,
+    parse_command, welcome_message, BotAction, BotActionStyle,
     BotChatState, BotInteractionHandler, BotInteractiveRequest, BotLanguage, BotMessageSender,
     HandleResult,
 };
@@ -827,6 +827,22 @@ impl FeishuBot {
                 },
             ),
             (
+                "/pro",
+                if language.is_chinese() {
+                    "专业模式"
+                } else {
+                    "Expert Mode"
+                },
+            ),
+            (
+                "/assistant",
+                if language.is_chinese() {
+                    "助理模式"
+                } else {
+                    "Assistant Mode"
+                },
+            ),
+            (
                 "/resume_session",
                 if language.is_chinese() {
                     "恢复会话"
@@ -848,6 +864,14 @@ impl FeishuBot {
                     "新建协作会话"
                 } else {
                     "New Cowork Session"
+                },
+            ),
+            (
+                "/new_claw_session",
+                if language.is_chinese() {
+                    "新建助理会话"
+                } else {
+                    "New Claw Session"
                 },
             ),
             (
@@ -1150,15 +1174,9 @@ impl FeishuBot {
             } else if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
                 if self.verify_pairing_code(trimmed).await {
                     info!("Feishu pairing successful, chat_id={chat_id}");
-                    let result = HandleResult {
-                        reply: paired_success_message(language),
-                        actions: main_menu_actions(language),
-                        forward_to_session: None,
-                    };
-                    self.send_handle_result(&chat_id, &result).await.ok();
-
                     let mut state = BotChatState::new(chat_id.clone());
-                    state.paired = true;
+                    let result = complete_im_bot_pairing(&mut state).await;
+                    self.send_handle_result(&chat_id, &result).await.ok();
                     self.chat_states
                         .write()
                         .await
@@ -1483,12 +1501,7 @@ impl FeishuBot {
             }
             if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_digit()) {
                 if self.verify_pairing_code(trimmed).await {
-                    state.paired = true;
-                    let result = HandleResult {
-                        reply: paired_success_message(language),
-                        actions: main_menu_actions(language),
-                        forward_to_session: None,
-                    };
+                    let result = complete_im_bot_pairing(state).await;
                     self.send_handle_result(chat_id, &result).await.ok();
                     self.persist_chat_state(chat_id, state).await;
                     return;
@@ -1548,9 +1561,12 @@ impl FeishuBot {
                         }
                     })
                 });
-                let result = execute_forwarded_turn(forward, Some(handler), Some(sender)).await;
-                if let Err(err) = bot.send_message(&cid, &result.display_text).await {
-                    warn!("Failed to send Feishu final message to {cid}: {err}");
+                let verbose_mode = load_bot_persistence().verbose_mode;
+                let result = execute_forwarded_turn(forward, Some(handler), Some(sender), verbose_mode).await;
+                if !result.display_text.is_empty() {
+                    if let Err(err) = bot.send_message(&cid, &result.display_text).await {
+                        warn!("Failed to send Feishu final message to {cid}: {err}");
+                    }
                 }
                 bot.notify_files_ready(&cid, &result.full_text).await;
             });

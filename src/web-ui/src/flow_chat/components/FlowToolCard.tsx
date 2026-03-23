@@ -81,4 +81,3 @@ export const FlowToolCard: React.FC<FlowToolCardProps> = React.memo(({
     JSON.stringify(prevProps.toolItem.toolResult) === JSON.stringify(nextProps.toolItem.toolResult)
   );
 });
-

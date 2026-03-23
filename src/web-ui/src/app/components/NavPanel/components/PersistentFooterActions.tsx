@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Settings, Info, MoreVertical, PictureInPicture2, SquareTerminal, Wifi, Globe } from 'lucide-react';
+import React, { useState, useCallback, useRef } from 'react';
+import { Settings, Info, MoreVertical, PictureInPicture2, SquareTerminal, Smartphone, Globe, Network, Layers } from 'lucide-react';
 import { Tooltip, Modal } from '@/component-library';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { useSceneManager } from '../../../hooks/useSceneManager';
@@ -17,6 +17,7 @@ import {
   setRemoteConnectDisclaimerAgreed,
   RemoteConnectDisclaimerContent,
 } from '../../RemoteConnectDialog/RemoteConnectDisclaimer';
+import { MERMAID_INTERACTIVE_EXAMPLE } from '@/flow_chat/constants/mermaidExamples';
 
 const PersistentFooterActions: React.FC = () => {
   const { t } = useI18n('common');
@@ -32,12 +33,18 @@ const PersistentFooterActions: React.FC = () => {
     const activeTab = s.primaryGroup.tabs.find((t) => t.id === s.primaryGroup.activeTabId);
     return activeTab?.content.type === 'browser';
   });
+  const isMermaidPanelActiveInCanvas = useCanvasStore((s) => {
+    const activeTab = s.primaryGroup.tabs.find((t) => t.id === s.primaryGroup.activeTabId);
+    return activeTab?.content.type === 'mermaid-editor';
+  });
   const { enableToolbarMode } = useToolbarModeContext();
   const { hasWorkspace } = useCurrentWorkspace();
   const { warning } = useNotification();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
+  const [multimodalOpen, setMultimodalOpen] = useState(false);
+  const multimodalHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [showRemoteConnect, setShowRemoteConnect] = useState(false);
   const [showRemoteDisclaimer, setShowRemoteDisclaimer] = useState(false);
@@ -89,6 +96,37 @@ const PersistentFooterActions: React.FC = () => {
     }
   }, [activeTabId, openScene, t]);
 
+  const handleOpenMermaidEditor = useCallback(() => {
+    const title = t('scenes.mermaidEditor');
+    const detail = {
+      type: 'mermaid-editor' as const,
+      title,
+      data: { ...MERMAID_INTERACTIVE_EXAMPLE, title },
+      metadata: {
+        duplicateCheckKey: 'mermaid-dual-mode-demo',
+      },
+      checkDuplicate: true,
+      duplicateCheckKey: 'mermaid-dual-mode-demo',
+      replaceExisting: false,
+    };
+
+    if (activeTabId === 'session') {
+      window.dispatchEvent(new CustomEvent('agent-create-tab', { detail }));
+    } else {
+      openScene('mermaid');
+    }
+  }, [activeTabId, openScene, t]);
+
+  const handleMultimodalEnter = useCallback(() => {
+    if (multimodalHoverTimerRef.current) clearTimeout(multimodalHoverTimerRef.current);
+    multimodalHoverTimerRef.current = setTimeout(() => setMultimodalOpen(true), 100);
+  }, []);
+
+  const handleMultimodalLeave = useCallback(() => {
+    if (multimodalHoverTimerRef.current) clearTimeout(multimodalHoverTimerRef.current);
+    multimodalHoverTimerRef.current = setTimeout(() => setMultimodalOpen(false), 180);
+  }, []);
+
   const handleShowAbout = () => {
     closeMenu();
     setShowAbout(true);
@@ -124,105 +162,156 @@ const PersistentFooterActions: React.FC = () => {
   }, []);
 
   return (
-    <div className="bitfun-nav-panel__footer">
-      <div className="bitfun-nav-panel__footer-more-wrap">
-        <Tooltip content={t('nav.moreOptions')} placement="right" followCursor disabled={menuOpen}>
-          <button
-            type="button"
-            className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${menuOpen ? ' is-active' : ''}`}
-            aria-label={t('nav.moreOptions')}
-            aria-expanded={menuOpen}
-            onClick={toggleMenu}
-          >
-            <MoreVertical size={15} />
-          </button>
-        </Tooltip>
-
-        {menuOpen && (
-          <>
-            <div
-              className="bitfun-nav-panel__footer-backdrop"
-              onClick={closeMenu}
-            />
-            <div
-              className={`bitfun-nav-panel__footer-menu${menuClosing ? ' is-closing' : ''}`}
-              role="menu"
-            >
-              <Tooltip
-                content={t('header.remoteConnectRequiresWorkspace')}
-                placement="right"
-                disabled={hasWorkspace}
+    <>
+      <div className="bitfun-nav-panel__footer">
+        <div className="bitfun-nav-panel__footer-left">
+          <div className="bitfun-nav-panel__footer-more-wrap">
+            <Tooltip content={t('nav.moreOptions')} placement="right" followCursor disabled={menuOpen}>
+              <button
+                type="button"
+                className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${menuOpen ? ' is-active' : ''}`}
+                aria-label={t('nav.moreOptions')}
+                aria-expanded={menuOpen}
+                onClick={toggleMenu}
               >
-                <button
-                  type="button"
-                  className={`bitfun-nav-panel__footer-menu-item${!hasWorkspace ? ' is-disabled' : ''}`}
-                  role="menuitem"
-                  aria-disabled={!hasWorkspace}
-                  onClick={handleRemoteConnect}
+                <MoreVertical size={15} />
+              </button>
+            </Tooltip>
+
+            {menuOpen && (
+              <>
+                <div
+                  className="bitfun-nav-panel__footer-backdrop"
+                  onClick={closeMenu}
+                />
+                <div
+                  className={`bitfun-nav-panel__footer-menu${menuClosing ? ' is-closing' : ''}`}
+                  role="menu"
                 >
-                  <Wifi size={14} />
-                  <span>{t('header.remoteConnect')}</span>
-                </button>
-              </Tooltip>
-              <div className="bitfun-nav-panel__footer-menu-divider" />
-              <button
-                type="button"
-                className="bitfun-nav-panel__footer-menu-item"
-                role="menuitem"
-                onClick={handleFloatingMode}
-              >
-                <PictureInPicture2 size={14} />
-                <span>{t('header.switchToToolbar')}</span>
-              </button>
-              <div className="bitfun-nav-panel__footer-menu-divider" />
-              <button
-                type="button"
-                className="bitfun-nav-panel__footer-menu-item"
-                role="menuitem"
-                onClick={handleOpenSettings}
-              >
-                <Settings size={14} />
-                <span>{t('tabs.settings')}</span>
-              </button>
-              <button
-                type="button"
-                className="bitfun-nav-panel__footer-menu-item"
-                role="menuitem"
-                onClick={handleShowAbout}
-              >
-                <Info size={14} />
-                <span>{t('header.about')}</span>
-              </button>
-            </div>
-          </>
-        )}
+                  <Tooltip
+                    content={t('header.remoteConnectRequiresWorkspace')}
+                    placement="right"
+                    disabled={hasWorkspace}
+                  >
+                    <button
+                      type="button"
+                      className={`bitfun-nav-panel__footer-menu-item${!hasWorkspace ? ' is-disabled' : ''}`}
+                      role="menuitem"
+                      aria-disabled={!hasWorkspace}
+                      onClick={handleRemoteConnect}
+                    >
+                      <Smartphone size={14} />
+                      <span>{t('header.remoteConnect')}</span>
+                    </button>
+                  </Tooltip>
+                  <div className="bitfun-nav-panel__footer-menu-divider" />
+                  <button
+                    type="button"
+                    className="bitfun-nav-panel__footer-menu-item"
+                    role="menuitem"
+                    onClick={handleFloatingMode}
+                  >
+                    <PictureInPicture2 size={14} />
+                    <span>{t('header.switchToToolbar')}</span>
+                  </button>
+                  <div className="bitfun-nav-panel__footer-menu-divider" />
+                  <button
+                    type="button"
+                    className="bitfun-nav-panel__footer-menu-item"
+                    role="menuitem"
+                    onClick={handleOpenSettings}
+                  >
+                    <Settings size={14} />
+                    <span>{t('tabs.settings')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="bitfun-nav-panel__footer-menu-item"
+                    role="menuitem"
+                    onClick={handleShowAbout}
+                  >
+                    <Info size={14} />
+                    <span>{t('header.about')}</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <Tooltip content={t('scenes.shell')} placement="right">
+            <button
+              type="button"
+              className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${showSceneNav && navSceneId === 'shell' ? ' is-active' : ''}`}
+              aria-label={t('scenes.shell')}
+              aria-pressed={showSceneNav && navSceneId === 'shell'}
+              onClick={handleOpenShell}
+            >
+              <SquareTerminal size={15} />
+            </button>
+          </Tooltip>
+
+        <div
+          className="bitfun-nav-panel__footer-multimodal-wrap"
+          onMouseEnter={handleMultimodalEnter}
+          onMouseLeave={handleMultimodalLeave}
+        >
+          {(() => {
+            const isBrowserActive = activeTabId === 'browser' || (activeTabId === 'session' && isBrowserPanelActiveInCanvas);
+            const isMermaidActive = activeTabId === 'mermaid' || (activeTabId === 'session' && isMermaidPanelActiveInCanvas);
+            const isAnyActive = isBrowserActive || isMermaidActive;
+            return (
+              <>
+                <Tooltip content={t('nav.multimodalTools')} placement="right" disabled={multimodalOpen}>
+                  <button
+                    type="button"
+                    className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${isAnyActive ? ' is-active' : ''}${multimodalOpen ? ' is-hover-open' : ''}`}
+                    aria-label={t('nav.multimodalTools')}
+                    aria-expanded={multimodalOpen}
+                    aria-haspopup="menu"
+                  >
+                    <Layers size={15} />
+                  </button>
+                </Tooltip>
+
+                {multimodalOpen && (
+                  <div
+                    className="bitfun-nav-panel__footer-multimodal-menu"
+                    role="menu"
+                    aria-label={t('nav.multimodalTools')}
+                  >
+                    <button
+                      type="button"
+                      className={`bitfun-nav-panel__footer-multimodal-item${isBrowserActive ? ' is-active' : ''}`}
+                      role="menuitem"
+                      aria-pressed={isBrowserActive}
+                      onClick={handleOpenBrowser}
+                    >
+                      <Globe size={13} className="bitfun-nav-panel__footer-multimodal-item-icon" />
+                      <span className="bitfun-nav-panel__footer-multimodal-item-label">{t('scenes.browser')}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`bitfun-nav-panel__footer-multimodal-item${isMermaidActive ? ' is-active' : ''}`}
+                      role="menuitem"
+                      aria-pressed={isMermaidActive}
+                      onClick={handleOpenMermaidEditor}
+                    >
+                      <Network size={13} className="bitfun-nav-panel__footer-multimodal-item-icon" />
+                      <span className="bitfun-nav-panel__footer-multimodal-item-label">{t('scenes.mermaidEditor')}</span>
+                    </button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+        </div>
+
+        <div className="bitfun-nav-panel__footer-right">
+          <NotificationButton className="bitfun-nav-panel__footer-btn" />
+        </div>
       </div>
-
-      <Tooltip content={t('scenes.shell')} placement="right">
-        <button
-          type="button"
-          className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${showSceneNav && navSceneId === 'shell' ? ' is-active' : ''}`}
-          aria-label={t('scenes.shell')}
-          aria-pressed={showSceneNav && navSceneId === 'shell'}
-          onClick={handleOpenShell}
-        >
-          <SquareTerminal size={15} />
-        </button>
-      </Tooltip>
-
-      <Tooltip content={t('scenes.browser')} placement="right">
-        <button
-          type="button"
-          className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${(activeTabId === 'browser' || (activeTabId === 'session' && isBrowserPanelActiveInCanvas)) ? ' is-active' : ''}`}
-          aria-label={t('scenes.browser')}
-          aria-pressed={activeTabId === 'browser' || (activeTabId === 'session' && isBrowserPanelActiveInCanvas)}
-          onClick={handleOpenBrowser}
-        >
-          <Globe size={15} />
-        </button>
-      </Tooltip>
-
-      <NotificationButton className="bitfun-nav-panel__footer-btn" />
       <AboutDialog isOpen={showAbout} onClose={() => setShowAbout(false)} />
       <RemoteConnectDialog isOpen={showRemoteConnect} onClose={() => setShowRemoteConnect(false)} />
       <Modal
@@ -239,7 +328,7 @@ const PersistentFooterActions: React.FC = () => {
           onAgree={handleAgreeDisclaimer}
         />
       </Modal>
-    </div>
+    </>
   );
 };
 

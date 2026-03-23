@@ -1,4 +1,4 @@
-use super::util::resolve_path_with_workspace;
+use super::util::normalize_path;
 use crate::agentic::coordination::get_global_coordinator;
 use crate::agentic::core::SessionConfig;
 use crate::agentic::tools::framework::{
@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::Path;
+use std::time::SystemTime;
 
 /// SessionControl tool - create, delete, or list persisted sessions
 pub struct SessionControlTool;
@@ -16,6 +17,23 @@ pub struct SessionControlTool;
 impl SessionControlTool {
     pub fn new() -> Self {
         Self
+    }
+
+    fn current_workspace_session<'a>(
+        &self,
+        context: &'a ToolUseContext,
+        workspace: &str,
+    ) -> Option<&'a str> {
+        let current_session_id = context.session_id.as_deref()?;
+        let current_workspace = context.workspace_root()?;
+        let normalized_current_workspace =
+            normalize_path(&current_workspace.to_string_lossy().to_string());
+
+        if normalized_current_workspace == workspace {
+            Some(current_session_id)
+        } else {
+            None
+        }
     }
 
     fn validate_session_id(session_id: &str) -> Result<(), String> {
@@ -39,22 +57,22 @@ impl SessionControlTool {
         Ok(())
     }
 
-    fn resolve_workspace(
-        &self,
-        workspace: Option<&str>,
-        context: &ToolUseContext,
-    ) -> BitFunResult<String> {
-        let resolved = match workspace.filter(|value| !value.trim().is_empty()) {
-            Some(workspace) => resolve_path_with_workspace(workspace, context.workspace_root())?,
-            None => context
-                .workspace_root()
-                .map(|path| path.to_string_lossy().to_string())
-                .ok_or_else(|| {
-                    BitFunError::tool(
-                        "SessionControl requires workspace input or a source workspace".to_string(),
-                    )
-                })?,
-        };
+    fn resolve_workspace(&self, workspace: &str) -> BitFunResult<String> {
+        let workspace = workspace.trim();
+        if workspace.is_empty() {
+            return Err(BitFunError::tool(
+                "workspace is required and cannot be empty".to_string(),
+            ));
+        }
+
+        let path = Path::new(workspace);
+        if !path.is_absolute() {
+            return Err(BitFunError::tool(
+                "workspace must be an absolute path".to_string(),
+            ));
+        }
+
+        let resolved = normalize_path(workspace);
         let path = Path::new(&resolved);
         if !path.exists() {
             return Err(BitFunError::tool(format!(
@@ -82,6 +100,11 @@ impl SessionControlTool {
             .replace('\n', "<br>")
     }
 
+    fn format_system_time(time: SystemTime) -> String {
+        let datetime: chrono::DateTime<chrono::Local> = time.into();
+        datetime.format("%Y-%m-%dT%H:%M:%S").to_string()
+    }
+
     fn creator_session_marker(&self, context: &ToolUseContext) -> BitFunResult<String> {
         let creator_session_id = context.session_id.as_ref().ok_or_else(|| {
             BitFunError::tool("create requires a creator session in tool context".to_string())
@@ -93,25 +116,34 @@ impl SessionControlTool {
         &self,
         workspace: &str,
         sessions: &[crate::agentic::core::SessionSummary],
+        current_session_id: Option<&str>,
     ) -> String {
         if sessions.is_empty() {
             return format!("No sessions found in workspace '{}'.", workspace);
         }
 
         let mut lines = vec![format!(
-            "Found {} session(s) in workspace '{}':",
+            "Found {} session(s) in workspace '{}'",
             sessions.len(),
             workspace
         )];
         lines.push(String::new());
-        lines.push("| Session ID | Session Name | Agent Type |".to_string());
-        lines.push("| --- | --- | --- |".to_string());
+        if let Some(current_session_id) = current_session_id {
+            lines.push(format!("Note: '{}' is your session_id", current_session_id));
+            lines.push(String::new());
+        }
+        lines.push(
+            "| session_id | session_name | agent_type | created_at | last_active_at |".to_string(),
+        );
+        lines.push("| --- | --- | --- | --- | --- |".to_string());
         for session in sessions {
             lines.push(format!(
-                "| {} | {} | {} |",
+                "| {} | {} | {} | {} | {} |",
                 Self::escape_markdown_table_cell(&session.session_id),
                 Self::escape_markdown_table_cell(&session.session_name),
-                &session.agent_type
+                Self::escape_markdown_table_cell(&session.agent_type),
+                Self::format_system_time(session.created_at),
+                Self::format_system_time(session.last_activity_at),
             ));
         }
         lines.join("\n")
@@ -149,7 +181,7 @@ impl SessionControlAgentType {
 #[derive(Debug, Clone, Deserialize)]
 struct SessionControlInput {
     action: SessionControlAction,
-    workspace: Option<String>,
+    workspace: String,
     session_id: Option<String>,
     session_name: Option<String>,
     agent_type: Option<SessionControlAgentType>,
@@ -170,8 +202,11 @@ Actions:
 - "delete": Delete an existing session by session_id.
 - "list": List all sessions.
 
+Required inputs:
+- "workspace": Absolute workspace path for the target session scope.
+
 Optional inputs:
-- "workspace": Workspace path. Can be absolute or relative to the current workspace. If omitted, uses your current workspace.
+- "session_name": Only used by create. Defaults to "New Session".
 - "agent_type": Only used by create. Defaults to "agentic".
   - "agentic": Coding-focused agent for implementation, debugging, and code changes.
   - "Plan": Planning agent for clarifying requirements and producing an implementation plan before coding.
@@ -191,7 +226,7 @@ Optional inputs:
                 },
                 "workspace": {
                     "type": "string",
-                    "description": "Workspace path. Can be absolute or relative to the current workspace."
+                    "description": "Required absolute workspace path."
                 },
                 "session_id": {
                     "type": "string",
@@ -207,7 +242,7 @@ Optional inputs:
                     "description": "Optional agent type when creating a session. Defaults to agentic."
                 }
             },
-            "required": ["action"],
+            "required": ["action", "workspace"],
             "additionalProperties": false
         })
     }
@@ -237,19 +272,19 @@ Optional inputs:
             }
         };
 
-        if parsed
-            .workspace
-            .as_deref()
-            .map(|value| value.trim().is_empty())
-            .unwrap_or(true)
-            && context.and_then(|value| value.workspace_root()).is_none()
-        {
+        if parsed.workspace.trim().is_empty() {
             return ValidationResult {
                 result: false,
-                message: Some(
-                    "SessionControl requires workspace input or a source workspace in tool context"
-                        .to_string(),
-                ),
+                message: Some("workspace is required and cannot be empty".to_string()),
+                error_code: Some(400),
+                meta: None,
+            };
+        }
+
+        if !Path::new(parsed.workspace.trim()).is_absolute() {
+            return ValidationResult {
+                result: false,
+                message: Some("workspace must be an absolute path".to_string()),
                 error_code: Some(400),
                 meta: None,
             };
@@ -304,6 +339,23 @@ Optional inputs:
                         meta: None,
                     };
                 }
+                if let Some(tool_context) = context {
+                    if let Ok(workspace) = self.resolve_workspace(&parsed.workspace) {
+                        if self.current_workspace_session(tool_context, &workspace)
+                            == Some(session_id)
+                        {
+                            return ValidationResult {
+                                result: false,
+                                message: Some(
+                                    "cannot delete the current session from SessionControl"
+                                        .to_string(),
+                                ),
+                                error_code: Some(400),
+                                meta: None,
+                            };
+                        }
+                    }
+                }
             }
             SessionControlAction::List => {
                 if parsed.agent_type.is_some() {
@@ -328,7 +380,7 @@ Optional inputs:
         let workspace = input
             .get("workspace")
             .and_then(|value| value.as_str())
-            .unwrap_or("current workspace");
+            .unwrap_or("unknown workspace");
         let session_id = input
             .get("session_id")
             .and_then(|value| value.as_str())
@@ -349,7 +401,7 @@ Optional inputs:
     ) -> BitFunResult<Vec<ToolResult>> {
         let params: SessionControlInput = serde_json::from_value(input.clone())
             .map_err(|e| BitFunError::tool(format!("Invalid input: {}", e)))?;
-        let workspace = self.resolve_workspace(params.workspace.as_deref(), context)?;
+        let workspace = self.resolve_workspace(&params.workspace)?;
         let workspace_path = Path::new(&workspace);
         let coordinator = get_global_coordinator()
             .ok_or_else(|| BitFunError::tool("coordinator not initialized".to_string()))?;
@@ -408,6 +460,11 @@ Optional inputs:
                     BitFunError::tool("session_id is required for delete".to_string())
                 })?;
                 Self::validate_session_id(session_id).map_err(BitFunError::tool)?;
+                if self.current_workspace_session(context, &workspace) == Some(session_id) {
+                    return Err(BitFunError::tool(
+                        "cannot delete the current session from SessionControl".to_string(),
+                    ));
+                }
 
                 let existing_sessions = coordinator.list_sessions(workspace_path).await?;
                 if !existing_sessions
@@ -439,14 +496,16 @@ Optional inputs:
             }
             SessionControlAction::List => {
                 let sessions = coordinator.list_sessions(workspace_path).await?;
+                let current_session_id = self.current_workspace_session(context, &workspace);
                 let result_for_assistant =
-                    self.build_list_result_for_assistant(&workspace, &sessions);
+                    self.build_list_result_for_assistant(&workspace, &sessions, current_session_id);
 
                 Ok(vec![ToolResult::Result {
                     data: json!({
                         "success": true,
                         "action": "list",
                         "workspace": workspace.clone(),
+                        "current_session_id": current_session_id,
                         "count": sessions.len(),
                         "sessions": sessions,
                     }),

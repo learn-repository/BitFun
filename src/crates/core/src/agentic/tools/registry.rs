@@ -49,7 +49,7 @@ impl ToolRegistry {
                 );
             }
 
-            self.tools.insert(name.clone(), tool);
+            self.register_tool(tool);
             debug!("MCP tool registered: tool_name={}", name);
         }
 
@@ -92,9 +92,13 @@ impl ToolRegistry {
         self.register_tool(Arc::new(TerminalControlTool::new()));
         self.register_tool(Arc::new(SessionControlTool::new()));
         self.register_tool(Arc::new(SessionMessageTool::new()));
+        self.register_tool(Arc::new(SessionHistoryTool::new()));
 
         // TodoWrite tool
         self.register_tool(Arc::new(TodoWriteTool::new()));
+
+        // Cron scheduled jobs tool
+        self.register_tool(Arc::new(CronTool::new()));
 
         // TaskTool, execute subagent
         self.register_tool(Arc::new(TaskTool::new()));
@@ -109,9 +113,6 @@ impl ToolRegistry {
         self.register_tool(Arc::new(WebSearchTool::new()));
         self.register_tool(Arc::new(WebFetchTool::new()));
 
-        // IDE control tool
-        self.register_tool(Arc::new(IdeControlTool::new()));
-
         // Mermaid interactive chart tool
         self.register_tool(Arc::new(MermaidInteractiveTool::new()));
 
@@ -120,12 +121,6 @@ impl ToolRegistry {
 
         // Log tool
         self.register_tool(Arc::new(LogTool::new()));
-
-        // Linter tool (LSP diagnosis)
-        self.register_tool(Arc::new(ReadLintsTool::new()));
-
-        // Image analysis / viewing tool
-        self.register_tool(Arc::new(ViewImageTool::new()));
 
         // Git version control tool
         self.register_tool(Arc::new(GitTool::new()));
@@ -142,6 +137,9 @@ impl ToolRegistry {
 
     /// Register a single tool
     pub fn register_tool(&mut self, tool: Arc<dyn Tool>) {
+        // Snapshot-aware wrapping happens once at registration time so every
+        // subsequent lookup returns the same runtime implementation.
+        let tool = crate::service::snapshot::wrap_tool_for_snapshot_tracking(tool);
         let name = tool.name().to_string();
         self.tools.insert(name, tool);
     }
@@ -169,33 +167,45 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::create_tool_registry;
+    use serde_json::json;
 
     #[test]
     fn registry_includes_webfetch_tool() {
         let registry = create_tool_registry();
         assert!(registry.get_tool("WebFetch").is_some());
     }
+
+    #[test]
+    fn registry_includes_cron_tool() {
+        let registry = create_tool_registry();
+        assert!(registry.get_tool("Cron").is_some());
+    }
+
+    #[test]
+    fn registry_wraps_file_modification_tools_for_snapshot_tracking() {
+        let registry = create_tool_registry();
+        let tool = registry
+            .get_tool("Write")
+            .expect("Write tool should be registered");
+
+        let assistant_text = tool.render_result_for_assistant(&json!({
+            "success": true,
+            "file_path": "E:/Projects/demo.txt"
+        }));
+
+        assert!(
+            assistant_text.contains("snapshot system"),
+            "expected snapshot wrapper text, got: {}",
+            assistant_text
+        );
+    }
 }
 
-/// Get all tools
-/// If you need **always include** MCP tools, use [get_all_registered_tools]
+/// Get all tools from the snapshot-aware global registry.
 pub async fn get_all_tools() -> Vec<Arc<dyn Tool>> {
     let registry = get_global_tool_registry();
     let registry_lock = registry.read().await;
-    let all_tools = registry_lock.get_all_tools();
-    let wrapped_tools = crate::service::snapshot::get_snapshot_wrapped_tools();
-    let file_tool_names: std::collections::HashSet<String> = wrapped_tools
-        .iter()
-        .map(|tool| tool.name().to_string())
-        .collect();
-
-    let mut result = wrapped_tools;
-    for tool in all_tools {
-        if !file_tool_names.contains(tool.name()) {
-            result.push(tool);
-        }
-    }
-    result
+    registry_lock.get_all_tools()
 }
 
 /// Get readonly tools
@@ -233,22 +243,9 @@ pub fn get_global_tool_registry() -> Arc<TokioRwLock<ToolRegistry>> {
         .clone()
 }
 
-/// Get all registered tools (**always include** dynamically registered MCP tools)
+/// Backward-compatible alias for callers that expect MCP tools to be included.
 pub async fn get_all_registered_tools() -> Vec<Arc<dyn Tool>> {
-    let registry = get_global_tool_registry();
-    let registry_lock = registry.read().await;
-    let all_tools = registry_lock.get_all_tools();
-    let wrapped_tools = crate::service::snapshot::get_snapshot_wrapped_tools();
-    let file_tool_names: std::collections::HashSet<String> =
-        wrapped_tools.iter().map(|t| t.name().to_string()).collect();
-
-    let mut result = wrapped_tools;
-    for tool in all_tools {
-        if !file_tool_names.contains(tool.name()) {
-            result.push(tool);
-        }
-    }
-    result
+    get_all_tools().await
 }
 
 /// Get all registered tool names

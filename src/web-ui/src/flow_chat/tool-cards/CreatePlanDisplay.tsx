@@ -7,7 +7,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileText, Circle, Loader2, CheckCircle, CheckCircle2, PlayCircle, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { ClipboardList, Circle, Loader2, CheckCircle, CheckCircle2, PlayCircle, XCircle, ChevronsUpDown, ChevronsDownUp } from 'lucide-react';
 import type { ToolCardProps } from '../types/flow-chat';
 import { ideControl } from '@/shared/services/ide-control/api';
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
@@ -15,8 +15,9 @@ import { workspaceAPI } from '@/infrastructure/api/service-api/WorkspaceAPI';
 import { fileSystemService } from '@/tools/file-system/services/FileSystemService';
 import { planBuildStateService } from '@/shared/services/PlanBuildStateService';
 import yaml from 'yaml';
-import { Tooltip } from '@/component-library';
+import { Tooltip, CubeLoading } from '@/component-library';
 import { createLogger } from '@/shared/utils/logger';
+import { useToolCardHeightContract } from './useToolCardHeightContract';
 import './CreatePlanDisplay.scss';
 
 const log = createLogger('PlanDisplay');
@@ -78,6 +79,11 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({
   });
   
   const [isTodosExpanded, setIsTodosExpanded] = useState(false);
+  const toolCardId = cacheKey ?? planFilePath;
+  const { cardRootRef, applyExpandedState } = useToolCardHeightContract({
+    toolId: toolCardId,
+    toolName: 'CreatePlan',
+  });
 
   const hasAutoLoaded = useRef(false);
 
@@ -201,11 +207,6 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({
     };
   }, [effectiveCacheKey, planFilePath, initialName, initialOverview, initialTodos]);
 
-  const remainingTodos = useMemo(() => {
-    if (!planData?.todos) return 0;
-    return planData.todos.filter(t => t.status !== 'completed').length;
-  }, [planData]);
-
   // Build button status transitions: build -> building -> built.
   const buildStatus = useMemo((): 'build' | 'building' | 'built' => {
     if (planData?.todos?.length) {
@@ -295,6 +296,10 @@ ${JSON.stringify(simpleTodos, null, 2)}
     }
   }, [planFilePath, buildStatus, effectiveCacheKey, initialName, initialOverview, initialTodos]);
 
+  const handleToggleTodos = useCallback(() => {
+    applyExpandedState(isTodosExpanded, !isTodosExpanded, setIsTodosExpanded);
+  }, [applyExpandedState, isTodosExpanded]);
+
   const isLoading = status === 'preparing' || status === 'streaming' || status === 'running';
 
   if (!planData) {
@@ -309,7 +314,11 @@ ${JSON.stringify(simpleTodos, null, 2)}
   }
 
   return (
-    <div className={`create-plan-display status-${status}`}>
+    <div
+      ref={cardRootRef}
+      data-tool-card-id={toolCardId ?? ''}
+      className={`create-plan-display status-${status}`}
+    >
       <Tooltip content={t('toolCards.plan.clickToOpenPlan')}>
         <div 
           className="create-plan-header create-plan-header--clickable"
@@ -317,53 +326,56 @@ ${JSON.stringify(simpleTodos, null, 2)}
         >
           <div className="header-left">
             <div className="file-icon-wrapper">
-              <FileText size={14} />
+              <ClipboardList size={14} />
             </div>
             <span className="file-name">{planFileName}</span>
           </div>
+          {isLoading && (
+            <CubeLoading size="small" className="create-plan-loading" />
+          )}
         </div>
       </Tooltip>
 
       <div className="create-plan-content">
-        <h3 className="plan-title">{planData.name}</h3>
-        <p className="plan-overview">{planData.overview}</p>
+        <div className="plan-content-left">
+          <h3 className="plan-title">{planData.name}</h3>
+          <p className="plan-overview">{planData.overview}</p>
+        </div>
+        {planData.todos && planData.todos.length > 0 && (
+          <button
+            className="todos-toggle-btn"
+            type="button"
+            onClick={handleToggleTodos}
+          >
+            {isTodosExpanded ? <ChevronsDownUp size={22} /> : <ChevronsUpDown size={22} />}
+          </button>
+        )}
       </div>
 
-      {planData.todos && planData.todos.length > 0 && (
-        <div className={`create-plan-todos ${isTodosExpanded ? 'create-plan-todos--expanded' : ''}`}>
-          <div 
-            className="todos-header"
-            onClick={() => setIsTodosExpanded(!isTodosExpanded)}
-          >
-            <span className="todos-count">{t('toolCards.plan.remainingTodos', { count: remainingTodos })}</span>
-            <button className="todos-toggle-btn" type="button">
-              {isTodosExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </button>
+      {planData.todos && planData.todos.length > 0 && isTodosExpanded && (
+        <div className="create-plan-todos create-plan-todos--expanded">
+          <div className="todos-list">
+            {planData.todos.map((todo, index) => (
+              <div
+                key={todo.id || index}
+                className={`todo-item status-${todo.status || 'pending'}`}
+              >
+                {todo.status === 'completed' && (
+                  <CheckCircle2 size={12} className="todo-icon todo-icon--completed" />
+                )}
+                {todo.status === 'in_progress' && (
+                  <PlayCircle size={12} className="todo-icon todo-icon--in-progress" />
+                )}
+                {(!todo.status || todo.status === 'pending') && (
+                  <Circle size={12} className="todo-icon todo-icon--pending" />
+                )}
+                {todo.status === 'cancelled' && (
+                  <XCircle size={12} className="todo-icon todo-icon--cancelled" />
+                )}
+                <span className="todo-content">{todo.content}</span>
+              </div>
+            ))}
           </div>
-          {isTodosExpanded && (
-            <div className="todos-list">
-              {planData.todos.map((todo, index) => (
-                <div 
-                  key={todo.id || index} 
-                  className={`todo-item status-${todo.status || 'pending'}`}
-                >
-                  {todo.status === 'completed' && (
-                    <CheckCircle2 size={12} className="todo-icon todo-icon--completed" />
-                  )}
-                  {todo.status === 'in_progress' && (
-                    <PlayCircle size={12} className="todo-icon todo-icon--in-progress" />
-                  )}
-                  {(!todo.status || todo.status === 'pending') && (
-                    <Circle size={12} className="todo-icon todo-icon--pending" />
-                  )}
-                  {todo.status === 'cancelled' && (
-                    <XCircle size={12} className="todo-icon todo-icon--cancelled" />
-                  )}
-                  <span className="todo-content">{todo.content}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

@@ -12,6 +12,7 @@ import { AlertCircle } from 'lucide-react';
 import { createLogger } from '@/shared/utils/logger';
 import { CubeLoading, Button } from '@/component-library';
 import { useI18n } from '@/infrastructure/i18n';
+import { useTheme } from '@/infrastructure/theme/hooks/useTheme';
 import './MarkdownEditor.scss';
 
 const log = createLogger('MarkdownEditor');
@@ -53,6 +54,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   jumpToColumn,
 }) => {
   const { t } = useI18n('tools');
+  const { isLight } = useTheme();
   const [content, setContent] = useState<string>(initialContent);
   const [hasChanges, setHasChanges] = useState(false);
   const [loading, setLoading] = useState(!!filePath);
@@ -62,7 +64,10 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const lastModifiedTimeRef = useRef<number>(0);
   const lastJumpPositionRef = useRef<{ filePath: string; line: number } | null>(null);
   const onContentChangeRef = useRef(onContentChange);
+  const contentRef = useRef(content);
+  const lastReportedDirtyRef = useRef<boolean | null>(null);
   onContentChangeRef.current = onContentChange;
+  contentRef.current = content;
 
   const basePath = React.useMemo(() => {
     if (!filePath) return undefined;
@@ -106,6 +111,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       if (!isUnmountedRef.current) {
         setContent(fileContent);
         setHasChanges(false);
+        lastReportedDirtyRef.current = false;
         setTimeout(() => {
           editorRef.current?.setInitialContent?.(fileContent);
         }, 0);
@@ -148,6 +154,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     } else if (initialContent !== undefined) {
       setContent(initialContent);
       setHasChanges(false);
+      lastReportedDirtyRef.current = false;
       setTimeout(() => {
         editorRef.current?.setInitialContent?.(initialContent);
       }, 0);
@@ -181,6 +188,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         if (!isUnmountedRef.current) {
           editorRef.current?.markSaved?.();
           setHasChanges(false);
+          lastReportedDirtyRef.current = false;
           if (onContentChangeRef.current) {
             onContentChangeRef.current(content, false);
           }
@@ -200,11 +208,18 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   }, [content, filePath, workspacePath, hasChanges, onSave, t]);
 
   const handleContentChange = useCallback((newContent: string) => {
+    contentRef.current = newContent;
     setContent(newContent);
   }, []);
 
   const handleDirtyChange = useCallback((isDirty: boolean) => {
     setHasChanges(isDirty);
+    if (lastReportedDirtyRef.current === isDirty) {
+      return;
+    }
+
+    lastReportedDirtyRef.current = isDirty;
+    onContentChangeRef.current?.(contentRef.current, isDirty);
   }, []);
 
   const handleSave = useCallback((_value: string) => {
@@ -278,12 +293,13 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         onSave={handleSave}
         onDirtyChange={handleDirtyChange}
         mode="ir"
-        theme="dark"
+        theme={isLight ? 'light' : 'dark'}
         height="100%"
         width="100%"
         placeholder={t('editor.markdownEditor.placeholder')}
         readonly={readOnly}
         toolbar={false}
+        filePath={filePath}
         basePath={basePath}
       />
     </div>
@@ -291,4 +307,3 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 };
 
 export default MarkdownEditor;
-

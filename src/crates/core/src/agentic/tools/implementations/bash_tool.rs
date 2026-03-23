@@ -8,7 +8,7 @@ use crate::util::errors::{BitFunError, BitFunResult};
 use crate::util::types::event::ToolExecutionProgressInfo;
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::{debug, error};
+use log::{debug, error, info};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use terminal_core::shell::{ShellDetector, ShellType};
@@ -61,6 +61,22 @@ pub struct BashTool;
 impl BashTool {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Build environment variables that suppress interactive behaviors
+    /// (pagers, editors, prompts) so agent-driven commands never block.
+    pub fn noninteractive_env() -> std::collections::HashMap<String, String> {
+        let mut env = std::collections::HashMap::new();
+        env.insert("BITFUN_NONINTERACTIVE".to_string(), "1".to_string());
+        // Disable git pager globally (prevents `less`/`more` from blocking)
+        env.insert("GIT_PAGER".to_string(), "cat".to_string());
+        // Disable generic pager for other tools (man, etc.)
+        env.insert("PAGER".to_string(), "cat".to_string());
+        // Prevent git from prompting for credentials or SSH passphrases
+        env.insert("GIT_TERMINAL_PROMPT".to_string(), "0".to_string());
+        // Ensure git never opens an interactive editor (e.g. for commit messages)
+        env.insert("GIT_EDITOR".to_string(), "true".to_string());
+        env
     }
 
     /// Resolve shell configuration for bash tool.
@@ -195,6 +211,7 @@ Usage notes:
   - You can use the `run_in_background` parameter to run the command in a new dedicated background terminal session. The tool returns the background session ID immediately without waiting for the command to finish. Only use this for long-running processes (e.g., dev servers, watchers) where you don't need the output right away. You do not need to append '&' to the command. NOTE: `timeout_ms` is ignored when `run_in_background` is true.
   - Each result includes a `<terminal_session_id>` tag identifying the terminal session. The persistent shell session ID remains constant throughout the entire conversation; background sessions each have their own unique ID.
   - The output may include the command echo and/or the shell prompt (e.g., `PS C:\path>`). Do not treat these as part of the command's actual result.
+  - Avoid interactive commands that may block waiting for user input or open a pager/editor. Prefer non-interactive variants and explicit flags. For example, use `git --no-pager diff` instead of `git diff`, and avoid commands that prompt for confirmation unless the User explicitly asks for them.
   
   - Avoid using this tool with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
     - File search: Use Glob (NOT find or ls)
@@ -378,6 +395,46 @@ Usage notes:
             .and_then(|v| v.as_str())
             .ok_or_else(|| BitFunError::tool("command is required".to_string()))?;
 
+        // Remote workspace: execute via injected workspace shell
+        if context.is_remote() {
+            if let Some(ws_shell) = context.ws_shell() {
+                info!("Executing command on remote workspace via SSH: {}", command_str);
+
+                let timeout_ms = input
+                    .get("timeout_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(120_000);
+
+                let (stdout, stderr, exit_code) = ws_shell
+                    .exec(command_str, Some(timeout_ms))
+                    .await
+                    .map_err(|e| BitFunError::tool(format!("Remote command execution failed: {}", e)))?;
+
+                let output = if stderr.is_empty() {
+                    stdout.clone()
+                } else {
+                    format!("{}\n{}", stdout, stderr)
+                };
+
+                let result = ToolResult::Result {
+                    data: json!({
+                        "command": command_str,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "exit_code": exit_code,
+                        "duration_ms": start_time.elapsed().as_millis() as u64,
+                        "is_remote": true
+                    }),
+                    result_for_assistant: Some(format!(
+                        "[Remote SSH] Command executed on remote server:\n{}\n\nExit code: {}",
+                        output,
+                        exit_code
+                    )),
+                };
+                return Ok(vec![result]);
+            }
+        }
+
         let run_in_background = input
             .get("run_in_background")
             .and_then(|v| v.as_bool())
@@ -451,11 +508,7 @@ Usage notes:
                         &chat_session_id[..8.min(chat_session_id.len())]
                     )),
                     shell_type: shell_type.clone(),
-                    env: Some({
-                        let mut env = std::collections::HashMap::new();
-                        env.insert("BITFUN_NONINTERACTIVE".to_string(), "1".to_string());
-                        env
-                    }),
+                    env: Some(Self::noninteractive_env()),
                     ..Default::default()
                 },
             )
@@ -669,11 +722,7 @@ impl BashTool {
                     session_id: None,
                     session_name: None,
                     shell_type,
-                    env: Some({
-                        let mut env = std::collections::HashMap::new();
-                        env.insert("BITFUN_NONINTERACTIVE".to_string(), "1".to_string());
-                        env
-                    }),
+                    env: Some(Self::noninteractive_env()),
                     ..Default::default()
                 },
             )

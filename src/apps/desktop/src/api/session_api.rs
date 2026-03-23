@@ -2,9 +2,11 @@
 
 use bitfun_core::agentic::persistence::PersistenceManager;
 use bitfun_core::infrastructure::PathManager;
-use bitfun_core::service::session::{DialogTurnData, SessionMetadata};
+use bitfun_core::service::remote_ssh::workspace_state::get_effective_session_path;
+use bitfun_core::service::session::{
+    DialogTurnData, SessionMetadata, SessionTranscriptExport, SessionTranscriptExportOptions,
+};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
@@ -34,6 +36,24 @@ pub struct SaveSessionMetadataRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportSessionTranscriptRequest {
+    pub session_id: String,
+    pub workspace_path: String,
+    #[serde(default = "default_tools")]
+    pub tools: bool,
+    #[serde(default)]
+    pub tool_inputs: bool,
+    #[serde(default)]
+    pub thinking: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<Vec<String>>,
+}
+
+fn default_tools() -> bool {
+    false
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeletePersistedSessionRequest {
     pub session_id: String,
     pub workspace_path: String,
@@ -56,7 +76,7 @@ pub async fn list_persisted_sessions(
     request: ListPersistedSessionsRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<Vec<SessionMetadata>, String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 
@@ -71,7 +91,7 @@ pub async fn load_session_turns(
     request: LoadSessionTurnsRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<Vec<DialogTurnData>, String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 
@@ -93,7 +113,7 @@ pub async fn save_session_turn(
     request: SaveSessionTurnRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<(), String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 
@@ -108,7 +128,7 @@ pub async fn save_session_metadata(
     request: SaveSessionMetadataRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<(), String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 
@@ -119,11 +139,35 @@ pub async fn save_session_metadata(
 }
 
 #[tauri::command]
+pub async fn export_session_transcript(
+    request: ExportSessionTranscriptRequest,
+    path_manager: State<'_, Arc<PathManager>>,
+) -> Result<SessionTranscriptExport, String> {
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
+    let manager = PersistenceManager::new(path_manager.inner().clone())
+        .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
+
+    manager
+        .export_session_transcript(
+            &workspace_path,
+            &request.session_id,
+            &SessionTranscriptExportOptions {
+                tools: request.tools,
+                tool_inputs: request.tool_inputs,
+                thinking: request.thinking,
+                turns: request.turns,
+            },
+        )
+        .await
+        .map_err(|e| format!("Failed to export session transcript: {}", e))
+}
+
+#[tauri::command]
 pub async fn delete_persisted_session(
     request: DeletePersistedSessionRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<(), String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 
@@ -138,7 +182,7 @@ pub async fn touch_session_activity(
     request: TouchSessionActivityRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<(), String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 
@@ -153,7 +197,7 @@ pub async fn load_persisted_session_metadata(
     request: LoadPersistedSessionMetadataRequest,
     path_manager: State<'_, Arc<PathManager>>,
 ) -> Result<Option<SessionMetadata>, String> {
-    let workspace_path = PathBuf::from(&request.workspace_path);
+    let workspace_path = get_effective_session_path(&request.workspace_path).await;
     let manager = PersistenceManager::new(path_manager.inner().clone())
         .map_err(|e| format!("Failed to create persistence manager: {}", e))?;
 

@@ -25,7 +25,6 @@ import { NewProjectDialog } from '../components/NewProjectDialog';
 import { AboutDialog } from '../components/AboutDialog';
 import { WorkspaceManager } from '../../tools/workspace';
 import { workspaceAPI } from '@/infrastructure/api';
-import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { createLogger } from '@/shared/utils/logger';
 import { useI18n } from '@/infrastructure/i18n';
 import { WorkspaceKind } from '@/shared/types';
@@ -33,22 +32,9 @@ import { shortcutManager } from '@/infrastructure/services/ShortcutManager';
 import './AppLayout.scss';
 
 const log = createLogger('AppLayout');
-const DEFAULT_MODE_CONFIG_KEY = 'app.session_config.default_mode';
 
 interface AppLayoutProps {
   className?: string;
-}
-
-type DefaultSessionMode = 'code' | 'cowork';
-
-async function resolveDefaultSessionAgentType(): Promise<'agentic' | 'Cowork'> {
-  try {
-    const defaultMode = await configManager.getConfig<DefaultSessionMode>(DEFAULT_MODE_CONFIG_KEY);
-    return defaultMode === 'cowork' ? 'Cowork' : 'agentic';
-  } catch (error) {
-    log.warn('Failed to load default session mode, falling back to code', error);
-    return 'agentic';
-  }
 }
 
 const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
@@ -160,6 +146,22 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
     const initializeFlowChat = async () => {
       if (!currentWorkspace?.rootPath) return;
 
+      // Skip initialization for remote workspaces that are not yet SSH-connected.
+      // On startup, password-auth remote workspaces cannot auto-reconnect and will
+      // be removed from the sidebar shortly by SSHRemoteProvider. Attempting to
+      // initialize FlowChat for them would fail with a misleading error notification.
+      if (currentWorkspace.workspaceKind === WorkspaceKind.Remote && currentWorkspace.connectionId) {
+        const { sshApi } = await import('@/features/ssh-remote/sshApi');
+        const connected = await sshApi.isConnected(currentWorkspace.connectionId).catch(() => false);
+        if (!connected) {
+          log.warn('Skipping FlowChat initialization: remote workspace not connected', {
+            rootPath: currentWorkspace.rootPath,
+            connectionId: currentWorkspace.connectionId,
+          });
+          return;
+        }
+      }
+
       try {
         const explicitPreferredMode =
           sessionStorage.getItem('bitfun:flowchat:preferredMode') ||
@@ -185,7 +187,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ className = '' }) => {
           const initialSessionMode =
             currentWorkspace.workspaceKind === WorkspaceKind.Assistant
               ? 'Claw'
-              : explicitPreferredMode || await resolveDefaultSessionAgentType();
+              : explicitPreferredMode || 'agentic';
           sessionId = await flowChatManager.createChatSession({}, initialSessionMode);
         }
 

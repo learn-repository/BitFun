@@ -1,7 +1,7 @@
 //! Tauri commands for Remote Connect.
 
 use bitfun_core::service::remote_connect::{
-    bot::{self, BotConfig},
+    bot::{self, weixin, BotConfig},
     lan, ConnectionMethod, ConnectionResult, PairingState, RemoteConnectConfig,
     RemoteConnectService,
 };
@@ -208,6 +208,8 @@ pub struct RemoteConnectStatusResponse {
     /// Independent bot connection info — e.g. "Telegram(7096812005)".
     /// Present when a bot is active, regardless of relay pairing state.
     pub bot_connected: Option<String>,
+    /// Bot verbose mode setting — when true, intermediate progress is sent to users.
+    pub bot_verbose_mode: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -361,6 +363,12 @@ pub async fn remote_connect_get_methods() -> Result<Vec<ConnectionMethodInfo>, S
                 available: true,
                 description: "Via Telegram".into(),
             },
+            ConnectionMethod::BotWeixin => ConnectionMethodInfo {
+                id: "bot_weixin".into(),
+                name: "WeChat (Weixin)".into(),
+                available: true,
+                description: "Via WeChat iLink bot".into(),
+            },
         })
         .collect();
 
@@ -380,6 +388,7 @@ fn parse_connection_method(
         }),
         "bot_feishu" => Ok(ConnectionMethod::BotFeishu),
         "bot_telegram" => Ok(ConnectionMethod::BotTelegram),
+        "bot_weixin" => Ok(ConnectionMethod::BotWeixin),
         _ => Err(format!("unknown connection method: {method}")),
     }
 }
@@ -436,6 +445,7 @@ pub async fn remote_connect_status() -> Result<RemoteConnectStatusResponse, Stri
     let peer = service.peer_device_name().await;
     let peer_user_id = service.trusted_mobile_user_id().await;
     let bot_connected = service.bot_connected_info().await;
+    let bot_verbose_mode = bot::load_bot_persistence().verbose_mode;
 
     Ok(RemoteConnectStatusResponse {
         is_connected: state == PairingState::Connected,
@@ -444,6 +454,7 @@ pub async fn remote_connect_status() -> Result<RemoteConnectStatusResponse, Stri
         peer_device_name: peer,
         peer_user_id,
         bot_connected,
+        bot_verbose_mode,
     })
 }
 
@@ -481,6 +492,20 @@ pub struct ConfigureBotRequest {
     pub app_id: Option<String>,
     pub app_secret: Option<String>,
     pub bot_token: Option<String>,
+    pub weixin_ilink_token: Option<String>,
+    pub weixin_base_url: Option<String>,
+    pub weixin_bot_account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WeixinQrStartRequest {
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WeixinQrPollRequest {
+    pub session_key: String,
+    pub base_url: Option<String>,
 }
 
 #[tauri::command]
@@ -496,6 +521,11 @@ pub async fn remote_connect_configure_bot(request: ConfigureBotRequest) -> Resul
         "telegram" => BotConfig::Telegram {
             bot_token: request.bot_token.unwrap_or_default(),
         },
+        "weixin" => BotConfig::Weixin {
+            ilink_token: request.weixin_ilink_token.unwrap_or_default(),
+            base_url: request.weixin_base_url.unwrap_or_default(),
+            bot_account_id: request.weixin_bot_account_id.unwrap_or_default(),
+        },
         _ => return Err(format!("unknown bot type: {}", request.bot_type)),
     };
 
@@ -505,6 +535,7 @@ pub async fn remote_connect_configure_bot(request: ConfigureBotRequest) -> Resul
         match &bot_config {
             BotConfig::Feishu { .. } => config.bot_feishu = Some(bot_config),
             BotConfig::Telegram { .. } => config.bot_telegram = Some(bot_config),
+            BotConfig::Weixin { .. } => config.bot_weixin = Some(bot_config),
         }
         let service = RemoteConnectService::new(config).map_err(|e| format!("init: {e}"))?;
         *guard = Some(service);
@@ -512,5 +543,39 @@ pub async fn remote_connect_configure_bot(request: ConfigureBotRequest) -> Resul
         service.update_bot_config(bot_config);
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remote_connect_weixin_qr_start(
+    request: WeixinQrStartRequest,
+) -> Result<weixin::WeixinQrStartResponse, String> {
+    weixin::weixin_qr_start(request.base_url)
+        .await
+        .map_err(|e| format!("weixin qr start: {e}"))
+}
+
+#[tauri::command]
+pub async fn remote_connect_weixin_qr_poll(
+    request: WeixinQrPollRequest,
+) -> Result<weixin::WeixinQrPollResponse, String> {
+    weixin::weixin_qr_poll(&request.session_key, request.base_url)
+        .await
+        .map_err(|e| format!("weixin qr poll: {e}"))
+}
+
+#[tauri::command]
+pub async fn remote_connect_get_bot_verbose_mode() -> Result<bool, String> {
+    let data = bot::load_bot_persistence();
+    Ok(data.verbose_mode)
+}
+
+#[tauri::command]
+pub async fn remote_connect_set_bot_verbose_mode(verbose: bool) -> Result<(), String> {
+    log::info!("remote_connect_set_bot_verbose_mode called with verbose={}", verbose);
+    let mut data = bot::load_bot_persistence();
+    data.verbose_mode = verbose;
+    bot::save_bot_persistence(&data);
+    log::info!("Saved bot verbose_mode={} to persistence", verbose);
     Ok(())
 }

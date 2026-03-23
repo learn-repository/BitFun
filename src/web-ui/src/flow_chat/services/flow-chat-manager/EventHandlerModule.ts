@@ -11,8 +11,11 @@ import {
   generateTextChunkKey, 
   generateToolEventKey,
   parseEventKey,
+  type FlowToolEvent,
+  type SubagentParentInfo,
   type TextChunkEventData,
-  type ToolEventData
+  type ToolEventData,
+  type ParamsPartialToolEvent
 } from '../EventBatcher';
 import { notificationService } from '../../../shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
@@ -30,13 +33,13 @@ import {
 import { 
   processNormalTextChunkInternal, 
   processThinkingChunkInternal,
-  processToolParamsPartialInternal,
-  processToolProgressInternal,
   completeActiveTextItems,
   cleanupSessionBuffers
 } from './TextChunkModule';
 import { 
   processToolEvent, 
+  processToolParamsPartialInternal,
+  processToolProgressInternal,
   handleToolExecutionProgress 
 } from './ToolEventModule';
 import {
@@ -521,13 +524,23 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
       backendTurnIndex: turnIndex,
     }));
   }
+
+  // User may have pre-added this turn from the composer while the previous turn was still running;
+  // START was skipped then. When the backend dispatches this turn, move the state machine to PROCESSING.
+  const machine = stateMachineManager.get(sessionId);
+  if (machine && machine.getCurrentState() === SessionExecutionState.IDLE) {
+    void stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
+      taskId: sessionId,
+      dialogTurnId: turnId,
+    });
+  }
 }
 
 /**
  * Handle text chunk event
  */
 function handleTextChunk(context: FlowChatContext, event: any): void {
-  const { sessionId, turnId, roundId, text, contentType = 'text', subagentParentInfo } = event;
+  const { sessionId, turnId, roundId, text, contentType = 'text', isThinkingEnd = false, subagentParentInfo } = event;
   
   const parentSessionId = subagentParentInfo?.sessionId;
   const parentTurnId = subagentParentInfo?.dialogTurnId;
@@ -570,6 +583,7 @@ function handleTextChunk(context: FlowChatContext, event: any): void {
     roundId,
     text,
     contentType: contentType as 'text' | 'thinking',
+    isThinkingEnd,
     subagentParentInfo
   };
   
@@ -581,7 +595,8 @@ function handleTextChunk(context: FlowChatContext, event: any): void {
     'accumulate',
     (existing, incoming) => ({
       ...existing,
-      text: existing.text + incoming.text
+      text: existing.text + incoming.text,
+      isThinkingEnd: existing.isThinkingEnd || incoming.isThinkingEnd
     })
   );
 }
@@ -607,7 +622,7 @@ export function processBatchedEvents(
       
       if (eventType === 'text') {
         if (isSubagent) {
-          const { sessionId, turnId, roundId, text, contentType, subagentParentInfo } = payload;
+          const { sessionId, turnId, roundId, text, contentType, isThinkingEnd, subagentParentInfo } = payload;
           const parentSessionId = subagentParentInfo?.sessionId;
           const parentToolId = subagentParentInfo?.toolCallId;
           
@@ -617,13 +632,14 @@ export function processBatchedEvents(
               turnId,
               roundId,
               text,
-              contentType
+              contentType,
+              isThinkingEnd
             });
           }
         } else {
-          const { sessionId, turnId, roundId, text, contentType } = payload;
+          const { sessionId, turnId, roundId, text, contentType, isThinkingEnd } = payload;
           if (contentType === 'thinking') {
-            processThinkingChunkInternal(context, sessionId, turnId, roundId, text);
+            processThinkingChunkInternal(context, sessionId, turnId, roundId, text, isThinkingEnd);
           } else {
             processNormalTextChunkInternal(context, sessionId, turnId, roundId, text);
           }
@@ -641,7 +657,7 @@ export function processBatchedEvents(
           }
         } else {
           const { sessionId, turnId, toolEvent } = payload;
-          processToolParamsPartialInternal(context, sessionId, turnId, toolEvent);
+          processToolParamsPartialInternal(sessionId, turnId, toolEvent);
         }
       } else if (eventType === 'tool:progress') {
         if (isSubagent) {
@@ -654,7 +670,7 @@ export function processBatchedEvents(
           }
         } else {
           const { sessionId, turnId, toolEvent } = payload;
-          processToolProgressInternal(context, sessionId, turnId, toolEvent);
+          processToolProgressInternal(sessionId, turnId, toolEvent);
         }
       }
     }
@@ -668,10 +684,19 @@ export function processBatchedEvents(
  */
 function handleToolEvent(
   context: FlowChatContext,
-  event: any,
+  event: {
+    sessionId: string;
+    turnId?: string;
+    toolEvent: FlowToolEvent;
+    subagentParentInfo?: SubagentParentInfo;
+  },
   onTodoWriteResult: (sessionId: string, turnId: string, result: any) => void
 ): void {
   const { sessionId, turnId, toolEvent, subagentParentInfo } = event;
+  if (!turnId) {
+    log.debug('Tool event missing turnId', { sessionId, toolId: toolEvent.tool_id, eventType: toolEvent.event_type });
+    return;
+  }
   
   const parentSessionId = subagentParentInfo?.sessionId;
   const parentToolId = subagentParentInfo?.toolCallId;
@@ -704,8 +729,10 @@ function handleToolEvent(
         (existing, incoming) => ({
           ...existing,
           toolEvent: {
-            ...existing.toolEvent,
-            params_partial: (existing.toolEvent.params_partial || '') + (incoming.toolEvent.params_partial || '')
+            ...(existing.toolEvent as ParamsPartialToolEvent),
+            params:
+              (existing.toolEvent as ParamsPartialToolEvent).params +
+              (incoming.toolEvent as ParamsPartialToolEvent).params
           }
         })
       );

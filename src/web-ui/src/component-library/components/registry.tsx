@@ -32,9 +32,6 @@ import { LSDisplay } from '@/flow_chat/tool-cards/LSDisplay';
 import { MCPToolDisplay } from '@/flow_chat/tool-cards/MCPToolDisplay';
 import { MermaidInteractiveDisplay } from '@/flow_chat/tool-cards/MermaidInteractiveDisplay';
 import { ContextCompressionDisplay } from '@/flow_chat/tool-cards/ContextCompressionDisplay';
-import { ImageAnalysisCard } from '@/flow_chat/tool-cards/ImageAnalysisCard';
-import { IdeControlToolCard } from '@/flow_chat/tool-cards/IdeControlToolCard';
-import { LinterToolCard } from '@/flow_chat/tool-cards/LinterToolCard';
 import { SkillDisplay } from '@/flow_chat/tool-cards/SkillDisplay';
 import { AskUserQuestionCard } from '@/flow_chat/tool-cards/AskUserQuestionCard';
 import { GitToolDisplay } from '@/flow_chat/tool-cards/GitToolDisplay';
@@ -1581,121 +1578,6 @@ console.log(user.greet());`);
                 undefined,
                 'running'
               )}
-            />
-          </div>
-        ),
-      },
-      {
-        id: 'image-analysis-card',
-        name: 'view_image - 图片分析',
-        description: '图片查看分析工具',
-        category: 'flowchat-cards',
-        component: () => (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px' }}>
-            <h3 style={{ color: '#ffffff', marginBottom: '8px' }}>图片分析 - 成功</h3>
-            <ImageAnalysisCard
-              toolItem={createMockToolItem('view_image',
-                {
-                  image_path: '/path/to/screenshot.png',
-                  analysis_prompt: '分析界面中的 UI 组件',
-                  focus_areas: ['界面元素', '布局结构', '配色方案']
-                },
-                {
-                  analysis: '截图展示了一个基于 TypeScript 与 React 构建的应用界面，整体包含顶部区域、侧边栏和主内容区。',
-                  model_used: 'gpt-4-vision',
-                  image_path: '/path/to/screenshot.png'
-                },
-                'completed'
-              )}
-              config={TOOL_CARD_CONFIGS['view_image']}
-              sessionId="preview-session"
-            />
-          </div>
-        ),
-      },
-      {
-        id: 'ide-control-card',
-        name: 'IdeControl - IDE控制',
-        description: '控制IDE的操作卡片',
-        category: 'flowchat-cards',
-        component: () => (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px' }}>
-            <h3 style={{ color: '#ffffff', marginBottom: '8px' }}>IDE 控制 - 示例</h3>
-            <IdeControlToolCard
-              toolItem={createMockToolItem('IdeControl',
-                {
-                  action: 'open_file',
-                  file_path: 'src/App.tsx'
-                },
-                { success: true },
-                'completed'
-              )}
-              config={TOOL_CARD_CONFIGS['IdeControl']}
-              sessionId="preview-session"
-            />
-          </div>
-        ),
-      },
-      {
-        id: 'linter-card',
-        name: 'ReadLints - 诊断卡片',
-        description: '代码诊断结果卡片',
-        category: 'flowchat-cards',
-        component: () => (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px' }}>
-            <h3 style={{ color: '#ffffff', marginBottom: '8px' }}>代码诊断 - 示例</h3>
-            <LinterToolCard
-              toolItem={createMockToolItem('ReadLints',
-                { path: 'src/App.tsx' },
-                {
-                  path_type: 'file',
-                  path: 'src/App.tsx',
-                  diagnostics: {
-                    'src/App.tsx': {
-                      file_path: 'src/App.tsx',
-                      language: 'typescript',
-                      lsp_status: 'ready',
-                      items: [
-                        {
-                          severity: 2,
-                          severity_text: 'Warning',
-                          line: 10,
-                          column: 5,
-                          message: "'unusedVar' is declared but its value is never read.",
-                          code: '6133',
-                          source: 'ts'
-                        },
-                        {
-                          severity: 1,
-                          severity_text: 'Error',
-                          line: 25,
-                          column: 12,
-                          message: "Property 'handleClick' does not exist on type 'Props'.",
-                          code: '2339',
-                          source: 'ts'
-                        }
-                      ],
-                      error_count: 1,
-                      warning_count: 1,
-                      info_count: 0,
-                      hint_count: 0
-                    }
-                  },
-                  summary: {
-                    total_files: 1,
-                    files_with_issues: 1,
-                    total_diagnostics: 2,
-                    error_count: 1,
-                    warning_count: 1,
-                    info_count: 0,
-                    hint_count: 0
-                  },
-                  warnings: []
-                },
-                'completed'
-              )}
-              config={TOOL_CARD_CONFIGS['ReadLints']}
-              sessionId="preview-session"
             />
           </div>
         ),

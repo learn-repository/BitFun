@@ -28,10 +28,14 @@ log = { workspace = true }
 
 uuid = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
+cron = { workspace = true }
 regex = { workspace = true }
 base64 = { workspace = true }
 image = { workspace = true }
 md5 = { workspace = true }
+aes = "0.8"
+hex = "0.4"
 dashmap = { workspace = true }
 indexmap = { workspace = true }
 
@@ -105,6 +109,14 @@ qrcode = { workspace = true }
 # WebSocket client
 tokio-tungstenite = { workspace = true }
 
+# SSH - Remote SSH support (optional feature)
+russh = { version = "0.45", optional = true }
+russh-sftp = { version = "2.1", optional = true }
+russh-keys = { version = "0.45", features = ["openssl"], optional = true }
+openssl = { workspace = true, optional = true }
+shellexpand = { version = "3", optional = true }
+ssh_config = { version = "0.1", optional = true }
+
 # Relay server shared library (embedded relay reuses standalone relay logic)
 bitfun-relay-server = { path = "../../apps/relay-server" }
 
@@ -117,10 +129,15 @@ bitfun-transport = { path = "../transport" }
 # Tauri dependency (optional, enabled only when needed)
 tauri = { workspace = true, optional = true }
 
-# Windows-specific dependencies
+# Non-Windows: vendored OpenSSL (no system install). Windows: prebuilt OpenSSL via OPENSSL_DIR (see README).
+[target.'cfg(not(windows))'.dependencies]
+git2 = { workspace = true, features = ["vendored-openssl"] }
+openssl = { workspace = true, optional = true, features = ["vendored"] }
+
 [target.'cfg(windows)'.dependencies]
 win32job = { workspace = true }
 
 [features]
-default = []
+default = ["ssh-remote"]
 tauri-support = ["tauri"]  # Optional tauri support
+ssh-remote = ["russh", "russh-sftp", "russh-keys", "openssl", "shellexpand", "ssh_config"]  # Optional SSH remote support

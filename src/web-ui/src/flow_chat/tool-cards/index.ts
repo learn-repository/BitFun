@@ -14,14 +14,11 @@ import { GlobSearchDisplay } from './GlobSearchDisplay';
 import { LSDisplay } from './LSDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { TaskToolDisplay } from './TaskToolDisplay';
-import { IdeControlToolCard } from './IdeControlToolCard';
 import { MermaidInteractiveDisplay } from './MermaidInteractiveDisplay';
-import { LinterToolCard } from './LinterToolCard';
 import { CodeReviewToolCard } from './CodeReviewToolCard';
 import { FileOperationToolCard } from './FileOperationToolCard';
 import { DefaultToolCard } from './DefaultToolCard';
 import { WebSearchCard } from './WebSearchCard'; // Temporary until WebSearchDisplay exists.
-import { ImageAnalysisCard } from './ImageAnalysisCard';
 import { ContextCompressionDisplay } from './ContextCompressionDisplay';
 import { MCPToolDisplay } from './MCPToolDisplay';
 import { SkillDisplay } from './SkillDisplay';
@@ -155,16 +152,6 @@ export const TOOL_CARD_CONFIGS: Record<string, ToolCardConfig> = {
     displayMode: 'standard',
     primaryColor: '#0d9488'
   },
-  'IdeControl': {
-    toolName: 'IdeControl',
-    displayName: 'IDE Control',
-    icon: 'IDE',
-    requiresConfirmation: false,
-    resultDisplayType: 'summary',
-    description: 'Control IDE UI actions',
-    displayMode: 'compact',
-    primaryColor: '#6b7280'
-  },
   'MermaidInteractive': {
     toolName: 'MermaidInteractive',
     displayName: 'Mermaid Interactive',
@@ -175,16 +162,6 @@ export const TOOL_CARD_CONFIGS: Record<string, ToolCardConfig> = {
     displayMode: 'compact',
     primaryColor: '#06b6d4'
   },
-  'ReadLints': {
-    toolName: 'ReadLints',
-    displayName: 'Lint Check',
-    icon: 'L',
-    requiresConfirmation: false,
-    resultDisplayType: 'summary',
-    description: 'Check lint errors and warnings',
-    displayMode: 'compact',
-    primaryColor: '#8b5cf6'
-  },
   'submit_code_review': {
     toolName: 'submit_code_review',
     displayName: 'Code Review',
@@ -194,16 +171,6 @@ export const TOOL_CARD_CONFIGS: Record<string, ToolCardConfig> = {
     description: 'Submit code review results',
     displayMode: 'compact',
     primaryColor: '#8b5cf6'
-  },
-  'view_image': {
-    toolName: 'view_image',
-    displayName: 'Image Analysis',
-    icon: 'IMG',
-    requiresConfirmation: false,
-    resultDisplayType: 'detailed',
-    description: 'Analyze images and extract details',
-    displayMode: 'compact',
-    primaryColor: '#ec4899'
   },
   'ContextCompression': {
     toolName: 'ContextCompression',
@@ -368,18 +335,10 @@ export const TOOL_CARD_COMPONENTS = {
   'Task': TaskToolDisplay,
   'TodoWrite': TodoWriteDisplay,
   
-  // IDE control
-  'IdeControl': IdeControlToolCard,
-  
   // Mermaid interactive
   'MermaidInteractive': MermaidInteractiveDisplay,
   
-  // Linting tools
-  'ReadLints': LinterToolCard,
   'submit_code_review': CodeReviewToolCard,
-  
-  // Image analysis tools
-  'view_image': ImageAnalysisCard,
   
   // Context compression
   'ContextCompression': ContextCompressionDisplay,

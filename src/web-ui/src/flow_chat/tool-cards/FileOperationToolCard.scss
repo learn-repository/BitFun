@@ -7,49 +7,50 @@
 
 .file-operation-card {
   cursor: pointer;
-  
+
   &.non-clickable {
     cursor: default;
     border-color: var(--border-light, rgba(255, 255, 255, 0.06));
     opacity: 0.85;
-    
+
     &:hover {
       border-color: var(--border-medium);
       opacity: 1;
-      
+
       .tool-identifier-icon.delete-icon {
         opacity: 1;
       }
-      
+
       .file-name--muted {
         color: var(--color-text-primary);
         font-weight: 500;
       }
-      
-      .delete-label {
-        color: var(--color-text-primary);
+
+      .delete-file-name {
+        text-decoration: line-through;
+        color: var(--color-text-muted);
       }
     }
-    
+
     .base-tool-card {
       cursor: default;
     }
   }
-  
+
   .tool-identifier-icon {
     &.write-icon {
       color: var(--color-text-secondary);
     }
-    
+
     &.edit-icon {
       color: var(--color-text-secondary);
     }
-    
+
     &.delete-icon {
       color: var(--color-text-muted);
       opacity: 0.6;
     }
-    
+
     &.file-icon {
       color: var(--color-text-secondary);
     }
@@ -59,7 +60,7 @@
 .file-name {
   font-weight: 500;
   color: var(--color-text-primary);
-  
+
   &--muted {
     color: var(--color-text-muted);
     font-weight: 400;
@@ -78,32 +79,27 @@
 }
 
 @keyframes pulse-subtle {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.7;
   }
 }
 
-.delete-label {
-  font-size: 10px;
-  font-weight: 500;
+.delete-file-name {
+  text-decoration: line-through;
   color: var(--color-text-muted);
-  flex-shrink: 0;
 }
 
 .diff-preview-group {
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 6px;
-  border: none;
-  border-radius: 20px;
-  background: transparent;
-  cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s ease, color 0.15s ease;
   font-family: var(--tool-card-font-mono);
   font-size: 10px;
   font-weight: 600;
@@ -116,23 +112,6 @@
 
   .deletions {
     color: var(--color-error);
-  }
-
-  svg {
-    flex-shrink: 0;
-    opacity: 0.6;
-  }
-
-  &:hover {
-    background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
-
-    svg {
-      opacity: 1;
-    }
-  }
-
-  &:active {
-    background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
   }
 }
 
@@ -147,8 +126,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: none;
   border-radius: 4px;
@@ -156,17 +135,17 @@
   color: var(--color-text-muted);
   cursor: pointer;
   transition: all 0.2s ease;
-  
+
   &:hover:not(:disabled) {
     background: var(--color-accent-200);
     color: var(--color-accent-500);
     transform: scale(1.05);
   }
-  
+
   &:active:not(:disabled) {
     transform: scale(0.95);
   }
-  
+
   &:disabled {
     opacity: 0.5;
     cursor: default;
@@ -193,7 +172,7 @@
   transition: all 0.2s ease;
   flex-shrink: 0;
   cursor: pointer;
-  
+
   &:hover {
     color: var(--color-accent-500);
   }
@@ -202,7 +181,7 @@
 .streaming-content-preview {
   width: 100%;
   margin-top: 0;
-  
+
   .preview-text {
     position: relative;
     width: 100%;
@@ -210,31 +189,23 @@
     border-radius: 0;
     padding: 0;
     border: none !important;
-    
+
     .code-preview {
-      max-height: 300px;
       overflow: hidden;
-      
-      .code-preview__content {
-        max-height: 300px;
-      }
-      
+
       pre {
         margin: 0 !important;
         padding: 0 !important;
         background: transparent !important;
       }
     }
-    
+
     .inline-diff-preview {
-      max-height: 300px;
-      
-      .inline-diff-preview__content {
-        max-height: 300px;
-      }
-      
       .diff-line__content {
-        pre, code, span {
+
+        pre,
+        code,
+        span {
           border: none !important;
           border-radius: 0 !important;
           box-shadow: none !important;
@@ -242,7 +213,7 @@
         }
       }
     }
-    
+
     &.diff-loading {
       display: flex;
       align-items: center;
@@ -252,8 +223,8 @@
       color: var(--color-text-muted);
       font-size: 12px;
     }
-    
-    > pre {
+
+    >pre {
       margin: 0;
       padding: 0;
       font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
@@ -277,7 +248,7 @@
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 6px;
-  
+
   svg {
     flex-shrink: 0;
   }

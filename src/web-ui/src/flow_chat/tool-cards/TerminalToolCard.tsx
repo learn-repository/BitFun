@@ -15,15 +15,21 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ToolCardProps } from '../types/flow-chat';
-import { Terminal, Play, X, ExternalLink, Square, ChevronDown, ChevronUp } from 'lucide-react';
+import { Terminal, Play, X, ExternalLink, Square } from 'lucide-react';
 import { createTerminalTab } from '@/shared/utils/tabUtils';
 import { BaseToolCard, ToolCardHeader } from './BaseToolCard';
 import { CubeLoading, IconButton } from '../../component-library';
 import { TerminalOutputRenderer } from '@/tools/terminal/components';
 import { createLogger } from '@/shared/utils/logger';
+import { useToolCardHeightContract } from './useToolCardHeightContract';
 import './TerminalToolCard.scss';
 
 const log = createLogger('TerminalToolCard');
+const TERMINAL_OUTPUT_PREVIEW_ROWS = 4;
+const TERMINAL_OUTPUT_ESTIMATED_LINE_HEIGHT = 18;
+const TERMINAL_OUTPUT_VERTICAL_PADDING = 16;
+const TERMINAL_OUTPUT_PREVIEW_MAX_HEIGHT =
+  TERMINAL_OUTPUT_PREVIEW_ROWS * TERMINAL_OUTPUT_ESTIMATED_LINE_HEIGHT + TERMINAL_OUTPUT_VERTICAL_PADDING;
 
 interface TerminalToolCardProps extends ToolCardProps {
   terminalSessionId?: string;
@@ -97,7 +103,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   const canEditCommand = showConfirmButtons;
   
   const [userAction, setUserAction] = useState<'none' | 'rejected' | 'interrupted'>('none');
-  const toolId = toolCall?.id;
+  const toolId = toolItem.id ?? toolCall?.id;
   const isTerminalState = isTerminalStatus(status);
   
   const [isExpanded, setIsExpanded] = useState(() => getInitialExpandedState(toolId, status));
@@ -107,8 +113,33 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const hasInitializedExpand = useRef(false);
   const previousStatusRef = useRef<string>(status);
+  const {
+    cardRootRef,
+    applyExpandedState: applyHeightContractExpandedState,
+  } = useToolCardHeightContract({
+    toolId,
+    toolName: toolItem.toolName,
+  });
   
   const [accumulatedOutput, setAccumulatedOutput] = useState('');
+
+  const applyExpandedState = useCallback((
+    nextExpanded: boolean,
+    isManual: boolean,
+    reason: 'manual' | 'auto'
+  ) => {
+    if (nextExpanded !== isExpanded) {
+      applyHeightContractExpandedState(isExpanded, nextExpanded, (nextValue) => {
+        setIsExpanded(nextValue);
+        setCachedExpandedState(toolId, nextValue, isManual);
+      }, {
+        reason,
+        onExpand,
+      });
+    } else if (isManual) {
+      setCachedExpandedState(toolId, nextExpanded, isManual);
+    }
+  }, [applyHeightContractExpandedState, isExpanded, onExpand, toolId]);
 
   useEffect(() => {
     if (terminalSessionId && !hasInitializedExpand.current) {
@@ -119,12 +150,12 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
       
       const cached = getCachedExpandedState(toolId);
       if (cached === undefined || !cached.isManual) {
-        setIsExpanded(true);
+        applyExpandedState(true, false, 'auto');
         setCachedExpandedState(toolId, true, false);
       }
       hasInitializedExpand.current = true;
     }
-  }, [terminalSessionId, toolId, isTerminalState]);
+  }, [applyExpandedState, terminalSessionId, toolId, isTerminalState]);
 
   useEffect(() => {
     const prevStatus = previousStatusRef.current;
@@ -136,15 +167,13 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     }
     
     if (status === 'running' && prevStatus !== 'running') {
-      setIsExpanded(true);
-      setCachedExpandedState(toolId, true, false);
+      applyExpandedState(true, false, 'auto');
     }
     
-    if (!isTerminalStatus(prevStatus) && isTerminalStatus(status)) {
-      setIsExpanded(false);
-      setCachedExpandedState(toolId, false, false);
+    if (!isTerminalStatus(prevStatus) && isTerminalStatus(status) && isExpanded) {
+      applyExpandedState(false, false, 'auto');
     }
-  }, [status, toolId]);
+  }, [applyExpandedState, isExpanded, status, toolId]);
   
   useEffect(() => {
     if (progressMessage && (status === 'running' || status === 'streaming')) {
@@ -199,7 +228,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     }
 
     setIsExecuting(true);
-    setIsExpanded(true);
+    applyExpandedState(true, true, 'manual');
     setAccumulatedOutput('');
 
     try {
@@ -247,16 +276,9 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
 
   const toggleExpand = useCallback(() => {
     const newExpanded = !isExpanded;
-    setIsExpanded(newExpanded);
-    setCachedExpandedState(toolId, newExpanded, true);
-    onExpand?.();
-  }, [isExpanded, toolId, onExpand]);
+    applyExpandedState(newExpanded, true, 'manual');
+  }, [applyExpandedState, isExpanded]);
   
-  const handleToggleExpand = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    toggleExpand();
-  }, [toggleExpand]);
-
   const handleOpenInPanel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!terminalSessionId) {
@@ -329,7 +351,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     
     switch (status) {
       case 'completed':
-        return <span className="terminal-status-text status-completed">{t('toolCards.terminal.completed')}</span>;
+        return null;
       case 'cancelled':
         return <span className="terminal-status-text status-cancelled">{t('toolCards.terminal.cancelled')}</span>;
       case 'error':
@@ -405,16 +427,6 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
                 <ExternalLink size={12} />
               </IconButton>
             )}
-
-            <IconButton 
-              className="terminal-action-btn toggle-btn"
-              variant="ghost"
-              size="xs"
-              onClick={handleToggleExpand}
-              tooltip={isExpanded ? t('toolCards.terminal.collapseOutput') : t('toolCards.terminal.expandOutput')}
-            >
-              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </IconButton>
           </>
         }
         statusIcon={renderStatusIcon()}
@@ -430,6 +442,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
             <TerminalOutputRenderer 
               content={accumulatedOutput}
               className="terminal-xterm-output"
+              maxHeight={TERMINAL_OUTPUT_PREVIEW_MAX_HEIGHT}
             />
           </div>
         )}
@@ -442,7 +455,16 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
 
         {status === 'completed' && (
           <div className="terminal-result-container">
-            <div className="terminal-result-header">
+            {output && (
+              <div className="terminal-result-output">
+                <TerminalOutputRenderer 
+                  content={output}
+                  className="terminal-xterm-output"
+                  maxHeight={TERMINAL_OUTPUT_PREVIEW_MAX_HEIGHT}
+                />
+              </div>
+            )}
+            <div className="terminal-result-footer">
               {workingDir && (
                 <>
                   <span className="terminal-result-label">{t('toolCards.terminal.workingDirectory')}</span>
@@ -458,28 +480,20 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
                 </span>
               )}
             </div>
-            
-            {output && (
-              <div className="terminal-result-output">
-                <TerminalOutputRenderer 
-                  content={output}
-                  className="terminal-xterm-output"
-                />
-              </div>
-            )}
           </div>
         )}
         
         {status === 'cancelled' && accumulatedOutput && (
           <div className="terminal-result-container cancelled">
-            <div className="terminal-result-header">
-              <span className="terminal-cancelled-text">{t('toolCards.terminal.commandInterrupted')}</span>
-            </div>
             <div className="terminal-result-output">
               <TerminalOutputRenderer 
                 content={accumulatedOutput}
                 className="terminal-xterm-output"
+                maxHeight={TERMINAL_OUTPUT_PREVIEW_MAX_HEIGHT}
               />
+            </div>
+            <div className="terminal-result-footer">
+              <span className="terminal-cancelled-text">{t('toolCards.terminal.commandInterrupted')}</span>
             </div>
           </div>
         )}
@@ -504,17 +518,19 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   }, [toggleExpand]);
 
   return (
-    <BaseToolCard
-      status={status}
-      isExpanded={isExpanded}
-      onClick={handleCardClick}
-      className="terminal-tool-card"
-      header={renderHeader()}
-      expandedContent={isExpanded ? renderExpandedContent() : null}
-      errorContent={isFailed ? renderErrorContent() : null}
-      isFailed={isFailed}
-      requiresConfirmation={showConfirmButtons}
-    />
+    <div ref={cardRootRef} data-tool-card-id={toolItem.id ?? toolCall?.id ?? ''}>
+      <BaseToolCard
+        status={status}
+        isExpanded={isExpanded}
+        onClick={handleCardClick}
+        className="terminal-tool-card"
+        header={renderHeader()}
+        expandedContent={isExpanded ? renderExpandedContent() : null}
+        errorContent={isFailed ? renderErrorContent() : null}
+        isFailed={isFailed}
+        requiresConfirmation={showConfirmButtons}
+      />
+    </div>
   );
 };
 

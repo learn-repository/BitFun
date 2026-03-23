@@ -2,6 +2,7 @@ import React from 'react';
 import { Play, Square, Trash2 } from 'lucide-react';
 import type { MiniAppMeta } from '@/infrastructure/api/service-api/MiniAppAPI';
 import { renderMiniAppIcon } from '../utils/miniAppIcons';
+import { useI18n } from '@/infrastructure/i18n';
 import './MiniAppCard.scss';
 
 interface MiniAppCardProps {
@@ -23,6 +24,7 @@ const MiniAppCard: React.FC<MiniAppCardProps> = ({
   onDelete,
   onStop,
 }) => {
+  const { t } = useI18n('scenes/miniapp');
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onDelete(app.id);
@@ -50,54 +52,34 @@ const MiniAppCard: React.FC<MiniAppCardProps> = ({
       ]
         .filter(Boolean)
         .join(' ')}
-      style={{ '--card-index': index } as React.CSSProperties}
+      style={{
+        '--card-index': index,
+        '--miniapp-card-gradient': isRunning
+          ? 'linear-gradient(135deg, rgba(52, 211, 153, 0.28) 0%, rgba(16, 185, 129, 0.18) 100%)'
+          : 'linear-gradient(135deg, rgba(59, 130, 246, 0.28) 0%, rgba(139, 92, 246, 0.18) 100%)',
+      } as React.CSSProperties}
       onClick={handleOpenDetails}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && handleOpenDetails()}
       aria-label={app.name}
     >
-      <div className="miniapp-card__icon-area">
-        <div className="miniapp-card__icon">
-          {renderMiniAppIcon(app.icon || 'box', 28)}
-        </div>
-      </div>
-
-      <div className="miniapp-card__body">
-        <div className="miniapp-card__row">
-          <span className="miniapp-card__name">{app.name}</span>
-          {isRunning && <span className="miniapp-card__run-dot" />}
-          <span className="miniapp-card__version">v{app.version}</span>
-          <div className="miniapp-card__actions">
-            <button
-              className="miniapp-card__action-btn miniapp-card__action-btn--primary"
-              onClick={handleOpenClick}
-              aria-label="启动"
-              title="启动"
-            >
-              <Play size={15} fill="currentColor" strokeWidth={0} />
-            </button>
-            {isRunning && onStop ? (
-              <button
-                className="miniapp-card__action-btn miniapp-card__action-btn--stop"
-                onClick={handleStopClick}
-                aria-label="停止"
-                title="停止"
-              >
-                <Square size={13} />
-              </button>
-            ) : (
-              <button
-                className="miniapp-card__action-btn miniapp-card__action-btn--danger"
-                onClick={handleDeleteClick}
-                aria-label="删除"
-                title="删除"
-              >
-                <Trash2 size={13} />
-              </button>
-            )}
+      {/* Header with icon and title */}
+      <div className="miniapp-card__header">
+        <div className="miniapp-card__icon-area">
+          <div className="miniapp-card__icon">
+            {renderMiniAppIcon(app.icon || 'box', 20)}
           </div>
         </div>
+        <div className="miniapp-card__title-group">
+          <span className="miniapp-card__name">{app.name}</span>
+          <span className="miniapp-card__version">v{app.version}</span>
+        </div>
+        {isRunning && <span className="miniapp-card__run-dot" />}
+      </div>
+
+      {/* Body: description + tags */}
+      <div className="miniapp-card__body">
         {app.description ? (
           <div className="miniapp-card__desc">
             <span className="miniapp-card__desc-inner">{app.description}</span>
@@ -110,6 +92,39 @@ const MiniAppCard: React.FC<MiniAppCardProps> = ({
             ))}
           </div>
         ) : null}
+      </div>
+
+      {/* Footer with actions */}
+      <div className="miniapp-card__footer">
+        <div className="miniapp-card__actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="miniapp-card__action-btn miniapp-card__action-btn--primary"
+            onClick={handleOpenClick}
+            aria-label={t('card.start')}
+            title={t('card.start')}
+          >
+            <Play size={15} fill="currentColor" strokeWidth={0} />
+          </button>
+          {isRunning && onStop ? (
+            <button
+              className="miniapp-card__action-btn miniapp-card__action-btn--stop"
+              onClick={handleStopClick}
+              aria-label={t('card.stop')}
+              title={t('card.stop')}
+            >
+              <Square size={13} />
+            </button>
+          ) : (
+            <button
+              className="miniapp-card__action-btn miniapp-card__action-btn--danger"
+              onClick={handleDeleteClick}
+              aria-label={t('card.delete')}
+              title={t('card.delete')}
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

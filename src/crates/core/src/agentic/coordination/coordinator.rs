@@ -12,6 +12,7 @@ use crate::agentic::events::{
     AgenticEvent, EventPriority, EventQueue, EventRouter, EventSubscriber,
 };
 use crate::agentic::execution::{ExecutionContext, ExecutionEngine};
+use crate::agentic::round_preempt::DialogRoundPreemptSource;
 use crate::agentic::image_analysis::ImageContextData;
 use crate::agentic::session::SessionManager;
 use crate::agentic::tools::pipeline::{SubagentParentInfo, ToolPipeline};
@@ -23,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
+use tokio::time::{sleep, Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// Subagent execution result
@@ -39,6 +41,7 @@ pub enum DialogTriggerSource {
     DesktopUi,
     DesktopApi,
     AgentSession,
+    ScheduledJob,
     RemoteRelay,
     Bot,
     Cli,
@@ -103,18 +106,83 @@ pub struct ConversationCoordinator {
     event_router: Arc<EventRouter>,
     /// Notifies DialogScheduler of turn outcomes; injected after construction
     scheduler_notify_tx: OnceLock<mpsc::Sender<(String, TurnOutcome)>>,
+    /// Round-boundary yield (same source as scheduler's yield flags); injected after construction
+    round_preempt_source: OnceLock<Arc<dyn DialogRoundPreemptSource>>,
 }
 
 impl ConversationCoordinator {
-    fn session_workspace_binding(session: &Session) -> Option<WorkspaceBinding> {
-        Self::config_workspace_binding(&session.config)
+    /// Build a workspace binding that is remote-aware.
+    /// If the global remote workspace is active and matches the session path,
+    /// returns a `WorkspaceBinding` with remote metadata and correct local
+    /// session storage path.
+    async fn build_workspace_binding(config: &SessionConfig) -> Option<WorkspaceBinding> {
+        let workspace_path = config.workspace_path.as_ref()?;
+        let path_buf = PathBuf::from(workspace_path);
+
+        // Check if this path belongs to any registered remote workspace
+        if let Some(entry) = crate::service::remote_ssh::workspace_state::lookup_remote_connection(workspace_path).await {
+            if let Some(manager) = crate::service::remote_ssh::workspace_state::get_remote_workspace_manager() {
+                let local_session_path = manager.get_local_session_path(&entry.connection_id);
+                return Some(WorkspaceBinding::new_remote(
+                    None,
+                    path_buf,
+                    entry.connection_id,
+                    entry.connection_name,
+                    local_session_path,
+                ));
+            }
+        }
+
+        Some(WorkspaceBinding::new(None, path_buf))
     }
 
-    fn config_workspace_binding(config: &SessionConfig) -> Option<WorkspaceBinding> {
-        config
-            .workspace_path
-            .as_ref()
-            .map(|workspace_path| WorkspaceBinding::new(None, PathBuf::from(workspace_path)))
+    /// Build `WorkspaceServices` from a resolved `WorkspaceBinding`.
+    /// For remote bindings, wires up SSH-backed FS/shell; for local ones,
+    /// returns local implementations.
+    async fn build_workspace_services(
+        binding: &Option<WorkspaceBinding>,
+    ) -> Option<crate::agentic::workspace::WorkspaceServices> {
+        let binding = binding.as_ref()?;
+
+        if binding.is_remote() {
+            let manager = match crate::service::remote_ssh::workspace_state::get_remote_workspace_manager() {
+                Some(m) => m,
+                None => {
+                    log::warn!("build_workspace_services: RemoteWorkspaceStateManager not initialized");
+                    return None;
+                }
+            };
+            let ssh_manager = match manager.get_ssh_manager().await {
+                Some(m) => m,
+                None => {
+                    log::warn!("build_workspace_services: SSH manager not available in state manager");
+                    return None;
+                }
+            };
+            let file_service = match manager.get_file_service().await {
+                Some(f) => f,
+                None => {
+                    log::warn!("build_workspace_services: File service not available in state manager");
+                    return None;
+                }
+            };
+            let connection_id = match binding.connection_id() {
+                Some(id) => id.to_string(),
+                None => {
+                    log::warn!("build_workspace_services: No connection_id in workspace binding");
+                    return None;
+                }
+            };
+            log::info!("build_workspace_services: Built remote services for connection_id={}", connection_id);
+            Some(crate::agentic::workspace::remote_workspace_services(
+                connection_id,
+                file_service,
+                ssh_manager,
+                binding.root_path_string(),
+            ))
+        } else {
+            Some(crate::agentic::workspace::local_workspace_services())
+        }
     }
 
     fn normalize_agent_type(agent_type: &str) -> String {
@@ -143,7 +211,23 @@ impl ConversationCoordinator {
         }
     }
 
-    fn assistant_bootstrap_system_reminder(kickoff_query: &str, expected_reply_language: &str) -> String {
+    async fn is_chinese_locale() -> bool {
+        use crate::service::config::get_global_config_service;
+        use crate::service::config::types::AppConfig;
+        let Ok(config_service) = get_global_config_service().await else {
+            return false;
+        };
+        let app: AppConfig = config_service
+            .get_config(Some("app"))
+            .await
+            .unwrap_or_default();
+        app.language.starts_with("zh")
+    }
+
+    fn assistant_bootstrap_system_reminder(
+        kickoff_query: &str,
+        expected_reply_language: &str,
+    ) -> String {
         format!(
             "This is an automatic bootstrap kickoff generated by the system because this assistant workspace still contains BOOTSTRAP.md. \
 Treat the user message `{kickoff_query}` only as a start signal, begin bootstrap immediately, and finish it in this session. \
@@ -166,6 +250,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             event_queue,
             event_router,
             scheduler_notify_tx: OnceLock::new(),
+            round_preempt_source: OnceLock::new(),
         }
     }
 
@@ -173,6 +258,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
     /// Called once during app initialization after the scheduler is created.
     pub fn set_scheduler_notifier(&self, tx: mpsc::Sender<(String, TurnOutcome)>) {
         let _ = self.scheduler_notify_tx.set(tx);
+    }
+
+    /// Wire round-boundary preempt (typically the scheduler's [`SessionRoundYieldFlags`](crate::agentic::round_preempt::SessionRoundYieldFlags)).
+    pub fn set_round_preempt_source(&self, source: Arc<dyn DialogRoundPreemptSource>) {
+        let _ = self.round_preempt_source.set(source);
     }
 
     /// Create a new session
@@ -244,11 +334,7 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         .await
     }
 
-    pub async fn update_session_model(
-        &self,
-        session_id: &str,
-        model_id: &str,
-    ) -> BitFunResult<()> {
+    pub async fn update_session_model(&self, session_id: &str, model_id: &str) -> BitFunResult<()> {
         let normalized_model_id = model_id.trim();
         let normalized_model_id = if normalized_model_id.is_empty() {
             "auto"
@@ -319,7 +405,12 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             }
         };
 
-        let workspace_path_buf = std::path::PathBuf::from(&workspace_path);
+        let binding = Self::build_workspace_binding(&session.config).await;
+        let workspace_path_buf = binding
+            .as_ref()
+            .map(|b| b.session_storage_path().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(&workspace_path));
+
         let persistence_manager = match PersistenceManager::new(path_manager) {
             Ok(manager) => manager,
             Err(e) => {
@@ -426,7 +517,16 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             Err(_) => return,
         };
 
-        let workspace_path_buf = std::path::PathBuf::from(workspace_path);
+        let workspace_path_buf = {
+            let binding = Self::build_workspace_binding(&SessionConfig {
+                workspace_path: Some(workspace_path.to_string()),
+                ..Default::default()
+            }).await;
+            binding
+                .as_ref()
+                .map(|b| b.session_storage_path().to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from(workspace_path))
+        };
         let persistence_manager = match PersistenceManager::new(path_manager) {
             Ok(manager) => manager,
             Err(_) => return,
@@ -690,135 +790,6 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         .await
     }
 
-    /// Pre-analyze images using the configured vision model.
-    ///
-    /// Strategy:
-    /// 1. Vision model configured → analyze images → enhance user message with text descriptions → clear image_contexts
-    /// 2. No vision model → reject with a user-friendly message
-    async fn pre_analyze_images_if_needed(
-        &self,
-        user_input: String,
-        image_contexts: Option<Vec<ImageContextData>>,
-        session_id: &str,
-        image_metadata: Option<serde_json::Value>,
-        workspace: Option<WorkspaceBinding>,
-    ) -> BitFunResult<(String, Option<Vec<ImageContextData>>)> {
-        let images = match &image_contexts {
-            Some(imgs) if !imgs.is_empty() => imgs,
-            _ => return Ok((user_input, image_contexts)),
-        };
-
-        use crate::agentic::image_analysis::{
-            resolve_vision_model_from_global_config, AnalyzeImagesRequest, ImageAnalyzer,
-            MessageEnhancer,
-        };
-        use crate::infrastructure::ai::get_global_ai_client_factory;
-
-        let vision_model = match resolve_vision_model_from_global_config().await {
-            Ok(m) => m,
-            Err(_e) => {
-                let is_chinese = Self::is_chinese_locale().await;
-                let msg = if is_chinese {
-                    "请先在桌面端「设置 → AI 模型」中配置图片理解模型，然后再发送图片。"
-                } else {
-                    "Please configure an Image Understanding Model in Settings → AI Models on the desktop app before sending images."
-                };
-                return Err(BitFunError::service(msg));
-            }
-        };
-
-        let factory = match get_global_ai_client_factory().await {
-            Ok(f) => f,
-            Err(e) => {
-                warn!("Failed to get AI client factory for vision: {}", e);
-                return Ok((user_input, image_contexts));
-            }
-        };
-
-        let vision_client = match factory.get_client_by_id(&vision_model.id).await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("Failed to create vision AI client: {}", e);
-                return Ok((user_input, image_contexts));
-            }
-        };
-
-        let workspace_path = workspace.map(|binding| binding.root_path);
-        let request_workspace_path = workspace_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().to_string());
-        let analyzer = ImageAnalyzer::new(workspace_path, vision_client);
-        let request = AnalyzeImagesRequest {
-            images: images.clone(),
-            user_message: Some(user_input.clone()),
-            session_id: session_id.to_string(),
-            workspace_path: request_workspace_path,
-        };
-
-        self.emit_event(AgenticEvent::ImageAnalysisStarted {
-            session_id: session_id.to_string(),
-            image_count: images.len(),
-            user_input: user_input.clone(),
-            image_metadata: image_metadata.clone(),
-        })
-        .await;
-
-        let analysis_start = std::time::Instant::now();
-
-        match analyzer.analyze_images(request, &vision_model).await {
-            Ok(results) => {
-                let duration_ms = analysis_start.elapsed().as_millis() as u64;
-
-                self.emit_event(AgenticEvent::ImageAnalysisCompleted {
-                    session_id: session_id.to_string(),
-                    success: true,
-                    duration_ms,
-                })
-                .await;
-
-                info!(
-                    "Vision pre-analysis completed: session={}, images={}, results={}, duration={}ms",
-                    session_id,
-                    images.len(),
-                    results.len(),
-                    duration_ms
-                );
-                let enhanced =
-                    MessageEnhancer::enhance_with_image_analysis(&user_input, &results, &[]);
-                Ok((enhanced, None))
-            }
-            Err(e) => {
-                let duration_ms = analysis_start.elapsed().as_millis() as u64;
-
-                self.emit_event(AgenticEvent::ImageAnalysisCompleted {
-                    session_id: session_id.to_string(),
-                    success: false,
-                    duration_ms,
-                })
-                .await;
-
-                warn!(
-                    "Vision pre-analysis failed, falling back to multimodal: session={}, error={}",
-                    session_id, e
-                );
-                Ok((user_input, image_contexts))
-            }
-        }
-    }
-
-    async fn is_chinese_locale() -> bool {
-        use crate::service::config::get_global_config_service;
-        use crate::service::config::types::AppConfig;
-        let Ok(config_service) = get_global_config_service().await else {
-            return true;
-        };
-        let app: AppConfig = config_service
-            .get_config(Some("app"))
-            .await
-            .unwrap_or_default();
-        app.language.starts_with("zh")
-    }
-
     async fn start_dialog_turn_internal(
         &self,
         session_id: String,
@@ -1053,20 +1024,18 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             user_message_metadata = Some(metadata);
         }
 
-        // Auto vision pre-analysis: when images are present, try to use the configured
-        // vision model to pre-analyze them, then enhance the user message with text descriptions.
-        // This is the single authoritative code path for all image handling (desktop, remote, bot).
-        // If no vision model is configured, the request is rejected with a user-friendly message.
-        let session_workspace = Self::session_workspace_binding(&session);
-        let (user_input, image_contexts) = self
-            .pre_analyze_images_if_needed(
-                user_input,
-                image_contexts,
-                &session_id,
-                user_message_metadata.clone(),
-                session_workspace.clone(),
-            )
-            .await?;
+        let session_workspace = Self::build_workspace_binding(&session.config).await;
+
+        // Build WorkspaceServices based on the workspace type
+        let workspace_services = Self::build_workspace_services(&session_workspace).await;
+
+        info!(
+            "Dialog turn workspace context: session_id={}, workspace_path={:?}, is_remote={}, workspace_services={}",
+            session_id,
+            session.config.workspace_path,
+            session_workspace.as_ref().map(|ws| ws.is_remote()).unwrap_or(false),
+            if workspace_services.is_some() { "available" } else { "NONE" }
+        );
 
         let wrapped_user_input = self
             .wrap_user_input(
@@ -1165,6 +1134,8 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             context: context_vars,
             subagent_parent_info: None,
             skip_tool_confirmation: submission_policy.skip_tool_confirmation,
+            workspace_services,
+            round_preempt: self.round_preempt_source.get().cloned(),
         };
 
         // Auto-generate session title on first message
@@ -1471,6 +1442,41 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         Ok(())
     }
 
+    pub async fn cancel_active_turn_for_session(
+        &self,
+        session_id: &str,
+        wait_timeout: Duration,
+    ) -> BitFunResult<Option<String>> {
+        let Some(session) = self.session_manager.get_session(session_id) else {
+            return Ok(None);
+        };
+
+        let SessionState::Processing {
+            current_turn_id, ..
+        } = session.state
+        else {
+            return Ok(None);
+        };
+
+        self.cancel_dialog_turn(session_id, &current_turn_id).await?;
+
+        let deadline = Instant::now() + wait_timeout;
+        while self.execution_engine.has_active_turn(&current_turn_id) {
+            if Instant::now() >= deadline {
+                warn!(
+                    "Timed out waiting for active turn cancellation: session_id={}, dialog_turn_id={}, timeout_ms={}",
+                    session_id,
+                    current_turn_id,
+                    wait_timeout.as_millis()
+                );
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        Ok(Some(current_turn_id))
+    }
+
     /// Delete session
     pub async fn delete_session(
         &self,
@@ -1651,15 +1657,19 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             None
         };
 
+        let subagent_workspace = Self::build_workspace_binding(&session.config).await;
+        let subagent_services = Self::build_workspace_services(&subagent_workspace).await;
         let execution_context = ExecutionContext {
             session_id: session.session_id.clone(),
             dialog_turn_id: dialog_turn_id.clone(),
             turn_index: 0,
             agent_type: agent_type.clone(),
-            workspace: Self::session_workspace_binding(&session),
+            workspace: subagent_workspace,
             context: context.unwrap_or_default(),
             subagent_parent_info: Some(subagent_parent_info),
             skip_tool_confirmation: false,
+            workspace_services: subagent_services,
+            round_preempt: self.round_preempt_source.get().cloned(),
         };
 
         let initial_messages = vec![Message::user(task_description)];

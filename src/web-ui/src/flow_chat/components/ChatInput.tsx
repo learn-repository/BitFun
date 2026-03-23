@@ -5,7 +5,7 @@
 
 import React, { useRef, useCallback, useEffect, useReducer, useState, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { ArrowUp, Image, Network, ChevronsUp, ChevronsDown, RotateCcw, FileText } from 'lucide-react';
+import { ArrowUp, Image, ChevronsUp, ChevronsDown, RotateCcw, Plus, X, Sparkles, Loader2, ChevronRight } from 'lucide-react';
 import { ContextDropZone, useContextStore } from '../../shared/context-system';
 import { useActiveSessionState } from '../hooks/useActiveSessionState';
 import { RichTextInput, type MentionState } from './RichTextInput';
@@ -18,22 +18,15 @@ import { ModelSelector } from './ModelSelector';
 import { FlowChatStore } from '../store/FlowChatStore';
 import type { FlowChatState } from '../types/flow-chat';
 import type { FileContext, DirectoryContext } from '../../shared/types/context';
-import type { PromptTemplate } from '../../shared/types/prompt-template';
 import { SmartRecommendations } from './smart-recommendations';
 import { useCurrentWorkspace } from '@/infrastructure/contexts/WorkspaceContext';
 import { WorkspaceKind } from '@/shared/types';
 import { createImageContextFromFile, createImageContextFromClipboard } from '../utils/imageUtils';
 import { notificationService } from '@/shared/notification-system';
-import { TemplatePickerPanel } from './TemplatePickerPanel';
-import { promptTemplateService } from '@/infrastructure/services/PromptTemplateService';
-import { shortcutManager } from '@/infrastructure/services/ShortcutManager';
 import { inputReducer, initialInputState } from '../reducers/inputReducer';
-import { templateReducer, initialTemplateState } from '../reducers/templateReducer';
 import { modeReducer, initialModeState } from '../reducers/modeReducer';
 import { CHAT_INPUT_CONFIG } from '../constants/chatInputConfig';
-import { MERMAID_INTERACTIVE_EXAMPLE } from '../constants/mermaidExamples';
 import { useMessageSender } from '../hooks/useMessageSender';
-import { useTemplateEditor } from '../hooks/useTemplateEditor';
 import { useChatInputState } from '../store/chatInputStateStore';
 import { useInputHistoryStore } from '../store/inputHistoryStore';
 import { startBtwThread } from '../services/BtwThreadService';
@@ -42,6 +35,9 @@ import { Tooltip, IconButton } from '@/component-library';
 import { useAgentCanvasStore } from '@/app/components/panels/content-canvas/stores';
 import { openBtwSessionInAuxPane, selectActiveBtwSessionTab } from '../services/openBtwSession';
 import { resolveSessionRelationship } from '../utils/sessionMetadata';
+import { useSceneStore } from '@/app/stores/sceneStore';
+import type { SceneTabId } from '@/app/components/SceneBar/types';
+import type { SkillInfo } from '@/infrastructure/config/types';
 import './ChatInput.scss';
 
 const log = createLogger('ChatInput');
@@ -75,11 +71,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const { t } = useTranslation('flow-chat');
   
   const [inputState, dispatchInput] = useReducer(inputReducer, initialInputState);
-  const [templateState, dispatchTemplate] = useReducer(templateReducer, initialTemplateState);
   const [modeState, dispatchMode] = useReducer(modeReducer, initialModeState);
   
   const richTextInputRef = useRef<HTMLDivElement>(null);
-  const modeDropdownRef = useRef<HTMLDivElement>(null);
+  const agentBoostRef = useRef<HTMLDivElement>(null);
   const isImeComposingRef = useRef(false);
   const lastImeCompositionEndAtRef = useRef(0);
   
@@ -124,7 +119,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   
   // Get input history for current session (after currentSessionId is defined)
   const inputHistory = effectiveTargetSessionId ? getSessionHistory(effectiveTargetSessionId) : [];
-  const derivedState = useSessionDerivedState(effectiveTargetSessionId);
+  const derivedState = useSessionDerivedState(
+    effectiveTargetSessionId,
+    inputState.value.trim()
+  );
   const { transition, setQueuedInput } = useSessionStateMachineActions(effectiveTargetSessionId);
   const stateMachine = useSessionStateMachine(effectiveTargetSessionId);
 
@@ -144,9 +142,52 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ),
     [isAssistantWorkspace, modeState.available]
   );
+
+  /** Code session: only Plan and debug are optional on top of default agentic */
+  const incrementalCodeModes = useMemo(
+    () => switchableModes.filter(m => m.id === 'Plan' || m.id === 'debug'),
+    [switchableModes]
+  );
+
+  const openScene = useSceneStore(s => s.openScene);
+  const [boostPanelSkills, setBoostPanelSkills] = useState<SkillInfo[]>([]);
+  const [boostSkillsLoading, setBoostSkillsLoading] = useState(false);
+
+  const [skillsFlyoutOpen, setSkillsFlyoutOpen] = useState(false);
+  const [skillsFlyoutLeft, setSkillsFlyoutLeft] = useState(false);
+  const [skillsFlyoutUp, setSkillsFlyoutUp] = useState(false);
+  const skillsHostRef = useRef<HTMLDivElement>(null);
+  const skillsTimerRef = useRef<number | null>(null);
+
+  const clearSkillsTimer = useCallback(() => {
+    if (skillsTimerRef.current !== null) {
+      window.clearTimeout(skillsTimerRef.current);
+      skillsTimerRef.current = null;
+    }
+  }, []);
+
+  const openSkillsFlyout = useCallback(() => {
+    clearSkillsTimer();
+    const host = skillsHostRef.current;
+    if (host) {
+      const r = host.getBoundingClientRect();
+      setSkillsFlyoutLeft(r.right + 260 > window.innerWidth - 8);
+      setSkillsFlyoutUp(r.top + 200 > window.innerHeight - 8);
+    }
+    setSkillsFlyoutOpen(true);
+  }, [clearSkillsTimer]);
+
+  const closeSkillsFlyout = useCallback(() => {
+    clearSkillsTimer();
+    skillsTimerRef.current = window.setTimeout(() => {
+      skillsTimerRef.current = null;
+      setSkillsFlyoutOpen(false);
+    }, 150);
+  }, [clearSkillsTimer]);
   
   const setChatInputActive = useChatInputState(state => state.setActive);
   const setChatInputExpanded = useChatInputState(state => state.setExpanded);
+  const setChatInputHeight = useChatInputState(state => state.setInputHeight);
 
   useEffect(() => {
     const unsubscribe = FlowChatStore.getInstance().subscribe(setFlowChatState);
@@ -177,39 +218,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     contexts,
     onClearContexts: clearContexts,
     onSuccess: onSendMessage,
-    onExitTemplateMode: () => {
-      if (templateState.fillState?.isActive) {
-        dispatchTemplate({ type: 'EXIT_FILL' });
-        
-        if (richTextInputRef.current) {
-          const editor = richTextInputRef.current as HTMLElement;
-          editor.innerHTML = '';
-        }
-      }
-    },
     currentAgentType: effectiveTargetSession?.mode || modeState.current,
   });
-  
-  const {
-    handleTemplateSelect: originalHandleTemplateSelect,
-    exitTemplateMode,
-    moveToNextPlaceholder,
-    moveToPrevPlaceholder,
-  } = useTemplateEditor({
-    editorRef: richTextInputRef,
-    templateFillState: templateState.fillState,
-    onValueChange: (value: string) => dispatchInput({ type: 'SET_VALUE', payload: value }),
-    onStartFill: (state) => dispatchTemplate({ type: 'START_FILL', payload: state }),
-    onExitFill: () => dispatchTemplate({ type: 'EXIT_FILL' }),
-    onUpdateCurrentIndex: (index) => dispatchTemplate({ type: 'UPDATE_CURRENT_INDEX', payload: index }),
-    onNextPlaceholder: () => dispatchTemplate({ type: 'NEXT_PLACEHOLDER' }),
-    onPrevPlaceholder: () => dispatchTemplate({ type: 'PREV_PLACEHOLDER' }),
-  });
-  
-  const handleTemplateSelect = useCallback((template: PromptTemplate) => {
-    dispatchInput({ type: 'ACTIVATE' });
-    originalHandleTemplateSelect(template);
-  }, [originalHandleTemplateSelect]);
   
   const [recommendationContext, setRecommendationContext] = React.useState<{
     workspacePath?: string;
@@ -264,39 +274,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     return () => unsubscribe();
   }, [effectiveTargetSessionId]);
-
-  React.useEffect(() => {
-    const initializeTemplateService = async () => {
-      await promptTemplateService.initialize();
-      
-      const config = promptTemplateService.getConfig();
-      const shortcutConfig = shortcutManager.parseShortcut(config.globalShortcut);
-      
-      if (shortcutConfig) {
-        const unregister = shortcutManager.register(
-          'prompt-template-picker',
-          shortcutConfig,
-          () => {
-            dispatchTemplate({ type: 'OPEN_PICKER' });
-          },
-          {
-            description: 'Open prompt template picker panel',
-            priority: 10
-          }
-        );
-        
-        return unregister;
-      }
-    };
-    
-    const unregisterPromise = initializeTemplateService();
-    
-    return () => {
-      unregisterPromise.then(unregister => {
-        if (unregister) unregister();
-      });
-    };
-  }, []);
 
   React.useEffect(() => {
     const handleFillInput = (event: Event) => {
@@ -428,6 +405,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         setTimeout(() => {
           if (richTextInputRef.current && (richTextInputRef.current as any).insertTag) {
             const el = richTextInputRef.current;
+            if (!el.textContent?.trim() && !el.querySelector('[data-context-id]')) {
+              el.innerHTML = '';
+            }
             el.focus();
             const sel = window.getSelection();
             if (sel) {
@@ -522,22 +502,29 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   React.useEffect(() => {
     const queuedInput = stateMachine?.context?.queuedInput;
-    if (queuedInput && effectiveTargetSessionId) {
+    if (!queuedInput?.trim() || !effectiveTargetSessionId) {
+      return;
+    }
+    // Sync machine queue into the input (e.g. failed turn restored by EventHandlerModule).
+    // `queuedInput` is cleared on successful send via `setQueuedInput(null)` so we do not fight CLEAR_VALUE.
+    if (inputState.value !== queuedInput) {
       log.debug('Detected queuedInput, restoring message to input', { queuedInput });
       dispatchInput({ type: 'ACTIVATE' });
       dispatchInput({ type: 'SET_VALUE', payload: queuedInput });
-      
-      setQueuedInput(null);
-      
       if (richTextInputRef.current) {
         richTextInputRef.current.focus();
       }
     }
-  }, [stateMachine?.context?.queuedInput, effectiveTargetSessionId, setQueuedInput, stateMachine?.context]);
+  }, [
+    stateMachine?.context?.queuedInput,
+    effectiveTargetSessionId,
+    inputState.value,
+    stateMachine?.context,
+  ]);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (modeDropdownRef.current && !modeDropdownRef.current.contains(event.target as Node)) {
+      if (agentBoostRef.current && !agentBoostRef.current.contains(event.target as Node)) {
         dispatchMode({ type: 'CLOSE_DROPDOWN' });
       }
     };
@@ -550,6 +537,47 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [modeState.dropdownOpen]);
+
+  useEffect(() => {
+    if (!modeState.dropdownOpen) {
+      return;
+    }
+    let cancelled = false;
+    setBoostSkillsLoading(true);
+    (async () => {
+      try {
+        const { configAPI } = await import('@/infrastructure/api');
+        const list = await configAPI.getSkillConfigs({
+          workspacePath: workspacePath || undefined,
+        });
+        if (!cancelled) {
+          setBoostPanelSkills(list.filter(s => s.enabled));
+        }
+      } catch (err) {
+        log.error('Failed to load skills for boost panel', { err });
+        if (!cancelled) setBoostPanelSkills([]);
+      } finally {
+        if (!cancelled) setBoostSkillsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [modeState.dropdownOpen, workspacePath]);
+
+  useEffect(() => {
+    if (!modeState.dropdownOpen) {
+      clearSkillsTimer();
+      setSkillsFlyoutOpen(false);
+    }
+  }, [clearSkillsTimer, modeState.dropdownOpen]);
+
+  useEffect(
+    () => () => {
+      clearSkillsTimer();
+    },
+    [clearSkillsTimer]
+  );
 
   useEffect(() => {
     const handleImagePaste = async (event: Event) => {
@@ -764,8 +792,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (!derivedState) return;
     
     const { sendButtonMode } = derivedState;
-    
-    if (sendButtonMode === 'cancel') {
+    const draftTrimmed = inputState.value.trim();
+
+    // While generating, an empty control in `cancel` mode means stop. If the user has typed a follow-up,
+    // never treat this path as cancel — that would call cancel_dialog_turn and abort the current round early.
+    if (sendButtonMode === 'cancel' && !draftTrimmed) {
       await transition(SessionExecutionEvent.USER_CANCEL);
       return;
     }
@@ -774,9 +805,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       await transition(SessionExecutionEvent.RESET);
     }
     
-    if (!inputState.value.trim()) return;
+    if (!draftTrimmed) return;
     
-    const message = inputState.value.trim();
+    const message = draftTrimmed;
 
     if (message.toLowerCase().startsWith('/btw')) {
       // When idle, /btw can be sent via the normal send button.
@@ -792,7 +823,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setSavedDraft('');
     
     dispatchInput({ type: 'CLEAR_VALUE' });
-    
+    // Clear machine queue too; otherwise the queuedInput→input sync effect puts the text back after send.
+    setQueuedInput(null);
+
     try {
       await sendMessage(message);
       dispatchInput({ type: 'CLEAR_VALUE' });
@@ -801,21 +834,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       log.error('Failed to send message', { error });
       dispatchInput({ type: 'ACTIVATE' });
       dispatchInput({ type: 'SET_VALUE', payload: message });
+      if (derivedState?.isProcessing) {
+        setQueuedInput(message);
+      }
     }
-  }, [inputState.value, derivedState, transition, sendMessage, addToHistory, effectiveTargetSessionId, setQueuedInput, submitBtwFromInput]);
+  }, [
+    inputState.value,
+    derivedState,
+    transition,
+    sendMessage,
+    addToHistory,
+    effectiveTargetSessionId,
+    setQueuedInput,
+    submitBtwFromInput,
+  ]);
   
-  const getFilteredModes = useCallback(() => {
-    if (!canSwitchModes) {
-      return [];
-    }
-    if (!slashCommandState.query) {
-      return switchableModes;
-    }
-    return switchableModes.filter(mode =>
-      mode.name.toLowerCase().includes(slashCommandState.query) ||
-      mode.id.toLowerCase().includes(slashCommandState.query)
+  const getFilteredIncrementalModes = useCallback(() => {
+    if (!canSwitchModes) return [];
+    if (!slashCommandState.query) return incrementalCodeModes;
+    return incrementalCodeModes.filter(
+      mode =>
+        mode.name.toLowerCase().includes(slashCommandState.query) ||
+        mode.id.toLowerCase().includes(slashCommandState.query)
     );
-  }, [canSwitchModes, switchableModes, slashCommandState.query]);
+  }, [canSwitchModes, incrementalCodeModes, slashCommandState.query]);
 
   const applyModeChange = useCallback((modeId: string) => {
     dispatchMode({
@@ -891,13 +933,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const getSlashPickerItems = useCallback((): SlashPickerItem[] => {
     const actions = getFilteredActions();
-    const modes: SlashModeItem[] = getFilteredModes().map(mode => ({
+    let modeList = incrementalCodeModes;
+    if (canSwitchModes && slashCommandState.query) {
+      const q = slashCommandState.query;
+      modeList = incrementalCodeModes.filter(
+        mode =>
+          mode.name.toLowerCase().includes(q) ||
+          mode.id.toLowerCase().includes(q)
+      );
+    }
+    const modes: SlashModeItem[] = (canSwitchModes ? modeList : []).map(mode => ({
       kind: 'mode',
       id: mode.id,
       name: mode.name,
     }));
     return [...actions, ...modes];
-  }, [getFilteredActions, getFilteredModes]);
+  }, [canSwitchModes, getFilteredActions, incrementalCodeModes, slashCommandState.query]);
 
   const selectSlashCommandAction = useCallback((actionId: string) => {
     if (isBtwSession) return;
@@ -953,7 +1004,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       if (!(slashCommandState.kind === 'modes' && !canSwitchModes)) {
         const items =
           slashCommandState.kind === 'modes'
-            ? getFilteredModes()
+            ? getFilteredIncrementalModes()
             : slashCommandState.kind === 'actions'
               ? getFilteredActions()
               : getSlashPickerItems();
@@ -1033,27 +1084,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       }
     }
     
-    if (templateState.fillState?.isActive) {
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        
-        if (e.shiftKey) {
-          moveToPrevPlaceholder();
-        } else {
-          moveToNextPlaceholder();
-        }
-        return;
-      }
-      
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        exitTemplateMode();
-        return;
-      }
-    }
-    
     // Tab key: toggle send target when the btw session switcher is visible
-    if (showTargetSwitcher && e.key === 'Tab' && !e.shiftKey && !slashCommandState.isActive && !templateState.fillState?.isActive) {
+    if (showTargetSwitcher && e.key === 'Tab' && !e.shiftKey && !slashCommandState.isActive) {
       e.preventDefault();
       setInputTarget(prev => prev === 'main' ? 'btw' : 'main');
       return;
@@ -1155,12 +1187,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       }
 
       if (derivedState?.isProcessing) {
+        if (!inputState.value.trim()) return;
+        void handleSendOrCancel();
         return;
       }
 
-      if (templateState.fillState?.isActive) {
-        exitTemplateMode();
-      }
       handleSendOrCancel();
     }
     
@@ -1168,7 +1199,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       e.preventDefault();
       transition(SessionExecutionEvent.USER_CANCEL);
     }
-  }, [handleSendOrCancel, submitBtwFromInput, derivedState, transition, templateState.fillState, moveToNextPlaceholder, moveToPrevPlaceholder, exitTemplateMode, slashCommandState, getFilteredModes, getFilteredActions, getSlashPickerItems, selectSlashCommandMode, selectSlashCommandAction, canSwitchModes, historyIndex, inputHistory, savedDraft, inputState.value, currentSessionId, isBtwSession, showTargetSwitcher, setInputTarget, t]);
+  }, [handleSendOrCancel, submitBtwFromInput, derivedState, transition, slashCommandState, getFilteredIncrementalModes, getFilteredActions, getSlashPickerItems, selectSlashCommandMode, selectSlashCommandAction, canSwitchModes, historyIndex, inputHistory, savedDraft, inputState.value, currentSessionId, isBtwSession, showTargetSwitcher, setInputTarget, t]);
 
   const handleImeCompositionStart = useCallback(() => {
     isImeComposingRef.current = true;
@@ -1232,27 +1263,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     input.click();
   }, [addContext, currentImageCount]);
   
-  const handleMermaidEditor = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('expand-right-panel'));
-    
-    setTimeout(() => {
-      const event = new CustomEvent('agent-create-tab', {
-        detail: {
-          type: 'mermaid-editor',
-          title: t('input.mermaidDualModeDemo'),
-          data: MERMAID_INTERACTIVE_EXAMPLE,
-          metadata: {
-            duplicateCheckKey: 'mermaid-dual-mode-demo'
-          },
-          checkDuplicate: true,
-          duplicateCheckKey: 'mermaid-dual-mode-demo',
-          replaceExisting: false
-        }
-      });
-      window.dispatchEvent(event);
-    }, 250);
-  }, []);
-  
   const toggleExpand = useCallback(() => {
     dispatchInput({ type: 'TOGGLE_EXPAND' });
   }, []);
@@ -1262,6 +1272,41 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       richTextInputRef.current?.focus();
     });
   }, []);
+
+  const insertSkillIntoInput = useCallback(
+    (skillName: string) => {
+      const line = t('chatInput.insertSkillLine', { name: skillName });
+      dispatchInput({ type: 'ACTIVATE' });
+      const cur = inputState.value;
+      const next = cur.trim() ? `${cur.trimEnd()}\n\n${line}` : line;
+      dispatchInput({ type: 'SET_VALUE', payload: next });
+      clearSkillsTimer();
+      setSkillsFlyoutOpen(false);
+      dispatchMode({ type: 'CLOSE_DROPDOWN' });
+      focusRichTextInputSoon();
+    },
+    [clearSkillsTimer, focusRichTextInputSoon, inputState.value, t]
+  );
+
+  const handleBoostPickImage = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      dispatchMode({ type: 'CLOSE_DROPDOWN' });
+      handleImageInput();
+    },
+    [handleImageInput]
+  );
+
+  const handleOpenSkillsLibrary = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      clearSkillsTimer();
+      setSkillsFlyoutOpen(false);
+      dispatchMode({ type: 'CLOSE_DROPDOWN' });
+      openScene('skills' as SceneTabId);
+    },
+    [clearSkillsTimer, openScene]
+  );
   
   const handleActivate = useCallback((e?: React.MouseEvent) => {
     if (e?.target instanceof HTMLButtonElement || 
@@ -1313,10 +1358,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      // Do not collapse when clicking the scroll-to-latest bar.
+      if ((target as Element)?.closest?.('.scroll-to-latest-bar')) return;
       if (
         inputState.isActive &&
         containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
+        !containerRef.current.contains(target)
       ) {
         if (inputState.value.trim() === '') {
           dispatchInput({ type: 'DEACTIVATE' });
@@ -1329,6 +1377,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [inputState.isActive, inputState.value]);
+
+  useEffect(() => {
+    const dropZone = containerRef.current?.closest('.bitfun-chat-input-drop-zone') as HTMLElement | null;
+    const el = dropZone ?? containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setChatInputHeight(el.offsetHeight);
+    });
+    observer.observe(el);
+    setChatInputHeight(el.offsetHeight);
+    return () => observer.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   
   const renderActionButton = () => {
     if (!derivedState) return <IconButton className="bitfun-chat-input__send-button" disabled size="small"><ArrowUp size={11} /></IconButton>;
@@ -1362,6 +1423,34 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </IconButton>
       );
     }
+
+    if (sendButtonMode === 'split') {
+      return (
+        <div className="bitfun-chat-input__split-actions">
+          <Tooltip content={t('input.stopGeneration')}>
+            <div
+              className="bitfun-chat-input__send-button bitfun-chat-input__send-button--breathing"
+              onClick={() => {
+                void transition(SessionExecutionEvent.USER_CANCEL);
+              }}
+              data-testid="chat-input-cancel-btn"
+            >
+              <div className="bitfun-chat-input__breathing-circle" />
+            </div>
+          </Tooltip>
+          <IconButton
+            className="bitfun-chat-input__send-button"
+            onClick={handleSendOrCancel}
+            disabled={!inputState.value.trim()}
+            data-testid="chat-input-send-btn"
+            tooltip={t('input.sendShortcut')}
+            size="small"
+          >
+            <ArrowUp size={11} />
+          </IconButton>
+        </div>
+      );
+    }
     
     return (
       <IconButton
@@ -1381,12 +1470,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <>
-      <TemplatePickerPanel
-        isOpen={templateState.isPickerOpen}
-        onClose={() => dispatchTemplate({ type: 'CLOSE_PICKER' })}
-        onSelect={handleTemplateSelect}
-      />
-      
       <ContextDropZone
         acceptedTypes={['file', 'directory', 'image', 'code-snippet', 'mermaid-diagram']}
         className="bitfun-chat-input-drop-zone"
@@ -1405,7 +1488,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       >
         <div 
           ref={containerRef}
-          className={`bitfun-chat-input ${inputState.isActive ? 'bitfun-chat-input--active' : 'bitfun-chat-input--collapsed'} ${inputState.isExpanded ? 'bitfun-chat-input--expanded' : ''} ${derivedState?.isProcessing ? 'bitfun-chat-input--processing' : ''} ${className} ${templateState.fillState?.isActive ? 'bitfun-chat-input--template-mode' : ''}`}
+          className={`bitfun-chat-input ${inputState.isActive ? 'bitfun-chat-input--active' : 'bitfun-chat-input--collapsed'} ${inputState.isExpanded ? 'bitfun-chat-input--expanded' : ''} ${derivedState?.isProcessing ? 'bitfun-chat-input--processing' : ''} ${className}`}
           onClick={!inputState.isActive ? handleActivate : undefined}
           data-testid="chat-input-container"
         >
@@ -1417,15 +1500,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         )}
 
         <div className="bitfun-chat-input__container">
-          {templateState.fillState?.isActive && (
-<div className="bitfun-chat-input__template-hint">
-                <span className="bitfun-chat-input__template-hint-text" dangerouslySetInnerHTML={{ __html: t('chatInput.templateHint') }} />
-                <span className="bitfun-chat-input__template-hint-progress">
-                  {t('chatInput.templateProgress', { current: templateState.fillState.currentIndex + 1, total: templateState.fillState.placeholders.length })}
-                </span>
-              </div>
-          )}
-          
           <div className={`bitfun-chat-input__box ${inputState.isExpanded ? 'bitfun-chat-input__box--expanded' : ''}`}>
             {showTargetSwitcher && (
               <div className="bitfun-chat-input__target-switcher" data-testid="chat-input-target-switcher">
@@ -1571,11 +1645,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
                 if (!canSwitchModes) return null;
 
-                const filteredModes = getFilteredModes();
+                const filteredModes = getFilteredIncrementalModes();
                 return (
                   <div className="bitfun-chat-input__slash-command-picker">
                     <div className="bitfun-chat-input__slash-command-header">
-                      <span>{t('chatInput.switchMode')}</span>
+                      <span>{t('chatInput.addModeMenuTitle')}</span>
                       <span className="bitfun-chat-input__slash-command-hint">{t('chatInput.selectHint')}</span>
                     </div>
                     <div className="bitfun-chat-input__slash-command-list">
@@ -1601,32 +1675,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   </div>
                 );
               })()}
-              
-            {derivedState?.hasQueuedInput && (
-              <div className="bitfun-chat-input__queued-indicator">
-                <span>{t('input.willSendAfterStop')}</span>
-                <IconButton
-                  className="bitfun-chat-input__queued-clear"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => {
-                    if (templateState.fillState?.isActive) {
-                      dispatchTemplate({ type: 'EXIT_FILL' });
-                      
-                      if (richTextInputRef.current) {
-                        const editor = richTextInputRef.current as HTMLElement;
-                        editor.innerHTML = '';
-                      }
-                    }
-                    
-                    dispatchInput({ type: 'CLEAR_VALUE' });
-                    setQueuedInput(null);
-                  }}
-                >
-                  {t('input.clear')}
-                </IconButton>
-              </div>
-            )}
             </div>
             
             <IconButton
@@ -1640,59 +1688,174 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </IconButton>
             <div className="bitfun-chat-input__actions">
               <div className="bitfun-chat-input__actions-left">
-                {canSwitchModes && (
-                  <div 
-                    className="bitfun-chat-input__mode-selector"
-                    ref={modeDropdownRef}
-                  >
+                <div className="bitfun-chat-input__agent-boost" ref={agentBoostRef}>
+                  <Tooltip content={t('chatInput.addBoostTooltip')}>
                     <IconButton
-                      className={`bitfun-chat-input__mode-selector-button${modeState.current !== 'agentic' ? ` bitfun-chat-input__mode-selector-button--${modeState.current}` : ''}`}
+                      className="bitfun-chat-input__agent-boost-add"
                       variant="ghost"
                       size="xs"
-                      onClick={() => dispatchMode({ type: 'TOGGLE_DROPDOWN' })}
-                      tooltip={t('chatInput.currentMode', { mode: t(`chatInput.modeNames.${modeState.current}`, { defaultValue: '' }) || modeState.available.find(m => m.id === modeState.current)?.name || modeState.current })}
+                      aria-haspopup="menu"
+                      aria-expanded={modeState.dropdownOpen}
+                      onClick={e => {
+                        e.stopPropagation();
+                        dispatchMode({ type: 'TOGGLE_DROPDOWN' });
+                      }}
                     >
-                      {t(`chatInput.modeNames.${modeState.current}`, { defaultValue: '' }) || modeState.available.find(m => m.id === modeState.current)?.name || modeState.current}
+                      <Plus size={14} strokeWidth={2.25} />
                     </IconButton>
-                  {modeState.dropdownOpen && (() => {
-                    const modeOrder = ['agentic', 'Claw', 'Plan', 'debug'];
-                    
-                    const sortedModes = [...switchableModes].sort((a, b) => {
-                      const aIndex = modeOrder.indexOf(a.id);
-                      const bIndex = modeOrder.indexOf(b.id);
-                      if (aIndex === -1 && bIndex === -1) return 0;
-                      if (aIndex === -1) return 1;
-                      if (bIndex === -1) return -1;
-                      return aIndex - bIndex;
-                    });
-                    
-                    const renderModeOption = (modeOption: typeof switchableModes[0]) => {
-                      const modeDescription = t(`chatInput.modeDescriptions.${modeOption.id}`, { defaultValue: '' }) || modeOption.description || modeOption.name;
-                      const modeName = t(`chatInput.modeNames.${modeOption.id}`, { defaultValue: '' }) || modeOption.name;
-                      return (
-                      <Tooltip key={modeOption.id} content={modeDescription} placement="left">
+                  </Tooltip>
+
+                  {canSwitchModes && modeState.current !== 'agentic' && (
+                    <div
+                      className={`bitfun-chat-input__agent-capsule bitfun-chat-input__agent-capsule--${modeState.current === 'debug' ? 'debug' : modeState.current}`}
+                    >
+                      <span className="bitfun-chat-input__agent-capsule-label">
+                        {t(`chatInput.modeNames.${modeState.current}`, { defaultValue: '' }) ||
+                          modeState.available.find(m => m.id === modeState.current)?.name ||
+                          modeState.current}
+                      </span>
+                      <button
+                        type="button"
+                        className="bitfun-chat-input__agent-capsule-close"
+                        aria-label={t('chatInput.resetToAgentic')}
+                        onClick={e => {
+                          e.stopPropagation();
+                          applyModeChange('agentic');
+                          dispatchMode({ type: 'CLOSE_DROPDOWN' });
+                        }}
+                      >
+                        <X size={12} strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  )}
+
+                  {modeState.dropdownOpen && (
+                    <div className="bitfun-chat-input__mode-dropdown bitfun-chat-input__mode-dropdown--agent-boost">
+                      {canSwitchModes && (
+                        <>
+                          <div className="bitfun-chat-input__boost-section">
+                            {incrementalCodeModes.length > 0 ? (
+                              incrementalCodeModes.map(modeOption => {
+                                const modeDescription =
+                                  t(`chatInput.modeDescriptions.${modeOption.id}`, { defaultValue: '' }) ||
+                                  modeOption.description ||
+                                  modeOption.name;
+                                const modeName =
+                                  t(`chatInput.modeNames.${modeOption.id}`, { defaultValue: '' }) || modeOption.name;
+                                return (
+                                  <Tooltip key={modeOption.id} content={modeDescription} placement="left">
+                                    <div
+                                      className={`bitfun-chat-input__mode-option ${modeState.current === modeOption.id ? 'bitfun-chat-input__mode-option--active' : ''}`}
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        requestModeChange(modeOption.id);
+                                      }}
+                                    >
+                                      <span className="bitfun-chat-input__mode-option-name">{modeName}</span>
+                                      {modeState.current === modeOption.id && (
+                                        <span className="bitfun-chat-input__slash-command-current">{t('chatInput.current')}</span>
+                                      )}
+                                    </div>
+                                  </Tooltip>
+                                );
+                              })
+                            ) : (
+                              <div className="bitfun-chat-input__agent-boost-empty bitfun-chat-input__agent-boost-empty--inline">
+                                {t('chatInput.noIncrementalModes')}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="bitfun-chat-input__boost-section-divider" aria-hidden />
+                        </>
+                      )}
+
+                      <div className="bitfun-chat-input__boost-section">
                         <div
-                          className={`bitfun-chat-input__mode-option ${modeState.current === modeOption.id ? 'bitfun-chat-input__mode-option--active' : ''}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            requestModeChange(modeOption.id);
-                          }}
+                          role="button"
+                          tabIndex={0}
+                          className="bitfun-chat-input__boost-context-row"
+                          onClick={handleBoostPickImage}
+                          onKeyDown={e => e.key === 'Enter' && handleBoostPickImage(e as any)}
                         >
-                          <span className="bitfun-chat-input__mode-option-name">{modeName}</span>
-                          {!modeOrder.includes(modeOption.id) && <span className="bitfun-chat-input__mode-option-badge bitfun-chat-input__mode-option-badge--wip">{t('chatInput.wip')}</span>}
+                          <Image size={14} className="bitfun-chat-input__boost-context-icon" aria-hidden />
+                          <span>{t('input.addImage')}</span>
                         </div>
-                      </Tooltip>
-                      );
-                    };
-                    
-                    return (
-                      <div className="bitfun-chat-input__mode-dropdown">
-                        {sortedModes.map(m => renderModeOption(m))}
+
+                        <div
+                          ref={skillsHostRef}
+                          className="bitfun-chat-input__boost-submenu-host"
+                          onMouseEnter={openSkillsFlyout}
+                          onMouseLeave={closeSkillsFlyout}
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            className="bitfun-chat-input__boost-submenu-trigger"
+                            aria-haspopup="menu"
+                            aria-expanded={skillsFlyoutOpen}
+                          >
+                            <span className="bitfun-chat-input__boost-submenu-trigger-main">
+                              <Sparkles size={14} className="bitfun-chat-input__boost-context-icon" aria-hidden />
+                              <span>{t('chatInput.boostSkills')}</span>
+                            </span>
+                            <ChevronRight size={14} className="bitfun-chat-input__boost-submenu-chevron" aria-hidden />
+                          </div>
+                          <div
+                            className={[
+                              'bitfun-chat-input__boost-submenu-shell',
+                              skillsFlyoutOpen ? 'bitfun-chat-input__boost-submenu-shell--open' : '',
+                              skillsFlyoutLeft ? 'bitfun-chat-input__boost-submenu-shell--left' : '',
+                              skillsFlyoutUp ? 'bitfun-chat-input__boost-submenu-shell--up' : '',
+                            ].filter(Boolean).join(' ')}
+                            onMouseEnter={openSkillsFlyout}
+                            onMouseLeave={closeSkillsFlyout}
+                          >
+                            <div className="bitfun-chat-input__boost-submenu-panel">
+                              {boostSkillsLoading ? (
+                                <div className="bitfun-chat-input__boost-submenu-loading">
+                                  <Loader2 size={14} className="bitfun-chat-input__boost-submenu-spinner" aria-hidden />
+                                  <span>{t('chatInput.boostSkillsLoading')}</span>
+                                </div>
+                              ) : boostPanelSkills.length === 0 ? (
+                                <div className="bitfun-chat-input__boost-submenu-empty">{t('chatInput.boostSkillsEmpty')}</div>
+                              ) : (
+                                <div className="bitfun-chat-input__boost-submenu-list">
+                                  {boostPanelSkills.map(skill => (
+                                    <div
+                                      key={skill.name}
+                                      role="button"
+                                      tabIndex={0}
+                                      className="bitfun-chat-input__boost-submenu-item"
+                                      title={skill.description || skill.name}
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        insertSkillIntoInput(skill.name);
+                                      }}
+                                      onKeyDown={e => e.key === 'Enter' && insertSkillIntoInput(skill.name)}
+                                    >
+                                      <Sparkles size={12} className="bitfun-chat-input__boost-submenu-item-icon" aria-hidden />
+                                      <span className="bitfun-chat-input__boost-submenu-item-name">{skill.name}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                className="bitfun-chat-input__boost-submenu-manage"
+                                onClick={handleOpenSkillsLibrary}
+                                onKeyDown={e => e.key === 'Enter' && handleOpenSkillsLibrary(e as any)}
+                              >
+                                {t('chatInput.openSkillsLibrary')}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    );
-                  })()}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
 
                 <ModelSelector
                   currentMode={modeState.current}
@@ -1717,36 +1880,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   </>
                 )}
                 
-                <IconButton
-                  className="bitfun-chat-input__action-button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={handleImageInput}
-                  tooltip={t('input.addImage')}
-                >
-                  <Image size={12} />
-                </IconButton>
-                
-                <IconButton
-                  className="bitfun-chat-input__action-button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={handleMermaidEditor}
-                  tooltip={t('input.openMermaidEditor')}
-                >
-                  <Network size={12} />
-                </IconButton>
-                
-                <IconButton
-                  className="bitfun-chat-input__action-button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => dispatchTemplate({ type: 'TOGGLE_PICKER' })}
-                  tooltip={t('input.selectPromptTemplate')}
-                >
-                  <FileText size={12} />
-                </IconButton>
-
                 {renderActionButton()}
               </div>
             </div>

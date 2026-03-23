@@ -13,7 +13,7 @@
 
 import React, { useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, FolderOpen, FolderPlus, History, Check, Bot } from 'lucide-react';
+import { Plus, FolderOpen, FolderPlus, History, Check, Clock3 } from 'lucide-react';
 import { Badge, Tooltip } from '@/component-library';
 import { useApp } from '../../hooks/useApp';
 import { useSceneManager } from '../../hooks/useSceneManager';
@@ -28,19 +28,19 @@ import NavItem from './components/NavItem';
 import SectionHeader from './components/SectionHeader';
 import MiniAppEntry from './components/MiniAppEntry';
 import WorkspaceListSection from './sections/workspaces/WorkspaceListSection';
+import ScheduledJobsDialog from '../ScheduledJobsDialog/ScheduledJobsDialog';
 import { useSceneStore } from '../../stores/sceneStore';
 import { useMyAgentStore } from '../../scenes/my-agent/myAgentStore';
 import { useMiniAppCatalogSync } from '../../scenes/miniapps/hooks/useMiniAppCatalogSync';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
 import { compareSessionsForDisplay } from '@/flow_chat/utils/sessionOrdering';
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
-import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { useWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
 import { createLogger } from '@/shared/utils/logger';
 import { WorkspaceKind } from '@/shared/types';
+import { useSSHRemoteContext, SSHConnectionDialog, RemoteFileBrowser } from '@/features/ssh-remote';
 
-const DEFAULT_MODE_CONFIG_KEY = 'app.session_config.default_mode';
 const NAV_DISPLAY_MODE_STORAGE_KEY = 'bitfun.nav.displayMode';
 import './NavPanel.scss';
 
@@ -87,11 +87,23 @@ const MainNav: React.FC<MainNavProps> = ({
   anchorNavSceneId = null,
 }) => {
   useMiniAppCatalogSync();
+
+  // SSH Remote state - use context instead of hook for consistent state
+  const sshRemote = useSSHRemoteContext();
+  const [isSSHConnectionDialogOpen, setIsSSHConnectionDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (sshRemote.showFileBrowser) {
+      setIsSSHConnectionDialogOpen(false);
+    }
+  }, [sshRemote.showFileBrowser]);
+
   const { state, switchLeftPanelTab } = useApp();
   const { openScene } = useSceneManager();
   const openNavScene = useNavSceneStore(s => s.openNavScene);
   const activeTabId = useSceneStore(s => s.activeTabId);
   const setMyAgentView = useMyAgentStore(s => s.setActiveView);
+  const selectedAssistantWorkspaceId = useMyAgentStore((s) => s.selectedAssistantWorkspaceId);
   const setSelectedAssistantWorkspaceId = useMyAgentStore((s) => s.setSelectedAssistantWorkspaceId);
   const { t } = useI18n('common');
   const {
@@ -211,33 +223,60 @@ const MainNav: React.FC<MainNavProps> = ({
     () => assistantWorkspacesList.find(workspace => !workspace.assistantId) ?? assistantWorkspacesList[0] ?? null,
     [assistantWorkspacesList]
   );
+  const selectedAssistantWorkspace = useMemo(() => {
+    if (!selectedAssistantWorkspaceId) {
+      return null;
+    }
 
-  const [defaultSessionMode, setDefaultSessionMode] = useState<'code' | 'cowork'>('code');
+    return assistantWorkspacesList.find(
+      (workspace) => workspace.id === selectedAssistantWorkspaceId
+    ) ?? null;
+  }, [assistantWorkspacesList, selectedAssistantWorkspaceId]);
+  const resolvedAssistantWorkspace = useMemo(() => {
+    if (isAssistantWorkspaceActive && currentWorkspace?.workspaceKind === WorkspaceKind.Assistant) {
+      return currentWorkspace;
+    }
+
+    if (selectedAssistantWorkspace) {
+      return selectedAssistantWorkspace;
+    }
+
+    return defaultAssistantWorkspace;
+  }, [
+    currentWorkspace,
+    defaultAssistantWorkspace,
+    isAssistantWorkspaceActive,
+    selectedAssistantWorkspace,
+  ]);
+  const resolvedAssistantDisplayName = useMemo(() => {
+    if (!resolvedAssistantWorkspace) {
+      return '';
+    }
+
+    return resolvedAssistantWorkspace.identity?.name?.trim() || resolvedAssistantWorkspace.name;
+  }, [resolvedAssistantWorkspace]);
+  const resolvedAssistantSessionId = useMemo(() => {
+    const workspacePath = resolvedAssistantWorkspace?.rootPath;
+    if (!workspacePath) {
+      return undefined;
+    }
+
+    const workspaceSessions = Array.from(flowChatStore.getState().sessions.values())
+      .filter(session =>
+        (session.workspacePath || workspacePath) === workspacePath && !session.parentSessionId
+      )
+      .sort(compareSessionsForDisplay);
+
+    return workspaceSessions[0]?.sessionId;
+  }, [resolvedAssistantWorkspace]);
+
   const [navDisplayMode, setNavDisplayMode] = useState<NavDisplayMode>(getInitialNavDisplayMode);
   const [isModeSwitching, setIsModeSwitching] = useState(false);
   const [modeLogoSrc, setModeLogoSrc] = useState('/panda_1.png');
   const [modeLogoHoverSrc, setModeLogoHoverSrc] = useState('/panda_2.png');
+  const [isScheduledJobsDialogOpen, setIsScheduledJobsDialogOpen] = useState(false);
   const modeSwitchTimerRef = useRef<number | null>(null);
   const modeSwitchSwapTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    configManager.getConfig<'code' | 'cowork'>(DEFAULT_MODE_CONFIG_KEY).then(mode => {
-      if (mode === 'code' || mode === 'cowork') {
-        setDefaultSessionMode(mode);
-        setSessionMode(mode);
-      }
-    }).catch(() => {});
-
-    const unwatch = configManager.watch(DEFAULT_MODE_CONFIG_KEY, () => {
-      configManager.getConfig<'code' | 'cowork'>(DEFAULT_MODE_CONFIG_KEY).then(mode => {
-        if (mode === 'code' || mode === 'cowork') {
-          setDefaultSessionMode(mode);
-          setSessionMode(mode);
-        }
-      }).catch(() => {});
-    });
-    return () => unwatch();
-  }, [setSessionMode]);
 
   useEffect(() => () => {
     if (modeSwitchTimerRef.current !== null) {
@@ -285,18 +324,12 @@ const MainNav: React.FC<MainNavProps> = ({
     try {
       await flowChatManager.createChatSession(
         {},
-        mode ?? (
-          isAssistantWorkspaceActive
-          ? 'Claw'
-          : defaultSessionMode === 'cowork'
-            ? 'Cowork'
-            : 'agentic'
-        )
+        mode ?? (isAssistantWorkspaceActive ? 'Claw' : 'agentic')
       );
     } catch (err) {
       log.error('Failed to create session', err);
     }
-  }, [openScene, switchLeftPanelTab, defaultSessionMode, isAssistantWorkspaceActive]);
+  }, [openScene, switchLeftPanelTab, isAssistantWorkspaceActive]);
 
   const handleCreateCodeSession = useCallback(() => {
     setSessionMode('code');
@@ -358,6 +391,23 @@ const MainNav: React.FC<MainNavProps> = ({
     await switchWorkspace(targetWorkspace);
   }, [closeWorkspaceMenu, recentWorkspaces, switchWorkspace]);
 
+  // SSH Remote handlers
+  const handleOpenRemoteSSH = useCallback(() => {
+    closeWorkspaceMenu();
+    setIsSSHConnectionDialogOpen(true);
+  }, [closeWorkspaceMenu]);
+
+  const handleSelectRemoteWorkspace = useCallback(async (path: string) => {
+    try {
+      await sshRemote.openWorkspace(path);
+      sshRemote.setShowFileBrowser(false);
+      // Close the SSH connection dialog as well
+      setIsSSHConnectionDialogOpen(false);
+    } catch (err) {
+      log.error('Failed to open remote workspace', err);
+    }
+  }, [sshRemote]);
+
   useEffect(() => {
     if (!workspaceMenuOpen) return;
 
@@ -412,6 +462,13 @@ const MainNav: React.FC<MainNavProps> = ({
     setSelectedAssistantWorkspaceId,
     switchLeftPanelTab,
   ]);
+
+  const handleOpenScheduledJobsDialog = useCallback(() => {
+    if (resolvedAssistantWorkspace?.id) {
+      setSelectedAssistantWorkspaceId(resolvedAssistantWorkspace.id);
+    }
+    setIsScheduledJobsDialogOpen(true);
+  }, [resolvedAssistantWorkspace, setSelectedAssistantWorkspaceId]);
 
   const handleOpenProModeSession = useCallback(async () => {
     // 找到项目工作区（非 assistant 类型）
@@ -559,6 +616,17 @@ const MainNav: React.FC<MainNavProps> = ({
         <FolderPlus size={13} />
         <span>{t('header.newProject')}</span>
       </button>
+      <button
+        type="button"
+        className="bitfun-nav-panel__workspace-menu-item"
+        role="menuitem"
+        onClick={handleOpenRemoteSSH}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+          <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6" />
+        </svg>
+        <span>{t('ssh.remote.connect')}</span>
+      </button>
       <div className="bitfun-nav-panel__workspace-menu-divider" role="separator" />
       <div className="bitfun-nav-panel__workspace-menu-section-title">
         <History size={12} aria-hidden="true" />
@@ -593,6 +661,7 @@ const MainNav: React.FC<MainNavProps> = ({
   const personaTooltip = t('nav.items.persona');
   const createSessionTooltip = t('nav.sessions.newClawSession');
   const createAssistantTooltip = t('nav.workspaces.actions.newAssistant');
+  const scheduledJobsTooltip = t('nav.scheduledJobs.open');
   const openProjectTooltip = t('header.openProject');
   const createCodeTooltip = t('nav.sessions.newCodeSession');
   const createCoworkTooltip = t('nav.sessions.newCoworkSession');
@@ -664,17 +733,31 @@ const MainNav: React.FC<MainNavProps> = ({
           </button>
         <div className="bitfun-nav-panel__workspace-create-group">
           {isAssistantNavMode ? (
-            <Tooltip content={createSessionTooltip} placement="right" followCursor>
-              <button
-                type="button"
-                className="bitfun-nav-panel__workspace-create-main bitfun-nav-panel__workspace-create-main--single"
-                onClick={() => { void handleCreateAssistantSession(); }}
-                aria-label={createSessionTooltip}
-              >
-                <Plus size={14} />
-                <span>{t('nav.sessions.newSession')}</span>
-              </button>
-            </Tooltip>
+            <>
+              <Tooltip content={createSessionTooltip} placement="right" followCursor>
+                <button
+                  type="button"
+                  className="bitfun-nav-panel__workspace-create-main bitfun-nav-panel__workspace-create-main--split-left"
+                  onClick={() => { void handleCreateAssistantSession(); }}
+                  aria-label={createSessionTooltip}
+                >
+                  <Plus size={14} />
+                  <span>{t('nav.sessions.newSession')}</span>
+                </button>
+              </Tooltip>
+              <Tooltip content={scheduledJobsTooltip} placement="right" followCursor>
+                <button
+                  type="button"
+                  className="bitfun-nav-panel__workspace-create-main bitfun-nav-panel__workspace-create-main--split-right"
+                  onClick={handleOpenScheduledJobsDialog}
+                  aria-label={scheduledJobsTooltip}
+                  disabled={!resolvedAssistantWorkspace}
+                >
+                  <Clock3 size={14} />
+                  <span>{t('nav.scheduledJobs.shortLabel')}</span>
+                </button>
+              </Tooltip>
+            </>
           ) : (
             <>
               <Tooltip content={createCodeTooltip} placement="right" followCursor>
@@ -786,9 +869,7 @@ const MainNav: React.FC<MainNavProps> = ({
                               tab === 'sessions'
                                 ? isAssistantWorkspaceActive
                                   ? t('nav.sessions.newClawSession')
-                                  : defaultSessionMode === 'cowork'
-                                    ? t('nav.sessions.newCoworkSession')
-                                    : t('nav.sessions.newCodeSession')
+                                  : t('nav.sessions.newCodeSession')
                                 : undefined
                             }
                             onActionClick={tab === 'sessions' ? handleCreateSession : undefined}
@@ -804,21 +885,18 @@ const MainNav: React.FC<MainNavProps> = ({
         })}
       </div>
 
-      {isAssistantNavMode && (
-        <div className="bitfun-nav-panel__assistant-footer">
-          <Tooltip content={personaTooltip} placement="right" followCursor>
-            <button
-              type="button"
-              className={`bitfun-nav-panel__assistant-entry${activeTabId === 'my-agent' ? ' is-active' : ''}`}
-              onClick={handleOpenProfile}
-              aria-label={myAgentEntryLabel}
-            >
-              <Bot size={16} className="bitfun-nav-panel__assistant-entry-icon" />
-              <span className="bitfun-nav-panel__assistant-entry-label">{myAgentEntryLabel}</span>
-            </button>
-          </Tooltip>
-        </div>
-      )}
+      <div className="bitfun-nav-panel__assistant-footer">
+        <Tooltip content={personaTooltip} placement="right" followCursor>
+          <button
+            type="button"
+            className={`bitfun-nav-panel__assistant-entry${activeTabId === 'my-agent' ? ' is-active' : ''}`}
+            onClick={handleOpenProfile}
+            aria-label={myAgentEntryLabel}
+          >
+            <span className="bitfun-nav-panel__assistant-entry-label">{myAgentEntryLabel}</span>
+          </button>
+        </Tooltip>
+      </div>
 
       <div className="bitfun-nav-panel__miniapp-footer">
         <MiniAppEntry
@@ -830,6 +908,31 @@ const MainNav: React.FC<MainNavProps> = ({
       </div>
 
       {workspaceMenuPortal}
+      <ScheduledJobsDialog
+        isOpen={isScheduledJobsDialogOpen}
+        onClose={() => setIsScheduledJobsDialogOpen(false)}
+        targetWorkspacePath={resolvedAssistantWorkspace?.rootPath}
+        targetSessionId={resolvedAssistantSessionId}
+        assistantName={resolvedAssistantDisplayName}
+        hideTargetFields
+        listScope="workspace"
+      />
+
+      {/* SSH Remote Dialogs */}
+      <SSHConnectionDialog
+        open={isSSHConnectionDialogOpen}
+        onClose={() => setIsSSHConnectionDialogOpen(false)}
+      />
+      {sshRemote.showFileBrowser && sshRemote.connectionId && (
+        <RemoteFileBrowser
+          connectionId={sshRemote.connectionId}
+          onSelect={handleSelectRemoteWorkspace}
+          onCancel={() => {
+            sshRemote.setShowFileBrowser(false);
+            void sshRemote.disconnect();
+          }}
+        />
+      )}
     </>
   );
 };

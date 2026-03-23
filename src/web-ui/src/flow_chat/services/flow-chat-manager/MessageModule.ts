@@ -15,7 +15,12 @@ import { createLogger } from '@/shared/utils/logger';
 import type { FlowChatContext, DialogTurn } from './types';
 import { ensureBackendSession, retryCreateBackendSession } from './SessionModule';
 import { cleanupSessionBuffers } from './TextChunkModule';
-import type { ImageContextData as ImageInputContextData } from '@/infrastructure/api/service-api/ImageAnalysisAPI';
+import type { ImageContextData as ImageInputContextData } from '@/infrastructure/api/service-api/ImageContextTypes';
+import { globalEventBus } from '@/infrastructure/event-bus';
+import {
+  FLOWCHAT_PIN_TURN_TO_TOP_EVENT,
+  type FlowChatPinTurnToTopRequest,
+} from '../../events/flowchatNavigation';
 
 const log = createLogger('MessageModule');
 
@@ -130,11 +135,21 @@ export async function sendMessage(
         images: options?.imageDisplayData,
       },
       modelRounds: [],
-      status: hasImages ? 'image_analyzing' : 'pending',
+      // Images are attached for multimodal primary models or reduced to text placeholders for text-only models.
+      // We don't run a separate frontend "image pre-analysis" phase here.
+      status: 'pending',
       startTime: Date.now()
     };
 
     context.flowChatStore.addDialogTurn(sessionId, dialogTurn);
+    const pinRequest: FlowChatPinTurnToTopRequest = {
+      sessionId,
+      turnId: dialogTurnId,
+      behavior: 'auto',
+      source: 'send-message',
+      pinMode: 'sticky-latest',
+    };
+    globalEventBus.emit(FLOWCHAT_PIN_TURN_TO_TOP_EVENT, pinRequest, 'MessageModule');
     
     await stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
       taskId: sessionId,

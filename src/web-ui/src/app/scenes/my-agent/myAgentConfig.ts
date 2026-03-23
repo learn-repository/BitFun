@@ -1,6 +1,6 @@
 import type { PanelType } from '@/app/types';
 
-export type MyAgentView = 'profile' | 'agents' | 'skills';
+export type MyAgentView = 'profile' | 'agents' | 'skills' | 'insights';
 
 export interface MyAgentNavItem {
   id: MyAgentView;
@@ -16,18 +16,25 @@ export interface MyAgentNavCategory {
 
 export const MY_AGENT_NAV_CATEGORIES: MyAgentNavCategory[] = [
   {
-    id: 'identity',
-    nameKey: 'nav.myAgent.categories.identity',
+    id: 'agents',
+    nameKey: 'nav.myAgent.categories.agents',
     items: [
       { id: 'profile', panelTab: 'profile', labelKey: 'nav.items.persona' },
+      { id: 'agents', panelTab: 'agents', labelKey: 'nav.items.agents' },
     ],
   },
   {
-    id: 'collaboration',
-    nameKey: 'nav.myAgent.categories.collaboration',
+    id: 'extensions',
+    nameKey: 'nav.myAgent.categories.extensions',
     items: [
-      { id: 'agents', panelTab: 'agents', labelKey: 'nav.items.agents' },
       { id: 'skills', panelTab: 'skills', labelKey: 'nav.items.skills' },
+    ],
+  },
+  {
+    id: 'analytics',
+    nameKey: 'nav.myAgent.categories.analytics',
+    items: [
+      { id: 'insights', panelTab: 'sessions', labelKey: 'nav.items.insights' },
     ],
   },
 ];

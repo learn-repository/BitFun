@@ -38,7 +38,7 @@
 
 ### 第六步
 
-打开 BitFun - 远程连接 - SMS 机器人 - Feishu 机器人 - 填写 App ID 和 App Secret - 连接
+打开 BitFun - 远程连接 - IM 机器人 - Feishu 机器人 - 填写 App ID 和 App Secret - 连接
 
 ![连接1](./images/zh-CN//5.png)
 ![连接2](./images/zh-CN//6.png)

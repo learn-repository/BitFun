@@ -19,6 +19,9 @@ pub mod tools;
 // Coordination module
 pub mod coordination;
 
+/// Round-boundary yield when user queues a message during an active turn
+pub mod round_preempt;
+
 // Image analysis module
 pub mod image_analysis;
 
@@ -31,8 +34,12 @@ pub mod workspace;
 
 mod util;
 
+// Insights module
+pub mod insights;
+
 pub use agents::*;
 pub use coordination::*;
+pub use round_preempt::{DialogRoundPreemptSource, NoopDialogRoundPreemptSource, SessionRoundYieldFlags};
 pub use core::*;
 pub use events::{queue, router, types as event_types};
 pub use execution::*;
@@ -40,4 +47,4 @@ pub use image_analysis::{ImageAnalyzer, MessageEnhancer};
 pub use persistence::PersistenceManager;
 pub use session::*;
 pub use side_question::*;
-pub use workspace::WorkspaceBinding;
+pub use workspace::{WorkspaceBackend, WorkspaceBinding};

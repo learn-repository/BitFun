@@ -24,6 +24,9 @@ export const PROVIDER_DISPLAY_ORDER: string[] = [
   'qwen',
   'deepseek',
   'volcengine',
+  'siliconflow',
+  'nvidia',
+  'openrouter',
   'minimax',
   'moonshot',
   'anthropic',
@@ -36,7 +39,7 @@ export const PROVIDER_TEMPLATES: Record<string, ProviderTemplate> = {
     descriptionKey: 'model.providers.anthropic.description',
     baseUrl: 'https://api.anthropic.com',
     format: 'anthropic',
-    models: ['claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101', 'claude-haiku-4-5-20251001'],
+    models: ['claude-opus-4-6', 'claude-sonnet-4-6'],
     helpUrl: 'https://console.anthropic.com/',
   },
   minimax: {
@@ -45,7 +48,7 @@ export const PROVIDER_TEMPLATES: Record<string, ProviderTemplate> = {
     descriptionKey: 'model.providers.minimax.description',
     baseUrl: 'https://api.minimaxi.com/anthropic',
     format: 'anthropic',
-    models: ['MiniMax-M2.5', 'MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2'],
+    models: ['MiniMax-M2.5', 'MiniMax-M2.1'],
     helpUrl: 'https://platform.minimax.io/',
     baseUrlOptions: [
       {
@@ -73,7 +76,7 @@ export const PROVIDER_TEMPLATES: Record<string, ProviderTemplate> = {
     id: 'deepseek',
     nameKey: 'model.providers.deepseek.name',
     descriptionKey: 'model.providers.deepseek.description',
-    baseUrl: 'https://api.deepseek.com',
+    baseUrl: 'https://api.deepseek.com/v1',
     format: 'openai',
     models: ['deepseek-chat', 'deepseek-reasoner'],
     helpUrl: 'https://platform.deepseek.com/api_keys',
@@ -98,7 +101,7 @@ export const PROVIDER_TEMPLATES: Record<string, ProviderTemplate> = {
         noteKey: 'model.providers.zhipu.urlOptions.anthropic',
       },
       {
-        url: 'https://open.bigmodel.cn/api/coding/paas',
+        url: 'https://open.bigmodel.cn/api/coding/paas/v4',
         format: 'openai',
         noteKey: 'model.providers.zhipu.urlOptions.codingPlan',
       },
@@ -110,7 +113,7 @@ export const PROVIDER_TEMPLATES: Record<string, ProviderTemplate> = {
     descriptionKey: 'model.providers.qwen.description',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     format: 'openai',
-    models: ['qwen3.5-plus', 'glm-5', 'kimi-k2.5', 'MiniMax-M2.5', 'qwen3-max', 'qwen3-coder-plus', 'qwen3-coder-flash'],
+    models: ['Qwen3.5-Plus', 'Qwen3.5-Flash'],
     helpUrl: 'https://dashscope.console.aliyun.com/apiKey',
     baseUrlOptions: [
       {
@@ -136,8 +139,47 @@ export const PROVIDER_TEMPLATES: Record<string, ProviderTemplate> = {
     descriptionKey: 'model.providers.volcengine.description',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     format: 'openai',
-    models: ['glm-4-7-251222', 'doubao-seed-code-preview-251028'],
+    models: ['doubao-seed-2-0-code-preview-260215', 'doubao-seed-2-0-pro-260215'],
     helpUrl: 'https://console.volcengine.com/ark/',
+  },
+  siliconflow: {
+    id: 'siliconflow',
+    nameKey: 'model.providers.siliconflow.name',
+    descriptionKey: 'model.providers.siliconflow.description',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    format: 'openai',
+    models: [],
+    helpUrl: 'https://cloud.siliconflow.cn/account/ak',
+    baseUrlOptions: [
+      {
+        url: 'https://api.siliconflow.cn/v1',
+        format: 'openai',
+        noteKey: 'model.providers.siliconflow.urlOptions.default',
+      },
+      {
+        url: 'https://api.siliconflow.cn/v1/messages',
+        format: 'anthropic',
+        noteKey: 'model.providers.siliconflow.urlOptions.anthropic',
+      },
+    ],
+  },
+  nvidia: {
+    id: 'nvidia',
+    nameKey: 'model.providers.nvidia.name',
+    descriptionKey: 'model.providers.nvidia.description',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    format: 'openai',
+    models: [],
+    helpUrl: 'https://build.nvidia.com/settings/api-keys',
+  },
+  openrouter: {
+    id: 'openrouter',
+    nameKey: 'model.providers.openrouter.name',
+    descriptionKey: 'model.providers.openrouter.description',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    format: 'openai',
+    models: [],
+    helpUrl: 'https://openrouter.ai/keys',
   },
 };
 

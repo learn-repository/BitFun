@@ -35,7 +35,7 @@ export interface AppLoggingConfig {
 }
 
 export interface AppSessionConfig {
-  default_mode: 'code' | 'cowork';
+  // Reserved; legacy `default_mode` in saved JSON is ignored by the app.
 }
 
 export interface SidebarConfig {
@@ -55,10 +55,7 @@ export interface NotificationConfig {
 }
 
 export interface AIExperienceConfig {
-   
   enable_session_title_generation: boolean;
-   
-  enable_welcome_panel_ai_analysis: boolean;
 
   /** Whether to enable visual mode (use Mermaid diagrams to illustrate complex logic and flows). */
   enable_visual_mode: boolean;
@@ -68,16 +65,11 @@ export interface AIExperienceConfig {
 
 export type ModelCapability =
   | 'text_chat'
-  | 'image_understanding'
-  | 'image_generation'
-  | 'function_calling'
-  | 'speech_recognition';
+  | 'function_calling';
 
 export type ModelCategory = 
   | 'general_chat'
-  | 'multimodal'
-  | 'image_generation'
-  | 'speech_recognition';
+  | 'multimodal';
 
 export interface ModelMetadata {
   category: ModelCategory;
@@ -87,28 +79,15 @@ export interface ModelMetadata {
 }
 
 
-export const CAPABILITY_LABELS: Record<ModelCapability, string> = {
-  text_chat: t('settings/ai-model:capabilities.text_chat'),
-  image_understanding: t('settings/ai-model:capabilities.image_understanding'),
-  image_generation: t('settings/ai-model:capabilities.image_generation'),
-  function_calling: t('settings/ai-model:capabilities.function_calling'),
-  speech_recognition: t('settings/ai-model:capabilities.speech_recognition')
-};
-
-
 export const CATEGORY_LABELS: Record<ModelCategory, string> = {
   general_chat: t('settings/ai-model:category.general_chat'),
-  multimodal: t('settings/ai-model:category.multimodal'),
-  image_generation: t('settings/ai-model:category.image_generation'),
-  speech_recognition: t('settings/ai-model:category.speech_recognition')
+  multimodal: t('settings/ai-model:category.multimodal')
 };
 
 
 export const CATEGORY_ICONS: Record<ModelCategory, string> = {
   general_chat: t('settings/ai-model:categoryIcons.general_chat'),
-  multimodal: t('settings/ai-model:categoryIcons.multimodal'),
-  image_generation: t('settings/ai-model:categoryIcons.image_generation'),
-  speech_recognition: t('settings/ai-model:categoryIcons.speech_recognition')
+  multimodal: t('settings/ai-model:categoryIcons.multimodal')
 };
 
 
@@ -168,10 +147,6 @@ export interface DefaultModelsConfig {
   primary?: string | null;
    
   fast?: string | null;
-   
-  image_understanding?: string | null;
-   
-  speech_recognition?: string | null;
 }
 
 export interface AIConfig {
@@ -537,7 +512,6 @@ export type ConfigPath =
   | 'app.auto_update'
   | 'app.telemetry'
   | 'app.session_config'
-  | 'app.session_config.default_mode'
   | 'app.sidebar'
   | 'app.sidebar.width'
   | 'app.sidebar.collapsed'
@@ -582,16 +556,4 @@ export interface DefaultModels {
 
  
 export interface OptionalCapabilityModels {
-   
-  image_understanding?: string;
-   
-  image_generation?: string;
-   
-  speech_recognition?: string;
 }
-
- 
-export type OptionalCapabilityType =
-  | 'image_understanding'
-  | 'image_generation'
-  | 'speech_recognition';

@@ -26,6 +26,7 @@ use api::ai_rules_api::*;
 use api::clipboard_file_api::*;
 use api::commands::*;
 use api::config_api::*;
+use api::cron_api::*;
 use api::diff_api::*;
 use api::git_agent_api::*;
 use api::git_api::*;
@@ -133,30 +134,11 @@ pub async fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .on_menu_event(|app, event| {
-            #[cfg(target_os = "macos")]
-            {
-                let event_name = if event.id() == "bitfun.open_project" {
-                    Some("bitfun_menu_open_project")
-                } else if event.id() == "bitfun.new_project" {
-                    Some("bitfun_menu_new_project")
-                } else if event.id() == "bitfun.about" {
-                    Some("bitfun_menu_about")
-                } else {
-                    None
-                };
-
-                if let Some(event_name) = event_name {
-                    // App-wide emit: delivers to frontend listeners even if window is not ready or label changed
-                    let _ = app.emit(event_name, ());
-                }
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = (app, event);
-            }
-        })
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("BitFun")
+                .build(),
+        )
         .manage(app_state)
         .manage(coordinator_state)
         .manage(scheduler_state)
@@ -165,6 +147,18 @@ pub async fn run() {
         .manage(scheduler)
         .manage(terminal_state)
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            {
+                app.on_menu_event(|app, event| {
+                    let event_name =
+                        crate::macos_menubar::menu_event_name_for_id(event.id().as_ref());
+
+                    if let Some(event_name) = event_name {
+                        let _ = app.emit(event_name, ());
+                    }
+                });
+            }
+
             logging::register_runtime_log_state(startup_log_level, session_log_dir.clone());
 
             // Register bundled mobile-web resource path for remote connect.
@@ -218,6 +212,7 @@ pub async fn run() {
                 let app_state: tauri::State<'_, api::app_state::AppState> = app.state();
                 let config_service = app_state.config_service.clone();
                 let workspace_path = app_state.workspace_path.clone();
+                let macos_edit_menu_mode = app_state.macos_edit_menu_mode.clone();
 
                 tokio::spawn(async move {
                     let language = config_service
@@ -231,11 +226,13 @@ pub async fn run() {
                     } else {
                         crate::macos_menubar::MenubarMode::Startup
                     };
+                    let edit_mode = *macos_edit_menu_mode.read().await;
 
                     let _ = crate::macos_menubar::set_macos_menubar_with_mode(
                         &app_handle_for_menu,
                         &language,
                         mode,
+                        edit_mode,
                     );
                 });
             }
@@ -311,8 +308,8 @@ pub async fn run() {
             api::btw_api::btw_ask,
             api::btw_api::btw_ask_stream,
             api::btw_api::btw_cancel,
-            api::image_analysis_api::analyze_images,
-            api::image_analysis_api::send_enhanced_message,
+            api::editor_ai_api::editor_ai_stream,
+            api::editor_ai_api::editor_ai_cancel,
             api::context_upload_api::upload_image_contexts,
             get_all_tools_info,
             get_readonly_tools_info,
@@ -342,6 +339,7 @@ pub async fn run() {
             check_path_exists,
             get_file_metadata,
             rename_file,
+            export_local_file_to_path,
             reveal_in_explorer,
             get_file_tree,
             get_directory_children,
@@ -468,6 +466,7 @@ pub async fn run() {
             load_session_turns,
             save_session_turn,
             save_session_metadata,
+            export_session_transcript,
             delete_persisted_session,
             touch_session_activity,
             load_persisted_session_metadata,
@@ -554,6 +553,7 @@ pub async fn run() {
             cleanup_invalid_workspaces,
             get_opened_workspaces,
             open_workspace,
+            open_remote_workspace,
             create_assistant_workspace,
             delete_assistant_workspace,
             reset_assistant_workspace,
@@ -562,11 +562,10 @@ pub async fn run() {
             reorder_opened_workspaces,
             get_current_workspace,
             scan_workspace_info,
-            api::prompt_template_api::get_prompt_template_config,
-            api::prompt_template_api::save_prompt_template_config,
-            api::prompt_template_api::export_prompt_templates,
-            api::prompt_template_api::import_prompt_templates,
-            api::prompt_template_api::reset_prompt_templates,
+            list_cron_jobs,
+            create_cron_job,
+            update_cron_job,
+            delete_cron_job,
             api::config_api::sync_tool_configs,
             api::terminal_api::terminal_get_shells,
             api::terminal_api::terminal_create,
@@ -586,6 +585,7 @@ pub async fn run() {
             check_command_exists,
             check_commands_exist,
             run_system_command,
+            set_macos_edit_menu_mode,
             i18n_get_current_language,
             i18n_set_language,
             i18n_get_supported_languages,
@@ -612,6 +612,10 @@ pub async fn run() {
             api::remote_connect_api::remote_connect_set_form_state,
             api::remote_connect_api::remote_connect_configure_custom_server,
             api::remote_connect_api::remote_connect_configure_bot,
+            api::remote_connect_api::remote_connect_weixin_qr_start,
+            api::remote_connect_api::remote_connect_weixin_qr_poll,
+            api::remote_connect_api::remote_connect_get_bot_verbose_mode,
+            api::remote_connect_api::remote_connect_set_bot_verbose_mode,
             // MiniApp API
             api::miniapp_api::list_miniapps,
             api::miniapp_api::get_miniapp,
@@ -636,6 +640,36 @@ pub async fn run() {
             // Browser API
             api::browser_api::browser_webview_eval,
             api::browser_api::browser_get_url,
+            // Insights API
+            api::insights_api::generate_insights,
+            api::insights_api::get_latest_insights,
+            api::insights_api::load_insights_report,
+            api::insights_api::has_insights_data,
+            api::insights_api::cancel_insights_generation,
+            // SSH Remote API
+            api::ssh_api::ssh_list_saved_connections,
+            api::ssh_api::ssh_save_connection,
+            api::ssh_api::ssh_delete_connection,
+            api::ssh_api::ssh_connect,
+            api::ssh_api::ssh_disconnect,
+            api::ssh_api::ssh_disconnect_all,
+            api::ssh_api::ssh_is_connected,
+            api::ssh_api::ssh_get_config,
+            api::ssh_api::ssh_list_config_hosts,
+            api::ssh_api::remote_read_file,
+            api::ssh_api::remote_write_file,
+            api::ssh_api::remote_exists,
+            api::ssh_api::remote_read_dir,
+            api::ssh_api::remote_get_tree,
+            api::ssh_api::remote_create_dir,
+            api::ssh_api::remote_remove,
+            api::ssh_api::remote_rename,
+            api::ssh_api::remote_download_to_local_path,
+            api::ssh_api::remote_upload_from_local_path,
+            api::ssh_api::remote_execute,
+            api::ssh_api::remote_open_workspace,
+            api::ssh_api::remote_close_workspace,
+            api::ssh_api::remote_get_workspace_info,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = run_result {
@@ -734,8 +768,21 @@ async fn init_agentic_system() -> anyhow::Result<(
     let scheduler =
         coordination::DialogScheduler::new(coordinator.clone(), session_manager.clone());
     coordinator.set_scheduler_notifier(scheduler.outcome_sender());
+    coordinator.set_round_preempt_source(scheduler.preempt_monitor());
     coordination::set_global_scheduler(scheduler.clone());
 
+    let cron_service =
+        bitfun_core::service::cron::CronService::new(path_manager.clone(), scheduler.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize cron service: {}", e))?;
+    bitfun_core::service::cron::set_global_cron_service(cron_service.clone());
+    let cron_subscriber = Arc::new(bitfun_core::service::cron::CronEventSubscriber::new(
+        cron_service.clone(),
+    ));
+    event_router.subscribe_internal("cron_jobs".to_string(), cron_subscriber);
+    cron_service.start();
+
+    log::info!("Cron service initialized and subscriber registered");
     log::info!("Agentic system initialized");
     Ok((
         coordinator,
@@ -785,6 +832,18 @@ fn setup_panic_hook() {
             .unwrap_or("unknown panic message");
 
         log::error!("Application panic at {}: {}", location, message);
+
+        // Known wry bug: WKWebView.URL() returns nil after navigating to an
+        // invalid address, causing url_from_webview to panic on unwrap().
+        // This is non-fatal — the webview is still alive — so we log and
+        // continue instead of killing the process.
+        // See: https://github.com/tauri-apps/wry/pull/1554
+        if location.contains("wry") && location.contains("wkwebview") {
+            log::warn!(
+                "Suppressed non-fatal wry/wkwebview panic, application continues"
+            );
+            return;
+        }
 
         if message.contains("WSAStartup") || message.contains("10093") || message.contains("hyper")
         {

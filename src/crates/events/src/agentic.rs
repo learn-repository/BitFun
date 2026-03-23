@@ -166,6 +166,8 @@ pub enum AgenticEvent {
         turn_id: String,
         round_id: String,
         content: String,
+        #[serde(default)]
+        is_end: bool,
         subagent_parent_info: Option<SubagentParentInfo>,
     },
 
@@ -243,6 +245,8 @@ pub enum ToolEventData {
         tool_id: String,
         tool_name: String,
         result: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result_for_assistant: Option<String>,
         duration_ms: u64,
     },
     Failed {

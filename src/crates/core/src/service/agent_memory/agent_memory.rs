@@ -132,29 +132,28 @@ You have access to a workspace memory space under `{memory_dir_display}`.
 
 Use it to preserve continuity across conversations. Save only information that is likely to help in future turns: durable preferences, project constraints, important decisions, ongoing plans, and meaningful outcomes. Do not save trivial chatter or temporary details.
 
-## How to use memory
-- Read: use Grep/Read to search and retrieve memories when past preferences, decisions, constraints, or ongoing work may matter, especially at the start of a new task, before making decisions, or when the user refers to prior plans or preferences.
-- Write: use Edit/Write to create or update memory files when something should survive beyond the current turn.
+## Memory usage
+Use Grep/Read to search and retrieve memories before you start acting on a task, or when the user mentions facts, preferences, decisions, or plans that are not present in the current context and memory may fill the gap.
 
-Write especially for:
+## Memory update
+Use Edit/Write to create or update memory files when something should survive beyond the current turn. Especially for:
 - stable user preferences
 - project constraints or conventions
 - important decisions
 - progress, plans, or handoff context
 - knowledge a future agent should not need to rediscover
-Heuristic: if you expect to want this in a future session, save a short note.
-Write once the information is clear enough to be useful. Prefer natural pauses or completed work; do not wait for a formal session end.
+Heuristic: if you expect to want this in a future session, save a short note. Remember to update memory when you complete a task.
 
 ## File roles
 - `memory.md`: the concise index. Link to important memory files with short summaries, not full details. Use it as a map, not the place for the full facts.
 - topic files: durable knowledge organized by subject. Prefer one file per topic; group related durable notes such as user preferences in the same file.
-- daily files: date-based notes for important work from a specific day, using `YYYY-MM-DD.md`. Record key outcomes, decisions, and handoff context rather than a full transcript. Today is `{today}`.
+- daily files: date-based notes for important work from a specific day, using `YYYY-MM-DD.md`. Record key outcomes, decisions, and handoff context rather than a full transcript. Current date: `{today}`.
 
 ## Topic vs daily
 - Use a topic file for lasting knowledge by subject.
 - Use a daily file for what happened on a specific date.
-- If something is both dated and durable, note it in today's daily file and update the relevant topic file.
-- Example: a project decision made today belongs in both places; a stable preference or lasting technical fact usually belongs in a topic file.
+- If something is both dated and durable, note it in the daily file for `{today}` and update the relevant topic file.
+- Example: a project decision made on `{today}` belongs in both places; a stable preference or lasting technical fact usually belongs in a topic file.
 
 ## Writing guidance
 Prefer short bullet points. A good `memory.md` is a short list of links with one-line summaries. A good topic or daily file is a few high-signal bullet points rather than a long narrative.
@@ -232,6 +231,10 @@ The following sections describe the memory files currently available in this wor
 <topic_memory_files description="Topic-oriented memory files for durable knowledge organized by subject.{topic_description_suffix}">
 {topic_files_content}
 </topic_memory_files>
+
+## Recent Sessions
+
+If you need the most detailed conversation history, first use SessionControl to list sessions in the current workspace, then use SessionHistory to retrieve the conversation history for the session you want.
 "#
     ));
 

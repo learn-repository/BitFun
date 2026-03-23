@@ -2,7 +2,6 @@
 
 use log::warn;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
@@ -14,6 +13,7 @@ use bitfun_core::agentic::coordination::{
 use bitfun_core::agentic::core::*;
 use bitfun_core::agentic::image_analysis::ImageContextData;
 use bitfun_core::agentic::tools::image_context::get_image_context;
+use bitfun_core::service::remote_ssh::workspace_state::get_effective_session_path;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,7 +236,7 @@ pub async fn update_session_model(
 #[tauri::command]
 pub async fn start_dialog_turn(
     _app: AppHandle,
-    coordinator: State<'_, Arc<ConversationCoordinator>>,
+    _coordinator: State<'_, Arc<ConversationCoordinator>>,
     scheduler: State<'_, Arc<DialogScheduler>>,
     request: StartDialogTurnRequest,
 ) -> Result<StartDialogTurnResponse, String> {
@@ -250,40 +250,31 @@ pub async fn start_dialog_turn(
         image_contexts,
     } = request;
 
-    if let Some(image_contexts) = image_contexts
+    let policy = DialogSubmissionPolicy::for_source(DialogTriggerSource::DesktopUi);
+    let resolved_images = if let Some(image_contexts) = image_contexts
         .as_ref()
         .filter(|images| !images.is_empty())
         .cloned()
     {
-        let resolved_image_contexts = resolve_missing_image_payloads(image_contexts)?;
-        coordinator
-            .start_dialog_turn_with_image_contexts(
-                session_id,
-                user_input,
-                original_user_input,
-                resolved_image_contexts,
-                turn_id,
-                agent_type,
-                workspace_path,
-                DialogSubmissionPolicy::for_source(DialogTriggerSource::DesktopUi),
-            )
-            .await
-            .map_err(|e| format!("Failed to start dialog turn: {}", e))?;
+        Some(resolve_missing_image_payloads(image_contexts)?)
     } else {
-        scheduler
-            .submit(
-                session_id,
-                user_input,
-                original_user_input,
-                turn_id,
-                agent_type,
-                workspace_path,
-                DialogSubmissionPolicy::for_source(DialogTriggerSource::DesktopUi),
-                None,
-            )
-            .await
-            .map_err(|e| format!("Failed to start dialog turn: {}", e))?;
-    }
+        None
+    };
+
+    scheduler
+        .submit(
+            session_id,
+            user_input,
+            original_user_input,
+            turn_id,
+            agent_type,
+            workspace_path,
+            policy,
+            None,
+            resolved_images,
+        )
+        .await
+        .map_err(|e| format!("Failed to start dialog turn: {}", e))?;
 
     Ok(StartDialogTurnResponse {
         success: true,
@@ -435,8 +426,9 @@ pub async fn delete_session(
     coordinator: State<'_, Arc<ConversationCoordinator>>,
     request: DeleteSessionRequest,
 ) -> Result<(), String> {
+    let effective_path = get_effective_session_path(&request.workspace_path).await;
     coordinator
-        .delete_session(&PathBuf::from(request.workspace_path), &request.session_id)
+        .delete_session(&effective_path, &request.session_id)
         .await
         .map_err(|e| format!("Failed to delete session: {}", e))
 }
@@ -446,8 +438,9 @@ pub async fn restore_session(
     coordinator: State<'_, Arc<ConversationCoordinator>>,
     request: RestoreSessionRequest,
 ) -> Result<SessionResponse, String> {
+    let effective_path = get_effective_session_path(&request.workspace_path).await;
     let session = coordinator
-        .restore_session(&PathBuf::from(request.workspace_path), &request.session_id)
+        .restore_session(&effective_path, &request.session_id)
         .await
         .map_err(|e| format!("Failed to restore session: {}", e))?;
 
@@ -459,8 +452,10 @@ pub async fn list_sessions(
     coordinator: State<'_, Arc<ConversationCoordinator>>,
     request: ListSessionsRequest,
 ) -> Result<Vec<SessionResponse>, String> {
+    // Map remote workspace path to local session storage path
+    let effective_path = get_effective_session_path(&request.workspace_path).await;
     let summaries = coordinator
-        .list_sessions(&PathBuf::from(request.workspace_path))
+        .list_sessions(&effective_path)
         .await
         .map_err(|e| format!("Failed to list sessions: {}", e))?;
 

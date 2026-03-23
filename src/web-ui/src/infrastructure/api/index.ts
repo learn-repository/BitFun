@@ -8,6 +8,7 @@ export * from './service-api/types';
 export * from './service-api/ApiClient';
 export * from './service-api/tauri-commands';
 export * from './service-api/AIApi';
+export * from './service-api/CronAPI';
 
 // Import API modules
 import { workspaceAPI } from './service-api/WorkspaceAPI';
@@ -21,6 +22,7 @@ import { diffAPI } from './service-api/DiffAPI';
 import { snapshotAPI } from './service-api/SnapshotAPI';
 import { globalAPI } from './service-api/GlobalAPI';
 import { contextAPI } from './service-api/ContextAPI';
+import { cronAPI } from './service-api/CronAPI';
 import { gitAPI } from './service-api/GitAPI';
 import { gitAgentAPI } from './service-api/GitAgentAPI';
 import { gitRepoHistoryAPI, type GitRepoHistory } from './service-api/GitRepoHistoryAPI';
@@ -28,10 +30,12 @@ import { startchatAgentAPI } from './service-api/StartchatAgentAPI';
 import { sessionAPI } from './service-api/SessionAPI';
 import { i18nAPI } from './service-api/I18nAPI';
 import { btwAPI } from './service-api/BtwAPI';
+import { editorAiAPI } from './service-api/EditorAiAPI';
 import { tokenUsageApi } from './tokenUsageApi';
+import { insightsApi } from './insightsApi';
 
 // Export API modules
-export { workspaceAPI, configAPI, aiApi, toolAPI, agentAPI, systemAPI, projectAPI, diffAPI, snapshotAPI, globalAPI, contextAPI, gitAPI, gitAgentAPI, gitRepoHistoryAPI, startchatAgentAPI, sessionAPI, i18nAPI, btwAPI, tokenUsageApi };
+export { workspaceAPI, configAPI, aiApi, toolAPI, agentAPI, systemAPI, projectAPI, diffAPI, snapshotAPI, globalAPI, contextAPI, cronAPI, gitAPI, gitAgentAPI, gitRepoHistoryAPI, startchatAgentAPI, sessionAPI, i18nAPI, btwAPI, editorAiAPI, tokenUsageApi, insightsApi };
 
 // Export types
 export type { GitRepoHistory };
@@ -49,6 +53,7 @@ export const bitfunAPI = {
   snapshot: snapshotAPI,
   global: globalAPI,
   context: contextAPI,
+  cron: cronAPI,
   git: gitAPI,
   gitAgent: gitAgentAPI,
   gitRepoHistory: gitRepoHistoryAPI,
@@ -56,7 +61,9 @@ export const bitfunAPI = {
   session: sessionAPI,
   i18n: i18nAPI,
   btw: btwAPI,
+  editorAi: editorAiAPI,
   tokenUsage: tokenUsageApi,
+  insights: insightsApi,
 };
 
 // Default export

@@ -10,11 +10,11 @@
     display: flex;
     gap: $size-gap-4;
     align-items: flex-start;
+    position: relative;
   }
 
+  // Small decorative gradient behind icon
   &__icon {
-    --gallery-detail-gradient: linear-gradient(135deg, rgba(59,130,246,0.28) 0%, rgba(139,92,246,0.18) 100%);
-
     width: 56px;
     height: 56px;
     border-radius: $size-radius-lg;
@@ -23,8 +23,9 @@
     justify-content: center;
     flex-shrink: 0;
     color: var(--color-text-primary);
-    background: var(--gallery-detail-gradient);
-    border: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+    background: var(--element-bg-soft);
+    border: 1px solid var(--border-subtle);
+    position: relative;
   }
 
   &__summary {

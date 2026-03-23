@@ -118,10 +118,6 @@
     "imageAddedSuccess": "成功添加 {{count}} 张图片",
     "imageAddedSingle": "已添加剪贴板图片: {{name}}",
     "imagePasteFailed": "图片粘贴失败",
-    "openMermaidEditor": "打开 Mermaid 编辑器",
-    "mermaidDualModeDemo": "Mermaid 编辑器",
-    "selectPromptTemplate": "选择提示词模板 (Ctrl+Shift+P)",
-    "willSendAfterStop": "将在停止后发送",
     "openWorkspaceFolder": "打开工作区文件夹",
     "openWorkspaceFolderFailed": "打开工作区文件夹失败：{{error}}",
     "spaceToActivate": "按<space>空格键</space>快速键入"
@@ -184,6 +180,18 @@
     "unknown": "未知错误"
   },
   "chatInput": {
+    "addBoostTooltip": "智能体模式、图片或 Skill",
+    "addModeTooltip": "附加 Plan 或 Debug",
+    "boostSectionAgent": "智能体",
+    "boostSectionContext": "上下文",
+    "boostSkills": "Skills",
+    "boostSkillsLoading": "正在加载 Skills…",
+    "boostSkillsEmpty": "暂无已启用的 Skill",
+    "openSkillsLibrary": "管理 Skills…",
+    "insertSkillLine": "Please use the Skill tool with command \"{{name}}\".",
+    "addModeMenuTitle": "附加模式",
+    "resetToAgentic": "恢复默认模式",
+    "noIncrementalModes": "暂无可附加模式",
     "switchMode": "切换模式",
     "quickAction": "快捷操作",
     "currentMode": "当前模式: {{mode}}",
@@ -193,8 +201,6 @@
     "current": "当前",
     "professionalMode": "专业模式",
     "designMode": "设计模式",
-    "templateHint": "按 <kbd>Tab</kbd> 切换到下一个占位符，<kbd>Shift+Tab</kbd> 返回上一个，<kbd>Esc</kbd> 退出编辑",
-    "templateProgress": "{{current}} / {{total}}",
     "wip": "开发中",
     "sendTarget": "发送到",
     "conversationTarget": "对话目标",
@@ -287,6 +293,8 @@
     "noSession": "当前没有可用于 /btw 的会话"
   },
   "flowChatHeader": {
+    "turnList": "轮次列表",
+    "untitledTurn": "未命名轮次",
     "previousTurn": "上一轮对话",
     "nextTurn": "下一轮对话",
     "turnBadge": "第 {{current}} 轮",
@@ -348,6 +356,7 @@
   "exploreRegion": {
     "readFiles": "读取了 {{count}} 个文件",
     "searchCount": "进行了 {{count}} 次搜索",
+    "thinkingCount": "思考了 {{count}} 次",
     "exploreCount": "执行了 {{count}} 次探索",
     "separator": "，",
     "collapse": "收起探索过程"

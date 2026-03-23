@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Session, DialogTurn, ModelRound, FlowToolItem } from '../types/flow-chat';
+import type { Session, DialogTurn, ModelRound, FlowItem, FlowToolItem, FlowTextItem } from '../types/flow-chat';
 import { isCollapsibleTool, READ_TOOL_NAMES, SEARCH_TOOL_NAMES } from '../tool-cards';
 
 /**
@@ -15,6 +15,7 @@ import { isCollapsibleTool, READ_TOOL_NAMES, SEARCH_TOOL_NAMES } from '../tool-c
 export interface ExploreGroupStats {
   readCount: number;
   searchCount: number;
+  thinkingCount: number;
 }
 
 /**
@@ -24,10 +25,14 @@ export interface ExploreGroupStats {
 export interface ExploreGroupData {
   groupId: string;
   rounds: ModelRound[];
-  allItems: import('../types/flow-chat').FlowItem[];
+  allItems: FlowItem[];
   stats: ExploreGroupStats;
   isGroupStreaming: boolean;
   isLastGroupInTurn: boolean;
+  /**
+   * When true, ExploreGroupRenderer auto-collapses after a critical follow-up round (e.g. Mermaid).
+   * Set false if the group contains assistant `text` items so narrative stays visible.
+   */
   isFollowedByCritical: boolean;
 }
 
@@ -66,15 +71,36 @@ interface ModernFlowChatState {
  * Check if ModelRound is explore-only (contains only exploration tools)
  * Explore-only rounds can be collapsed
  * 
- * Key check: must contain at least one collapsible tool
- * Pure text rounds (like final replies) should not be collapsed
+ * Key check: must contain at least one collapsible tool OR be a pure thinking round.
+ * Pure thinking rounds (thinking without critical tools) are merged into
+ * adjacent explore groups to reduce visual noise from standalone "thinking N chars" lines.
+ * Pure text rounds (like final replies) should not be collapsed.
+ * Keep streaming narrative visible in-place until the stream settles; otherwise
+ * a mid-stream switch to explore-group remounts the text block and replays the
+ * typewriter animation from the beginning.
  */
+function hasActiveStreamingNarrative(round: ModelRound): boolean {
+  return round.items.some(item => {
+    if (item.type !== 'text' && item.type !== 'thinking') return false;
+    const maybeStreaming = item as { isStreaming?: boolean; status?: string };
+    return maybeStreaming.isStreaming === true &&
+      (maybeStreaming.status === 'streaming' || maybeStreaming.status === 'running');
+  });
+}
+
 function isExploreOnlyRound(round: ModelRound): boolean {
   if (!round.items || round.items.length === 0) return false;
+
+  if (round.isStreaming && hasActiveStreamingNarrative(round)) {
+    return false;
+  }
   
   const hasCollapsibleTool = round.items.some(item => 
     item.type === 'tool' && isCollapsibleTool((item as FlowToolItem).toolName)
   );
+  
+  const hasAnyTool = round.items.some(item => item.type === 'tool');
+  if (!hasAnyTool) return false;
   
   if (!hasCollapsibleTool) return false;
   
@@ -91,19 +117,34 @@ function isExploreOnlyRound(round: ModelRound): boolean {
 /**
  * Compute statistics for a single ModelRound
  */
-function computeRoundStats(round: ModelRound): { readCount: number; searchCount: number } {
+function computeRoundStats(round: ModelRound): { readCount: number; searchCount: number; thinkingCount: number } {
   let readCount = 0;
   let searchCount = 0;
+  let thinkingCount = 0;
   
   for (const item of round.items) {
     if (item.type === 'tool') {
       const toolName = (item as FlowToolItem).toolName;
       if (READ_TOOL_NAMES.has(toolName)) readCount++;
       else if (SEARCH_TOOL_NAMES.has(toolName)) searchCount++;
+    } else if (item.type === 'thinking') {
+      thinkingCount++;
     }
   }
   
-  return { readCount, searchCount };
+  return { readCount, searchCount, thinkingCount };
+}
+
+/**
+ * True when the merged explore group includes assistant markdown/text with real content.
+ * Auto-collapse on "followed by critical tool" must not hide this narrative.
+ */
+function exploreGroupHasNarrativeText(items: FlowItem[]): boolean {
+  return items.some(
+    (item) =>
+      item.type === 'text' &&
+      String((item as FlowTextItem).content || '').trim().length > 0
+  );
 }
 
 let cachedSession: Session | null = null;
@@ -160,9 +201,10 @@ export function sessionToVirtualItems(session: Session | null): VirtualItem[] {
     
     interface TempExploreGroup {
       rounds: ModelRound[];
-      allItems: import('../types/flow-chat').FlowItem[];
+      allItems: FlowItem[];
       readCount: number;
       searchCount: number;
+      thinkingCount: number;
       startIndex: number;
       endIndex: number;
     }
@@ -171,13 +213,15 @@ export function sessionToVirtualItems(session: Session | null): VirtualItem[] {
     let currentGroup: TempExploreGroup | null = null;
     
     nonEmptyRounds.forEach((round, index) => {
-      if (isExploreOnlyRound(round)) {
+      const exploreOnly = isExploreOnlyRound(round);
+      if (exploreOnly) {
         const stats = computeRoundStats(round);
         if (currentGroup) {
           currentGroup.rounds.push(round);
           currentGroup.allItems.push(...round.items);
           currentGroup.readCount += stats.readCount;
           currentGroup.searchCount += stats.searchCount;
+          currentGroup.thinkingCount += stats.thinkingCount;
           currentGroup.endIndex = index;
         } else {
           currentGroup = {
@@ -185,6 +229,7 @@ export function sessionToVirtualItems(session: Session | null): VirtualItem[] {
             allItems: [...round.items],
             readCount: stats.readCount,
             searchCount: stats.searchCount,
+            thinkingCount: stats.thinkingCount,
             startIndex: index,
             endIndex: index,
           };
@@ -223,6 +268,10 @@ export function sessionToVirtualItems(session: Session | null): VirtualItem[] {
             isFollowedByCritical = !isExploreOnlyRound(nextRound);
           }
         }
+
+        if (exploreGroupHasNarrativeText(group.allItems)) {
+          isFollowedByCritical = false;
+        }
         
         const isGroupStreaming = group.rounds.some(r => r.isStreaming);
         
@@ -233,7 +282,7 @@ export function sessionToVirtualItems(session: Session | null): VirtualItem[] {
             groupId: group.rounds.map(r => r.id).join('-'),
             rounds: group.rounds,
             allItems: group.allItems,
-            stats: { readCount: group.readCount, searchCount: group.searchCount },
+            stats: { readCount: group.readCount, searchCount: group.searchCount, thinkingCount: group.thinkingCount },
             isGroupStreaming,
             isLastGroupInTurn: isLastGroup,
             isFollowedByCritical,

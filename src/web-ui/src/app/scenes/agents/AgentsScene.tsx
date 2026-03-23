@@ -45,13 +45,9 @@ import './AgentsScene.scss';
 
 const EXAMPLE_TEAM_IDS = new Set(MOCK_AGENT_TEAMS.map((team) => team.id));
 
-const CORE_AGENT_IDS = new Set(['Claw', 'agentic', 'Cowork']);
+const HIDDEN_AGENT_IDS = new Set(['Claw']);
 
-const CORE_AGENT_META: Record<string, CoreAgentMeta> = {
-  Claw:    { role: '个人助理',       accentColor: '#f59e0b', accentBg: 'rgba(245,158,11,0.10)' },
-  agentic: { role: '编码专业智能体', accentColor: '#6366f1', accentBg: 'rgba(99,102,241,0.10)' },
-  Cowork:  { role: '办公智能体',     accentColor: '#14b8a6', accentBg: 'rgba(20,184,166,0.10)' },
-};
+const CORE_AGENT_IDS = new Set(['agentic', 'Cowork']);
 
 const AgentTeamEditorView: React.FC = () => {
   const { t } = useTranslation('scenes/agents');
@@ -104,6 +100,10 @@ const AgentsHomeView: React.FC = () => {
   const [selectedTeamId, setSelectedTeamId] = React.useState<string | null>(null);
   const [toolsEditing, setToolsEditing] = React.useState(false);
   const [skillsEditing, setSkillsEditing] = React.useState(false);
+  const [pendingTools, setPendingTools] = React.useState<string[] | null>(null);
+  const [pendingSkills, setPendingSkills] = React.useState<string[] | null>(null);
+  const [savingTools, setSavingTools] = React.useState(false);
+  const [savingSkills, setSavingSkills] = React.useState(false);
 
   const {
     allAgents,
@@ -124,6 +124,19 @@ const AgentsHomeView: React.FC = () => {
     t,
   });
 
+  const coreAgentMeta = useMemo((): Record<string, CoreAgentMeta> => ({
+    agentic: {
+      role: t('coreAgentsZone.modes.agentic.role'),
+      accentColor: '#6366f1',
+      accentBg: 'rgba(99,102,241,0.10)',
+    },
+    Cowork: {
+      role: t('coreAgentsZone.modes.cowork.role'),
+      accentColor: '#14b8a6',
+      accentBg: 'rgba(20,184,166,0.10)',
+    },
+  }), [t]);
+
   const filteredTeams = useMemo(() => agentTeams.filter((team) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
@@ -132,11 +145,16 @@ const AgentsHomeView: React.FC = () => {
 
   const coreAgents = useMemo(() => allAgents.filter((agent) => CORE_AGENT_IDS.has(agent.id)), [allAgents]);
 
+  const visibleAgents = useMemo(
+    () => filteredAgents.filter((agent) => !HIDDEN_AGENT_IDS.has(agent.id) && !CORE_AGENT_IDS.has(agent.id)),
+    [filteredAgents],
+  );
+
   const handleCreateTeam = useCallback(() => {
     const id = `agent-team-${Date.now()}`;
     addAgentTeam({
       id,
-      name: t('teamsZone.newTeamName', '新团队'),
+      name: t('teamsZone.newTeamName'),
       icon: 'users',
       description: '',
       strategy: 'collaborative',
@@ -150,14 +168,14 @@ const AgentsHomeView: React.FC = () => {
   }, []);
 
   const levelFilters = [
-    { key: 'builtin', label: t('filters.builtin', '内置'), count: counts.builtin },
-    { key: 'user', label: t('filters.user', '用户'), count: counts.user },
-    { key: 'project', label: t('filters.project', '项目'), count: counts.project },
+    { key: 'builtin', label: t('filters.builtin'), count: counts.builtin },
+    { key: 'user', label: t('filters.user'), count: counts.user },
+    { key: 'project', label: t('filters.project'), count: counts.project },
   ] as const;
 
   const typeFilters = [
-    { key: 'mode', label: t('filters.mode', 'Agent'), count: counts.mode },
-    { key: 'subagent', label: t('filters.subagent', 'Sub-Agent'), count: counts.subagent },
+    { key: 'mode', label: t('filters.mode'), count: counts.mode },
+    { key: 'subagent', label: t('filters.subagent'), count: counts.subagent },
   ] as const;
 
   const renderSkeletons = (prefix: string) => (
@@ -198,25 +216,31 @@ const AgentsHomeView: React.FC = () => {
       .slice(0, 3);
   }, [allAgents, selectedTeam]);
 
+  const resetEditState = useCallback(() => {
+    setToolsEditing(false);
+    setSkillsEditing(false);
+    setPendingTools(null);
+    setPendingSkills(null);
+    setSavingTools(false);
+    setSavingSkills(false);
+  }, []);
+
   const openAgentDetails = useCallback((agent: AgentWithCapabilities) => {
     setSelectedTeamId(null);
     setSelectedAgentId(agent.id);
-    setToolsEditing(false);
-    setSkillsEditing(false);
-  }, []);
+    resetEditState();
+  }, [resetEditState]);
 
   const closeAgentDetails = useCallback(() => {
     setSelectedAgentId(null);
-    setToolsEditing(false);
-    setSkillsEditing(false);
-  }, []);
+    resetEditState();
+  }, [resetEditState]);
 
   const openTeamDetails = useCallback((teamId: string) => {
     setSelectedAgentId(null);
-    setToolsEditing(false);
-    setSkillsEditing(false);
+    resetEditState();
     setSelectedTeamId(teamId);
-  }, []);
+  }, [resetEditState]);
 
   return (
     <GalleryLayout className="bitfun-agents-scene">
@@ -307,7 +331,7 @@ const AgentsHomeView: React.FC = () => {
                   key={agent.id}
                   agent={agent}
                   index={index}
-                  meta={CORE_AGENT_META[agent.id] ?? { role: agent.name, accentColor: '#6366f1', accentBg: 'rgba(99,102,241,0.10)' }}
+                  meta={coreAgentMeta[agent.id] ?? { role: agent.name, accentColor: '#6366f1', accentBg: 'rgba(99,102,241,0.10)' }}
                   skillCount={agent.agentKind === 'mode' ? (getModeConfig(agent.id)?.available_skills?.length ?? 0) : 0}
                   onOpenDetails={openAgentDetails}
                 />
@@ -325,7 +349,7 @@ const AgentsHomeView: React.FC = () => {
               <div className="bitfun-agents-scene__agent-filters">
                 <div className="bitfun-agents-scene__agent-filter-group">
                   <span className="bitfun-agents-scene__agent-filter-label">
-                    {t('filters.source', '来源')}
+                    {t('filters.source')}
                   </span>
                   {levelFilters.map(({ key, label, count }) => (
                     <button
@@ -344,7 +368,7 @@ const AgentsHomeView: React.FC = () => {
                 </div>
                 <div className="bitfun-agents-scene__agent-filter-group">
                   <span className="bitfun-agents-scene__agent-filter-label">
-                    {t('filters.kind', '类型')}
+                    {t('filters.kind')}
                   </span>
                   {typeFilters.map(({ key, label, count }) => (
                     <button
@@ -370,22 +394,22 @@ const AgentsHomeView: React.FC = () => {
                 <Plus size={15} />
                 <span>{t('page.newAgent')}</span>
               </button>
-              <span className="gallery-zone-count">{filteredAgents.length}</span>
+              <span className="gallery-zone-count">{visibleAgents.length}</span>
             </>
           )}
         >
           {loading ? renderSkeletons('agent') : null}
 
-          {!loading && filteredAgents.length === 0 ? (
+          {!loading && visibleAgents.length === 0 ? (
             <GalleryEmpty
               icon={<Bot size={32} strokeWidth={1.5} />}
               message={allAgents.length === 0 ? t('agentsZone.empty.noAgents') : t('agentsZone.empty.noMatch')}
             />
           ) : null}
 
-          {!loading && filteredAgents.length > 0 ? (
-            <GalleryGrid>
-              {filteredAgents.map((agent, index) => (
+          {!loading && visibleAgents.length > 0 ? (
+            <GalleryGrid minCardWidth={360}>
+              {visibleAgents.map((agent, index) => (
                 <AgentCard
                   key={agent.id}
                   agent={agent}
@@ -424,7 +448,7 @@ const AgentsHomeView: React.FC = () => {
               message={agentTeams.length === 0 ? t('teamsZone.empty.noTeams') : t('teamsZone.empty.noMatch')}
             />
           ) : (
-            <GalleryGrid>
+            <GalleryGrid minCardWidth={360}>
               {filteredTeams.map((team, index) => {
                 const caps = computeAgentTeamCapabilities(team, allAgents);
                 const topCaps = CAPABILITY_CATEGORIES
@@ -465,16 +489,16 @@ const AgentsHomeView: React.FC = () => {
               {selectedAgent.agentKind === 'mode' ? <Cpu size={10} /> : <Bot size={10} />}
               {getAgentBadge(t, selectedAgent.agentKind, selectedAgent.subagentSource).label}
             </Badge>
-            {!selectedAgent.enabled ? <Badge variant="neutral">{t('agentCard.badges.disabled', '已禁用')}</Badge> : null}
+            {!selectedAgent.enabled ? <Badge variant="neutral">{t('agentCard.badges.disabled')}</Badge> : null}
             {selectedAgent.model ? <Badge variant="neutral">{selectedAgent.model}</Badge> : null}
           </>
         ) : null}
         description={selectedAgent?.description}
         meta={selectedAgent ? (
           <>
-            <span>{t('agentCard.meta.tools', '{{count}} 个工具', { count: selectedAgent.toolCount ?? selectedAgentTools.length })}</span>
+            <span>{t('agentCard.meta.tools', { count: selectedAgent.toolCount ?? selectedAgentTools.length })}</span>
             {selectedAgent.agentKind === 'mode' ? (
-              <span>{t('agentCard.meta.skills', '{{count}} 个 Skills', { count: selectedAgentSkills.length })}</span>
+              <span>{t('agentCard.meta.skills', { count: selectedAgentSkills.length })}</span>
             ) : null}
           </>
         ) : null}
@@ -509,28 +533,81 @@ const AgentsHomeView: React.FC = () => {
                 <div className="agent-card__section-head">
                   <div className="agent-card__section-title">
                     <Wrench size={12} />
-                    <span>{t('agentsOverview.tools', '工具')}</span>
+                    <span>{t('agentsOverview.tools')}</span>
                     <span className="agent-card__section-count">
                       {selectedAgent.agentKind === 'mode'
-                        ? `${selectedAgentTools.length}/${availableTools.length}`
+                        ? `${(toolsEditing ? (pendingTools ?? selectedAgentTools) : selectedAgentTools).length}/${availableTools.length}`
                         : `${selectedAgentTools.length}`}
                     </span>
                   </div>
                   {selectedAgent.agentKind === 'mode' ? (
                     <div className="agent-card__section-actions">
-                      <Button variant="secondary" size="small" onClick={() => setToolsEditing((prev) => !prev)}>
-                        {toolsEditing ? t('agentsOverview.toolsCancel', '完成管理') : t('agentsOverview.toolsEdit', '管理工具')}
-                      </Button>
                       {toolsEditing ? (
-                        <IconButton
+                        <>
+                          <IconButton
+                            size="small"
+                            variant="ghost"
+                            tooltip={t('agentsOverview.toolsReset')}
+                            onClick={async () => {
+                              await handleResetTools(selectedAgent.id);
+                              setToolsEditing(false);
+                              setPendingTools(null);
+                            }}
+                          >
+                            <RefreshCw size={12} />
+                          </IconButton>
+                          <Button
+                            variant="ghost"
+                            size="small"
+                            onClick={() => {
+                              setToolsEditing(false);
+                              setPendingTools(null);
+                            }}
+                          >
+                            {t('agentsOverview.toolsCancel')}
+                          </Button>
+                          <Button
+                            variant="primary"
+                            size="small"
+                            isLoading={savingTools}
+                            onClick={async () => {
+                              if (!pendingTools) {
+                                setToolsEditing(false);
+                                return;
+                              }
+                              setSavingTools(true);
+                              try {
+                                await Promise.all(
+                                  availableTools
+                                    .filter((tool) => {
+                                      const wasOn = selectedAgentTools.includes(tool.name);
+                                      const isOn = pendingTools.includes(tool.name);
+                                      return wasOn !== isOn;
+                                    })
+                                    .map((tool) => handleToggleTool(selectedAgent.id, tool.name)),
+                                );
+                              } finally {
+                                setSavingTools(false);
+                                setToolsEditing(false);
+                                setPendingTools(null);
+                              }
+                            }}
+                          >
+                            {t('agentsOverview.toolsSave')}
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="secondary"
                           size="small"
-                          variant="ghost"
-                          tooltip={t('agentsOverview.toolsReset', '重置默认')}
-                          onClick={() => void handleResetTools(selectedAgent.id)}
+                          onClick={() => {
+                            setPendingTools([...selectedAgentTools]);
+                            setToolsEditing(true);
+                          }}
                         >
-                          <RefreshCw size={12} />
-                        </IconButton>
-                      ) : null}
+                          {t('agentsOverview.toolsEdit')}
+                        </Button>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -539,21 +616,30 @@ const AgentsHomeView: React.FC = () => {
                   <div className="agent-card__token-grid">
                     {[...availableTools]
                       .sort((a, b) => {
-                        const aOn = selectedAgentTools.includes(a.name);
-                        const bOn = selectedAgentTools.includes(b.name);
+                        const draft = pendingTools ?? selectedAgentTools;
+                        const aOn = draft.includes(a.name);
+                        const bOn = draft.includes(b.name);
                         if (aOn && !bOn) return -1;
                         if (!aOn && bOn) return 1;
                         return 0;
                       })
                       .map((tool) => {
-                        const isOn = selectedAgentTools.includes(tool.name);
+                        const draft = pendingTools ?? selectedAgentTools;
+                        const isOn = draft.includes(tool.name);
                         return (
                           <button
                             key={tool.name}
                             type="button"
                             className={`agent-card__token${isOn ? ' is-on' : ''}`}
                             title={tool.description || tool.name}
-                            onClick={() => void handleToggleTool(selectedAgent.id, tool.name)}
+                            onClick={() => {
+                              setPendingTools((prev) => {
+                                const current = prev ?? selectedAgentTools;
+                                return isOn
+                                  ? current.filter((n) => n !== tool.name)
+                                  : [...current, tool.name];
+                              });
+                            }}
                           >
                             <span className="agent-card__token-name">{tool.name}</span>
                           </button>
@@ -577,15 +663,66 @@ const AgentsHomeView: React.FC = () => {
                 <div className="agent-card__section-head">
                   <div className="agent-card__section-title">
                     <Puzzle size={12} />
-                    <span>{t('agentsOverview.skills', 'Skills')}</span>
+                    <span>{t('agentsOverview.skills')}</span>
                     <span className="agent-card__section-count">
-                      {`${selectedAgentSkills.length}/${availableSkills.length}`}
+                      {`${(skillsEditing ? (pendingSkills ?? selectedAgentSkills) : selectedAgentSkills).length}/${availableSkills.length}`}
                     </span>
                   </div>
                   <div className="agent-card__section-actions">
-                    <Button variant="secondary" size="small" onClick={() => setSkillsEditing((prev) => !prev)}>
-                      {skillsEditing ? t('agentsOverview.skillsCancel', '完成管理') : t('agentsOverview.skillsEdit', '管理 Skills')}
-                    </Button>
+                    {skillsEditing ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="small"
+                          onClick={() => {
+                            setSkillsEditing(false);
+                            setPendingSkills(null);
+                          }}
+                        >
+                          {t('agentsOverview.skillsCancel')}
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="small"
+                          isLoading={savingSkills}
+                          onClick={async () => {
+                            if (!pendingSkills) {
+                              setSkillsEditing(false);
+                              return;
+                            }
+                            setSavingSkills(true);
+                            try {
+                              await Promise.all(
+                                availableSkills
+                                  .filter((skill) => {
+                                    const wasOn = selectedAgentSkills.includes(skill.name);
+                                    const isOn = pendingSkills.includes(skill.name);
+                                    return wasOn !== isOn;
+                                  })
+                                  .map((skill) => handleToggleSkill(selectedAgent.id, skill.name)),
+                              );
+                            } finally {
+                              setSavingSkills(false);
+                              setSkillsEditing(false);
+                              setPendingSkills(null);
+                            }
+                          }}
+                        >
+                          {t('agentsOverview.skillsSave')}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="small"
+                        onClick={() => {
+                          setPendingSkills([...selectedAgentSkills]);
+                          setSkillsEditing(true);
+                        }}
+                      >
+                        {t('agentsOverview.skillsEdit')}
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -593,21 +730,30 @@ const AgentsHomeView: React.FC = () => {
                   <div className="agent-card__token-grid">
                     {[...availableSkills]
                       .sort((a, b) => {
-                        const aOn = selectedAgentSkills.includes(a.name);
-                        const bOn = selectedAgentSkills.includes(b.name);
+                        const draft = pendingSkills ?? selectedAgentSkills;
+                        const aOn = draft.includes(a.name);
+                        const bOn = draft.includes(b.name);
                         if (aOn && !bOn) return -1;
                         if (!aOn && bOn) return 1;
                         return 0;
                       })
                       .map((skill) => {
-                        const isOn = selectedAgentSkills.includes(skill.name);
+                        const draft = pendingSkills ?? selectedAgentSkills;
+                        const isOn = draft.includes(skill.name);
                         return (
                           <button
                             key={skill.name}
                             type="button"
                             className={`agent-card__token${isOn ? ' is-on' : ''}`}
                             title={skill.description || skill.name}
-                            onClick={() => void handleToggleSkill(selectedAgent.id, skill.name)}
+                            onClick={() => {
+                              setPendingSkills((prev) => {
+                                const current = prev ?? selectedAgentSkills;
+                                return isOn
+                                  ? current.filter((n) => n !== skill.name)
+                                  : [...current, skill.name];
+                              });
+                            }}
                           >
                             <span className="agent-card__token-name">{skill.name}</span>
                           </button>
@@ -618,7 +764,7 @@ const AgentsHomeView: React.FC = () => {
                   <div className="agent-card__chip-grid">
                     {selectedAgentSkillItems.length === 0 ? (
                       <span className="agent-card__empty-inline">
-                        {t('agentsOverview.noSkills', '未启用任何 Skill')}
+                        {t('agentsOverview.noSkills')}
                       </span>
                     ) : (
                       selectedAgentSkillItems.map((skill) => (
@@ -646,7 +792,7 @@ const AgentsHomeView: React.FC = () => {
         title={selectedTeam?.name ?? ''}
         badges={selectedTeam ? (
           <>
-            {EXAMPLE_TEAM_IDS.has(selectedTeam.id) ? <Badge variant="neutral">{t('teamCard.badges.example', '示例')}</Badge> : null}
+            {EXAMPLE_TEAM_IDS.has(selectedTeam.id) ? <Badge variant="neutral">{t('teamCard.badges.example')}</Badge> : null}
             <Badge variant="neutral">
               {selectedTeam.strategy === 'collaborative'
                 ? t('composer.strategy.collaborative')
@@ -655,7 +801,7 @@ const AgentsHomeView: React.FC = () => {
                   : t('composer.strategy.free')}
             </Badge>
             {selectedTeam.shareContext ? (
-              <Badge variant="success">{t('teamCard.badges.sharedContext', '共享上下文')}</Badge>
+              <Badge variant="success">{t('teamCard.badges.sharedContext')}</Badge>
             ) : null}
           </>
         ) : null}
@@ -676,7 +822,7 @@ const AgentsHomeView: React.FC = () => {
       >
         {selectedAgentTeamMembers.length > 0 ? (
           <div className="agent-team-card__section">
-            <div className="agent-team-card__section-title">{t('teamCard.sections.members', '成员')}</div>
+            <div className="agent-team-card__section-title">{t('teamCard.sections.members')}</div>
             <div className="agent-team-card__member-list">
               {selectedAgentTeamMembers.map((agent) => {
                 const member = selectedTeam?.members.find((item) => item.agentId === agent.id);
@@ -702,7 +848,7 @@ const AgentsHomeView: React.FC = () => {
 
         {selectedTeamTopCaps.length > 0 ? (
           <div className="agent-team-card__section">
-            <div className="agent-team-card__section-title">{t('teamCard.sections.capabilities', '能力')}</div>
+            <div className="agent-team-card__section-title">{t('teamCard.sections.capabilities')}</div>
             <div className="agent-team-card__cap-chips">
               {selectedTeamTopCaps.map((cap) => (
                 <span

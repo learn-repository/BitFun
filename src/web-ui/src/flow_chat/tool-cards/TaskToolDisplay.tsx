@@ -4,17 +4,17 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  ChevronDown,
-  ChevronUp,
   Split,
   Timer,
   PanelRightOpen
 } from 'lucide-react';
+
 import { useTranslation } from 'react-i18next';
 import { CubeLoading, Button, IconButton } from '../../component-library';
 import type { ToolCardProps } from '../types/flow-chat';
 import { BaseToolCard } from './BaseToolCard';
 import { taskCollapseStateManager } from '../store/TaskCollapseStateManager';
+import { useToolCardHeightContract } from './useToolCardHeightContract';
 import './TaskToolDisplay.scss';
 
 export const TaskToolDisplay: React.FC<ToolCardProps> = ({
@@ -26,6 +26,7 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
 }) => {
   const { t } = useTranslation('flow-chat');
   const { toolCall, toolResult, status, requiresConfirmation, userConfirmed } = toolItem;
+  const toolId = toolItem.id ?? toolCall?.id;
   
   // Restore collapse state; default to collapsed until running.
   const [isExpanded, setIsExpanded] = useState(() => {
@@ -38,12 +39,20 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
   
   const isRunning = status === 'preparing' || status === 'streaming' || status === 'running';
   
-  const [isPromptExpanded, setIsPromptExpanded] = useState(false);
-  const promptRef = useRef<HTMLDivElement>(null);
-  const [isPromptOverflow, setIsPromptOverflow] = useState(false);
+  const { cardRootRef, applyExpandedState } = useToolCardHeightContract({
+    toolId,
+    toolName: toolItem.toolName,
+  });
   
   const prevStatusRef = useRef(status);
-  
+
+  const updateCardExpandedState = useCallback((
+    nextExpanded: boolean,
+    reason: 'manual' | 'auto' = 'manual',
+  ) => {
+    applyExpandedState(isExpanded, nextExpanded, setIsExpanded, { reason });
+  }, [applyExpandedState, isExpanded, isRunning, status, toolId]);
+
   useEffect(() => {
     const prevStatus = prevStatusRef.current;
     
@@ -51,23 +60,12 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
       prevStatusRef.current = status;
       
       if (status === 'completed') {
-        setIsExpanded(false);
+        updateCardExpandedState(false, 'auto');
       } else if (isRunning) {
-        setIsExpanded(true);
+        updateCardExpandedState(true, 'auto');
       }
     }
-  }, [status, isRunning]);
-  
-  useEffect(() => {
-    const prompt = toolCall?.input?.prompt;
-    if (prompt) {
-      let visualWidth = 0;
-      for (const char of prompt) {
-        visualWidth += isFullWidth(char) ? 2 : 1;
-      }
-      setIsPromptOverflow(visualWidth > 100 || prompt.includes('\n'));
-    }
-  }, [toolCall?.input?.prompt]);
+  }, [isRunning, status, updateCardExpandedState]);
   
   useEffect(() => {
     taskCollapseStateManager.setCollapsed(toolItem.id, !isExpanded);
@@ -141,9 +139,8 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
     }
     
     // Pause auto-scroll while the user toggles the card.
-    window.dispatchEvent(new CustomEvent('tool-card-toggle'));
-    setIsExpanded(!isExpanded);
-  }, [isFailed, isExpanded]);
+    updateCardExpandedState(!isExpanded);
+  }, [isFailed, isExpanded, updateCardExpandedState]);
 
   const formatDuration = (ms: number) => {
     if (ms < 1000) return `${ms}ms`;
@@ -164,11 +161,10 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
 
   const renderHeader = () => {
     const hasPromptContent = taskInput && taskInput.prompt && taskInput.prompt !== 'Not provided';
-    const isPromptVisible = hasPromptContent && (!isPromptOverflow || isPromptExpanded);
     
     return (
     <div className="task-header-wrapper">
-      <div className={`task-icon-container ${isRunning ? 'is-running' : ''} ${isPromptVisible ? 'prompt-visible' : ''}`}>
+      <div className={`task-icon-container ${isRunning ? 'is-running' : ''} ${hasPromptContent ? 'prompt-visible' : ''}`}>
         {renderToolIcon()}
       </div>
       
@@ -192,24 +188,9 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
             )}
             
             <IconButton
-              className="preview-toggle-btn"
-              variant="ghost"
-              size="xs"
-              onClick={(e) => {
-                e.stopPropagation();
-                window.dispatchEvent(new CustomEvent('tool-card-toggle'));
-                setIsExpanded(!isExpanded);
-              }}
-              tooltip={isExpanded ? t('toolCards.common.collapse') : t('toolCards.common.expand')}
-              tooltipPlacement="top"
-            >
-              {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            </IconButton>
-            
-            <IconButton
               className="open-panel-btn"
               variant="ghost"
-              size="xs"
+              size="small"
               onClick={(e) => {
                 e.stopPropagation();
                 const panelData = { toolItem, taskInput, sessionId };
@@ -228,7 +209,7 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
               tooltip={t('toolCards.taskTool.openInPanel')}
               tooltipPlacement="top"
             >
-              <PanelRightOpen size={12} />
+              <PanelRightOpen size={14} />
             </IconButton>
             
             <div className="task-status-icon">
@@ -241,14 +222,6 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
     </div>
   )};
 
-  const handlePromptRowClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isPromptOverflow) {
-      window.dispatchEvent(new CustomEvent('tool-card-toggle'));
-      setIsPromptExpanded(!isPromptExpanded);
-    }
-  }, [isPromptExpanded, isPromptOverflow]);
-
   const renderPromptRow = () => {
     const hasPrompt = taskInput && taskInput.prompt && taskInput.prompt !== 'Not provided';
     
@@ -256,30 +229,11 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
       return null;
     }
     
-    const isPromptCollapsed = !isPromptExpanded && isPromptOverflow;
-    
     return (
-      <div 
-        className={`task-prompt-row ${isPromptCollapsed ? 'task-prompt-row--collapsed' : ''} ${isPromptOverflow ? 'task-prompt-row--clickable' : ''}`}
-        onClick={handlePromptRowClick}
-      >
-        <div 
-          ref={promptRef}
-          className="task-prompt-content"
-        >
+      <div className="task-prompt-row">
+        <div className="task-prompt-content">
           {taskInput!.prompt}
         </div>
-        {isPromptExpanded && isPromptOverflow && (
-          <IconButton 
-            className="task-prompt-toggle-btn task-prompt-toggle-btn--collapse" 
-            variant="ghost"
-            size="xs"
-            onClick={handlePromptRowClick} 
-            tooltip={t('toolCards.common.collapse')}
-          >
-            <ChevronUp size={14} />
-          </IconButton>
-        )}
       </div>
     );
   };
@@ -319,25 +273,18 @@ export const TaskToolDisplay: React.FC<ToolCardProps> = ({
     );
   };
 
-  // Error details are shown in the side panel only.
-  const hasPrompt = taskInput && taskInput.prompt && taskInput.prompt !== 'Not provided';
-  const isPromptRowExpanded = hasPrompt && isPromptExpanded;
-  
-  const cardClassName = [
-    'task-tool-display',
-    isPromptRowExpanded ? 'prompt-expanded' : ''
-  ].filter(Boolean).join(' ');
-
   return (
-    <BaseToolCard
-      status={status}
-      isExpanded={isExpanded}
-      onClick={handleCardClick}
-      className={cardClassName}
-      header={renderHeader()}
-      expandedContent={renderExpandedContent()}
-      isFailed={isFailed}
-      requiresConfirmation={requiresConfirmation && !userConfirmed}
-    />
+    <div ref={cardRootRef} data-tool-card-id={toolId ?? ''}>
+      <BaseToolCard
+        status={status}
+        isExpanded={isExpanded}
+        onClick={handleCardClick}
+        className="task-tool-display"
+        header={renderHeader()}
+        expandedContent={renderExpandedContent()}
+        isFailed={isFailed}
+        requiresConfirmation={requiresConfirmation && !userConfirmed}
+      />
+    </div>
   );
 };

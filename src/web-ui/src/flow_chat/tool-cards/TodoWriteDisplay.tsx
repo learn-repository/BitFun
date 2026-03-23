@@ -2,10 +2,11 @@
  * Tool card for TodoWrite with a dot-track progress view.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Loader2, ListTodo, CheckCircle2, Circle, XCircle, PlayCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ToolCardProps } from '../types/flow-chat';
+import { useToolCardHeightContract } from './useToolCardHeightContract';
 import './TodoWriteDisplay.scss';
 
 export const TodoWriteDisplay: React.FC<ToolCardProps> = ({
@@ -15,8 +16,12 @@ export const TodoWriteDisplay: React.FC<ToolCardProps> = ({
   const { t } = useTranslation('flow-chat');
   const { status, toolResult, partialParams, isParamsStreaming } = toolItem;
   
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [expandedState, setExpandedState] = useState<boolean | null>(null);
+  const toolId = toolItem.id;
+  const { cardRootRef, applyExpandedState } = useToolCardHeightContract({
+    toolId,
+    toolName: toolItem.toolName,
+  });
 
   const todosToDisplay = useMemo(() => {
     if (isParamsStreaming && partialParams?.todos && Array.isArray(partialParams.todos)) {
@@ -39,13 +44,6 @@ export const TodoWriteDisplay: React.FC<ToolCardProps> = ({
   const inProgressTasks = useMemo(() => {
     return todosToDisplay.filter((t: any) => t.status === 'in_progress');
   }, [todosToDisplay]);
-
-  const hoveredTask = useMemo(() => {
-    if (hoveredIndex !== null && todosToDisplay[hoveredIndex]) {
-      return todosToDisplay[hoveredIndex];
-    }
-    return null;
-  }, [hoveredIndex, todosToDisplay]);
 
   const isAllCompleted = useMemo(() => {
     return todosToDisplay.length > 0 && taskStats.completed === taskStats.total;
@@ -82,13 +80,10 @@ export const TodoWriteDisplay: React.FC<ToolCardProps> = ({
 
   const renderTrackDot = (todo: any, index: number) => {
     const statusClass = `track-dot--${todo.status}`;
-    const isHovered = hoveredIndex === index;
     return (
-      <div 
-        key={todo.id || index} 
-        className={`track-dot ${statusClass} ${isHovered ? 'track-dot--hovered' : ''}`}
-        onMouseEnter={() => setHoveredIndex(index)}
-        onMouseLeave={() => setHoveredIndex(null)}
+      <div
+        key={todo.id || index}
+        className={`track-dot ${statusClass}`}
       />
     );
   };
@@ -114,20 +109,31 @@ export const TodoWriteDisplay: React.FC<ToolCardProps> = ({
   );
 
   const currentDisplayTask = useMemo(() => {
-    if (hoveredTask) {
-      return hoveredTask;
-    }
     if (inProgressTasks.length > 0) {
       return inProgressTasks[0];
     }
     return null;
-  }, [hoveredTask, inProgressTasks]);
+  }, [inProgressTasks]);
+
+  const handleToggleExpanded = useCallback(() => {
+    if (todosToDisplay.length === 0) {
+      return;
+    }
+
+    applyExpandedState(isExpanded, !isExpanded, (nextExpanded) => {
+      setExpandedState(nextExpanded);
+    });
+  }, [applyExpandedState, isExpanded, todosToDisplay.length]);
 
   return (
-    <div className={`flow-tool-card todo-write-card mode-${displayMode} status-${status} ${isAllCompleted ? 'all-completed' : ''}`}>
+    <div
+      ref={cardRootRef}
+      data-tool-card-id={toolId ?? ''}
+      className={`flow-tool-card todo-write-card mode-${displayMode} status-${status} ${isAllCompleted ? 'all-completed' : ''}`}
+    >
       <div
         className={`tool-card-header ${todosToDisplay.length > 0 ? 'clickable' : ''}`}
-        onClick={todosToDisplay.length > 0 ? () => setExpandedState(!isExpanded) : undefined}
+        onClick={todosToDisplay.length > 0 ? handleToggleExpanded : undefined}
       >
         <div className="todo-header-center">
           {isAllCompleted ? (
@@ -146,7 +152,7 @@ export const TodoWriteDisplay: React.FC<ToolCardProps> = ({
               {!isExpanded && todosToDisplay.length > 0 && currentDisplayTask && (
                 <div className={`current-task-inline current-task-inline--${currentDisplayTask.status}`}>
                   <span className="inline-task-text">{currentDisplayTask.content}</span>
-                  {inProgressTasks.length > 1 && !hoveredTask && (
+                  {inProgressTasks.length > 1 && (
                     <span className="inline-task-more">+{inProgressTasks.length - 1}</span>
                   )}
                 </div>

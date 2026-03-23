@@ -32,6 +32,15 @@ interface ModelRoundItemProps {
   isLastRound?: boolean;
 }
 
+function hasActiveStreamingNarrative(items: FlowItem[]): boolean {
+  return items.some(item => {
+    if (item.type !== 'text' && item.type !== 'thinking') return false;
+    const maybeStreaming = item as { isStreaming?: boolean; status?: string };
+    return maybeStreaming.isStreaming === true &&
+      (maybeStreaming.status === 'streaming' || maybeStreaming.status === 'running');
+  });
+}
+
 export const ModelRoundItem = React.memo<ModelRoundItemProps>(
   ({ round, turnId, isLastRound = false }) => {
     const { t } = useTranslation('flow-chat');
@@ -76,6 +85,7 @@ export const ModelRoundItem = React.memo<ModelRoundItemProps>(
     // 1) group subagent items
     // 2) group normal items into explore/critical via anchor tool
     const groupedItems = useMemo(() => {
+      const deferExploreGrouping = round.isStreaming && hasActiveStreamingNarrative(sortedItems);
       const intermediateGroups: Array<{ type: 'normal', item: FlowItem } | { type: 'subagent', parentTaskToolId: string, items: FlowItem[] }> = [];
       let currentSubagentGroup: { parentTaskToolId: string, items: FlowItem[] } | null = null;
       
@@ -161,6 +171,13 @@ export const ModelRoundItem = React.memo<ModelRoundItemProps>(
             const isExploreTool = isCollapsibleTool(toolName);
             
             if (isExploreTool) {
+              if (deferExploreGrouping) {
+                flushExploreBuffer(false);
+                flushPendingAsCritical();
+                finalGroups.push({ type: 'critical', item });
+                normalItemIndex++;
+                continue;
+              }
               exploreBuffer.push(...pendingBuffer, item);
               pendingBuffer = [];
               
@@ -182,8 +199,8 @@ export const ModelRoundItem = React.memo<ModelRoundItemProps>(
       flushPendingAsCritical();
       
       return finalGroups;
-    }, [sortedItems]);
-    
+    }, [round.isStreaming, sortedItems]);
+
     const extractDialogTurnContent = useCallback(() => {
       const flowChatStore = FlowChatStore.getInstance();
       const state = flowChatStore.getState();
@@ -254,29 +271,46 @@ export const ModelRoundItem = React.memo<ModelRoundItemProps>(
         className={`model-round-item model-round-item--${round.isStreaming ? 'streaming' : 'complete'}`}
       >
         {groupedItems.map((group, groupIndex) => {
+          const isLastGroup = groupIndex === groupedItems.length - 1;
+          const isLast = isLastRound && isLastGroup;
           switch (group.type) {
             case 'explore':
-              return group.items.map(item => (
+              return group.items.map((item, itemIdx) => (
                 <FlowItemRenderer 
                   key={item.id}
                   item={item}
                   turnId={turnId}
                   roundId={round.id}
+                  isLastItem={isLast && itemIdx === group.items.length - 1}
                 />
               ));
             
-            case 'critical':
+            case 'critical': {
+              // If next group is the matching subagent, skip here — rendered by subagent case.
+              const nextGroup = groupedItems[groupIndex + 1];
+              const isTaskForSubagent = group.item.type === 'tool' &&
+                nextGroup?.type === 'subagent' &&
+                nextGroup.parentTaskToolId === group.item.id;
+              if (isTaskForSubagent) return null;
               return (
                 <FlowItemRenderer 
                   key={group.item.id}
                   item={group.item}
                   turnId={turnId}
                   roundId={round.id}
+                  isLastItem={isLast}
                 />
               );
+            }
             
-            case 'subagent':
-              return (
+            case 'subagent': {
+              // If previous group is the matching task tool, wrap both in a unified card.
+              const prevGroup = groupedItems[groupIndex - 1];
+              const hasPairedTask = prevGroup?.type === 'critical' &&
+                prevGroup.item.type === 'tool' &&
+                group.parentTaskToolId === prevGroup.item.id;
+              
+              const subagentContainer = (
                 <SubagentItemsContainer 
                   key={`subagent-group-${group.parentTaskToolId}-${groupIndex}`}
                   parentTaskToolId={group.parentTaskToolId}
@@ -285,6 +319,22 @@ export const ModelRoundItem = React.memo<ModelRoundItemProps>(
                   roundId={round.id}
                 />
               );
+              
+              if (hasPairedTask) {
+                return (
+                  <div key={`task-with-subagent-${prevGroup.item.id}`} className="task-with-subagent-wrapper">
+                    <FlowItemRenderer
+                      item={prevGroup.item}
+                      turnId={turnId}
+                      roundId={round.id}
+                      isLastItem={false}
+                    />
+                    {subagentContainer}
+                  </div>
+                );
+              }
+              return subagentContainer;
+            }
             
             default:
               return null;
@@ -391,7 +441,7 @@ const SubagentItemsContainer = React.memo<SubagentItemsContainerProps>(({
     
     return unsubscribe;
   }, [parentTaskToolId]);
-  
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -460,23 +510,20 @@ const SubagentItemsContainer = React.memo<SubagentItemsContainerProps>(({
     };
   }, [isCollapsed]);
   
-  if (isCollapsed) {
-    return null;
-  }
-  
   return (
-    <div className="subagent-items-wrapper">
+    <div className={`subagent-items-wrapper ${isCollapsed ? 'subagent-items-wrapper--collapsed' : 'subagent-items-wrapper--expanded'}`}>
       <div 
         ref={containerRef}
-        className="subagent-items-container"
+        className={`subagent-items-container ${isCollapsed ? 'subagent-items-container--collapsed' : 'subagent-items-container--expanded'}`}
         data-parent-tool-id={parentTaskToolId}
       >
-        {items.map((item) => (
+        {items.map((item, idx) => (
           <SubagentItemRenderer 
             key={item.id}
             item={item}
             turnId={turnId}
             roundId={roundId}
+            isLastItem={idx === items.length - 1}
           />
         ))}
       </div>
@@ -487,7 +534,7 @@ const SubagentItemsContainer = React.memo<SubagentItemsContainerProps>(({
 /**
  * Subagent item renderer (used inside the container, no collapse logic).
  */
-const SubagentItemRenderer = React.memo<{ item: FlowItem; turnId: string; roundId: string }>(({ item }) => {
+const SubagentItemRenderer = React.memo<{ item: FlowItem; turnId: string; roundId: string; isLastItem?: boolean }>(({ item, isLastItem }) => {
   const {
     onToolConfirm,
     onToolReject,
@@ -530,7 +577,7 @@ const SubagentItemRenderer = React.memo<{ item: FlowItem; turnId: string; roundI
     
     case 'thinking':
       return (
-        <ModelThinkingDisplay thinkingItem={item as FlowThinkingItem} />
+        <ModelThinkingDisplay thinkingItem={item as FlowThinkingItem} isLastItem={isLastItem} />
       );
     
     case 'tool':
@@ -557,10 +604,11 @@ interface FlowItemRendererProps {
   item: FlowItem;
   turnId: string;
   roundId: string;
+  isLastItem?: boolean;
 }
 
 // Do not memoize: streaming content updates frequently.
-const FlowItemRenderer: React.FC<FlowItemRendererProps> = ({ item }) => {
+const FlowItemRenderer: React.FC<FlowItemRendererProps> = ({ item, isLastItem }) => {
   const {
     onToolConfirm,
     onToolReject,
@@ -616,7 +664,7 @@ const FlowItemRenderer: React.FC<FlowItemRendererProps> = ({ item }) => {
     
     case 'thinking':
       return wrapContent(
-        <ModelThinkingDisplay thinkingItem={item as FlowThinkingItem} />
+        <ModelThinkingDisplay thinkingItem={item as FlowThinkingItem} isLastItem={isLastItem} />
       );
     
     case 'tool':

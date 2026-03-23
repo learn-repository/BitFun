@@ -7,6 +7,7 @@ pub mod ai_memory; // AI memory point management
 pub mod ai_rules; // AI rules management
 pub(crate) mod bootstrap; // Workspace persona bootstrap helpers
 pub mod config; // Config management
+pub mod cron; // Scheduled jobs
 pub mod diff;
 pub mod filesystem; // FileSystem management
 pub mod git; // Git service
@@ -15,6 +16,7 @@ pub mod lsp; // LSP (Language Server Protocol) system
 pub mod mcp; // MCP (Model Context Protocol) system
 pub mod project_context; // Project context management
 pub mod remote_connect; // Remote Connect (phone → desktop)
+pub mod remote_ssh; // Remote SSH (desktop → server)
 pub mod runtime; // Managed runtime and capability management
 pub mod session; // Session persistence
 pub mod snapshot; // Snapshot-based change tracking
@@ -30,6 +32,9 @@ pub use ai_memory::{AIMemory, AIMemoryManager, MemoryType};
 pub use ai_rules::AIRulesService;
 pub use bootstrap::reset_workspace_persona_files_to_default;
 pub use config::{ConfigManager, ConfigProvider, ConfigService};
+pub use cron::{
+    get_global_cron_service, set_global_cron_service, CronEventSubscriber, CronService,
+};
 pub use diff::{
     DiffConfig, DiffHunk, DiffLine, DiffLineType, DiffOptions, DiffResult, DiffService,
 };

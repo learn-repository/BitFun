@@ -4,7 +4,7 @@
 
 use super::round_executor::RoundExecutor;
 use super::types::{ExecutionContext, ExecutionResult, RoundContext};
-use crate::agentic::agents::get_agent_registry;
+use crate::agentic::agents::{get_agent_registry, PromptBuilderContext};
 use crate::agentic::core::{Message, MessageContent, MessageHelper, Session};
 use crate::agentic::events::{AgenticEvent, EventPriority, EventQueue};
 use crate::agentic::image_analysis::{
@@ -218,6 +218,7 @@ impl ExecutionEngine {
         provider: &str,
         workspace_path: Option<&Path>,
         current_turn_id: &str,
+        attach_images: bool,
     ) -> BitFunResult<Vec<AIMessage>> {
         let limits = ImageLimits::for_provider(provider);
 
@@ -227,6 +228,13 @@ impl ExecutionEngine {
         for msg in messages {
             match &msg.content {
                 MessageContent::Multimodal { text, images } => {
+                    if !attach_images {
+                        // Primary model is text-only (or images are disabled). Convert to text-only
+                        // placeholder so providers that don't support image inputs won't error.
+                        result.push(AIMessage::from(msg));
+                        continue;
+                    }
+
                     let prompt = if text.trim().is_empty() {
                         "(image attached)".to_string()
                     } else {
@@ -279,6 +287,40 @@ impl ExecutionEngine {
         }
 
         Ok(result)
+    }
+
+    fn render_multimodal_as_text(
+        text: &str,
+        images: &[ImageContextData],
+    ) -> String {
+        let mut content = text.to_string();
+
+        if images.is_empty() {
+            return content;
+        }
+
+        content.push_str("\n\n[Attached image(s):\n");
+        for image in images {
+            let name = image
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("name"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| image.image_path.as_ref().filter(|s| !s.is_empty()).cloned())
+                .unwrap_or_else(|| image.id.clone());
+
+            content.push_str(&format!(
+                "- {} ({}, image_id={})\n",
+                name, image.mime_type, image.id
+            ));
+        }
+        content.push_str("]\n");
+
+        content.push_str("Note: image inspection is not available for this session.\n");
+
+        content
     }
 
     /// Compress context, will emit compression events (Started, Completed, and Failed)
@@ -541,11 +583,15 @@ impl ExecutionEngine {
                 .workspace
                 .as_ref()
                 .map(|workspace| workspace.root_path_string());
-            current_agent
-                .get_system_prompt_for_model(
-                    workspace_str.as_deref(),
-                    Some(ai_client.config.model.as_str()),
+            let prompt_context = workspace_str.map(|workspace_path| {
+                PromptBuilderContext::new(
+                    workspace_path,
+                    Some(context.session_id.clone()),
+                    Some(ai_client.config.model.clone()),
                 )
+            });
+            current_agent
+                .get_system_prompt(prompt_context.as_ref())
                 .await?
         };
         debug!("System prompt built, length: {} bytes", system_prompt.len());
@@ -611,9 +657,7 @@ impl ExecutionEngine {
         let enable_context_compression = session.config.enable_context_compression;
         let compression_threshold = session.config.compression_threshold;
         // Detect whether the primary model supports multimodal image inputs.
-        // This is used by tools like `view_image` to decide between:
-        // - attaching image content for the primary model to analyze directly, or
-        // - using a dedicated vision model to pre-analyze into text.
+        // When false, multimodal user messages are converted to text placeholders before the provider call.
         let (resolved_primary_model_id, primary_supports_image_understanding) = {
             let config_service = get_global_config_service().await.ok();
             if let Some(service) = config_service {
@@ -673,6 +717,27 @@ impl ExecutionEngine {
             "primary_model_supports_image_understanding".to_string(),
             primary_supports_image_understanding.to_string(),
         );
+        execution_context_vars.insert("turn_index".to_string(), context.turn_index.to_string());
+
+        // If the primary model is text-only, do not send image payloads to the provider.
+        // Instead, keep a text-only placeholder (including `image_id`).
+        if !primary_supports_image_understanding {
+            for msg in messages.iter_mut() {
+                let MessageContent::Multimodal { text, images } = &msg.content else {
+                    continue;
+                };
+
+                let original_text = text.clone();
+                let original_images = images.clone();
+
+                // Replace multimodal messages with text-only versions to avoid provider errors.
+                let next_text =
+                    Self::render_multimodal_as_text(&original_text, &original_images);
+
+                msg.content = MessageContent::Text(next_text);
+                msg.metadata.tokens = None;
+            }
+        }
 
         // Loop to execute model rounds
         loop {
@@ -776,6 +841,7 @@ impl ExecutionEngine {
                 agent_type: agent_type.clone(),
                 context_vars: round_context_vars,
                 cancellation_token: CancellationToken::new(),
+                workspace_services: context.workspace_services.clone(),
             };
 
             // Execute single model round
@@ -793,6 +859,7 @@ impl ExecutionEngine {
                     .as_ref()
                     .map(|workspace| workspace.root_path()),
                 &context.dialog_turn_id,
+                primary_supports_image_understanding,
             )
             .await?;
 
@@ -852,6 +919,8 @@ impl ExecutionEngine {
                 round_result.tool_result_messages.len()
             );
 
+            total_tools += round_result.tool_calls.len();
+
             // If no more rounds, dialog turn ends
             if !round_result.has_more_rounds {
                 debug!(
@@ -861,8 +930,21 @@ impl ExecutionEngine {
                 break;
             }
 
-            // Count tools
-            total_tools += round_result.tool_calls.len();
+            // Queued user message while this turn was running: stop after a full model round
+            // (AI response + tool execution for this round are already persisted).
+            // No special deferral for tool-confirmation phases: we do not require the user to
+            // finish confirming before this boundary check runs; the check applies as soon as
+            // this `execute_round` completes (same as any other round).
+            if let Some(preempt) = context.round_preempt.as_ref() {
+                if preempt.should_yield_after_round(&context.session_id) {
+                    preempt.clear_yield_after_round(&context.session_id);
+                    info!(
+                        "Yielding dialog turn after model round (queued user message): session_id={}, dialog_turn_id={}, round_index={}",
+                        context.session_id, context.dialog_turn_id, round_index
+                    );
+                    break;
+                }
+            }
 
             // Check if cancelled after each round
             let dialog_turn_cancelled =
@@ -1025,6 +1107,7 @@ impl ExecutionEngine {
             image_context_provider: None,
             subagent_parent_info: None,
             cancellation_token: None,
+            workspace_services: None,
         };
         for tool in &all_tools {
             if !tool.is_enabled().await {
@@ -1065,7 +1148,6 @@ impl ExecutionEngine {
                 "Skill",
                 "Log",
                 "MermaidInteractive",
-                "IdeControl",
             ];
             let num_tools = ordering.len();
             ordering
@@ -1131,21 +1213,6 @@ mod tests {
         assert_eq!(
             ExecutionEngine::resolve_configured_model_id(&ai_config, "fast"),
             "model-primary"
-        );
-    }
-
-    #[test]
-    fn invalid_locked_auto_model_is_ignored() {
-        let mut ai_config = AIConfig::default();
-        ai_config.models = vec![build_model("model-primary", "Primary", "claude-sonnet-4.5")];
-        ai_config.default_models.primary = Some("model-primary".to_string());
-
-        assert_eq!(
-            ExecutionEngine::resolve_locked_auto_model_id(
-                &ai_config,
-                Some(&"deleted-fast-model".to_string())
-            ),
-            None
         );
     }
 }

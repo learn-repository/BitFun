@@ -1,5 +1,6 @@
 use crate::agentic::tools::framework::{Tool, ToolResult, ToolUseContext};
 use crate::agentic::tools::registry::ToolRegistry;
+use crate::service::remote_ssh::workspace_state::is_remote_path;
 use crate::service::snapshot::service::SnapshotService;
 use crate::service::snapshot::types::{
     OperationType, SnapshotConfig, SnapshotError, SnapshotResult,
@@ -7,7 +8,7 @@ use crate::service::snapshot::types::{
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
@@ -17,9 +18,6 @@ use tokio::sync::RwLock;
 /// Manages all components of the snapshot system.
 pub struct SnapshotManager {
     snapshot_service: Arc<RwLock<SnapshotService>>,
-    original_tools: Vec<Arc<dyn Tool>>,
-    file_modification_tools: HashSet<String>,
-    initialized: bool,
 }
 
 impl SnapshotManager {
@@ -36,56 +34,7 @@ impl SnapshotManager {
         let mut snapshot_service = SnapshotService::new(workspace_dir, config);
         snapshot_service.initialize().await?;
         let snapshot_service = Arc::new(RwLock::new(snapshot_service));
-
-        let original_tools = ToolRegistry::new().get_all_tools();
-
-        let file_modification_tools = [
-            "Write",
-            "Edit",
-            "Delete",
-            "write_file",
-            "edit_file",
-            "create_file",
-            "delete_file",
-            "rename_file",
-            "move_file",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-        Ok(Self {
-            snapshot_service,
-            original_tools,
-            file_modification_tools,
-            initialized: true,
-        })
-    }
-
-    /// Returns whether the tool modifies files.
-    fn is_file_modification_tool(&self, tool_name: &str) -> bool {
-        self.file_modification_tools.contains(tool_name)
-    }
-
-    /// Returns wrapped tool list.
-    pub fn get_wrapped_tools(&self) -> Vec<Arc<dyn Tool>> {
-        if !self.initialized {
-            error!("Snapshot manager not initialized");
-            return vec![];
-        }
-
-        let mut wrapped_tools: Vec<Arc<dyn Tool>> = Vec::new();
-
-        for tool in &self.original_tools {
-            if self.is_file_modification_tool(tool.name()) {
-                let wrapped_tool: Arc<dyn Tool> = Arc::new(WrappedTool::new(tool.clone()));
-                wrapped_tools.push(wrapped_tool);
-            } else {
-                wrapped_tools.push(tool.clone());
-            }
-        }
-
-        wrapped_tools
+        Ok(Self { snapshot_service })
     }
 
     /// Records a file change.
@@ -340,18 +289,20 @@ fn snapshot_managers() -> &'static StdRwLock<HashMap<PathBuf, Arc<SnapshotManage
     SNAPSHOT_MANAGERS.get_or_init(|| StdRwLock::new(HashMap::new()))
 }
 
+/// Ensures the registry always exposes the same tool implementation that will be
+/// executed at runtime. File-modifying tools are wrapped once at registration time
+/// so tool definitions, permission checks, and execution all share one source of truth.
+pub fn wrap_tool_for_snapshot_tracking(tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
+    if WrappedTool::is_file_modification_tool_name(tool.name()) {
+        Arc::new(WrappedTool::new(tool))
+    } else {
+        tool
+    }
+}
+
+/// Compatibility helper that returns a fresh snapshot-aware tool list.
 pub fn get_snapshot_wrapped_tools() -> Vec<Arc<dyn Tool>> {
-    ToolRegistry::new()
-        .get_all_tools()
-        .into_iter()
-        .map(|tool| {
-            if WrappedTool::is_file_modification_tool_name(tool.name()) {
-                Arc::new(WrappedTool::new(tool)) as Arc<dyn Tool>
-            } else {
-                tool
-            }
-        })
-        .collect()
+    ToolRegistry::new().get_all_tools()
 }
 
 /// Wrapped tool
@@ -417,8 +368,8 @@ impl Tool for WrappedTool {
         self.original_tool.is_concurrency_safe(input)
     }
 
-    fn needs_permissions(&self, _input: Option<&Value>) -> bool {
-        false
+    fn needs_permissions(&self, input: Option<&Value>) -> bool {
+        self.original_tool.needs_permissions(input)
     }
 
     async fn validate_input(
@@ -514,6 +465,15 @@ impl WrappedTool {
             )
         })?;
 
+        // Remote workspaces: skip snapshot tracking, just execute the tool directly
+        if is_remote_path(snapshot_workspace.to_string_lossy().as_ref()).await {
+            debug!(
+                "Skipping snapshot for remote workspace: workspace={}",
+                snapshot_workspace.display()
+            );
+            return self.original_tool.call(input, context).await;
+        }
+
         let snapshot_manager = get_or_create_snapshot_manager(snapshot_workspace.clone(), None)
             .await
             .map_err(|e| crate::util::errors::BitFunError::Tool(e.to_string()))?;
@@ -526,7 +486,11 @@ impl WrappedTool {
 
         let is_create_tool = matches!(self.name(), "Write" | "write_file" | "create_file");
 
-        if !file_path.exists() && !is_create_tool {
+        // For local workspaces only: verify the file exists before attempting to snapshot
+        if !is_remote_path(file_path.to_string_lossy().as_ref()).await
+            && !file_path.exists()
+            && !is_create_tool
+        {
             error!(
                 "File not found: file_path={} raw_path={} snapshot_workspace={}",
                 file_path.display(),

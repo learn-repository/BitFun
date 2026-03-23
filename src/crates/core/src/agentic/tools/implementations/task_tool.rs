@@ -53,6 +53,7 @@ When NOT to use the Task tool:
 - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly
 - If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
 - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly
+- For subagent_type=Explore: do not use it for simple lookups above; reserve it for broad or multi-area exploration where many tool rounds would be needed
 - Other tasks that are not related to the agent descriptions above
 
 
@@ -269,11 +270,14 @@ impl Tool for TaskTool {
             .workspace_root()
             .map(|path| path.to_string_lossy().into_owned());
         if subagent_type == "Explore" || subagent_type == "FileFinder" {
-            let workspace_path = requested_workspace_path.as_deref().ok_or_else(|| {
-                BitFunError::tool(
-                    "workspace_path is required for Explore/FileFinder agent".to_string(),
-                )
-            })?;
+            let workspace_path = requested_workspace_path
+                .as_deref()
+                .or(current_workspace_path.as_deref())
+                .ok_or_else(|| {
+                    BitFunError::tool(
+                        "workspace_path is required for Explore/FileFinder agent".to_string(),
+                    )
+                })?;
 
             if workspace_path.is_empty() {
                 return Err(BitFunError::tool(
@@ -281,19 +285,22 @@ impl Tool for TaskTool {
                 ));
             }
 
-            // Validate workspace_path exists and is a directory
-            let path = std::path::Path::new(&workspace_path);
-            if !path.exists() {
-                return Err(BitFunError::tool(format!(
-                    "workspace_path '{}' does not exist",
-                    workspace_path
-                )));
-            }
-            if !path.is_dir() {
-                return Err(BitFunError::tool(format!(
-                    "workspace_path '{}' is not a directory",
-                    workspace_path
-                )));
+            // For remote workspaces, skip local filesystem validation — the path
+            // exists on the remote server, not locally.
+            if !context.is_remote() {
+                let path = std::path::Path::new(&workspace_path);
+                if !path.exists() {
+                    return Err(BitFunError::tool(format!(
+                        "workspace_path '{}' does not exist",
+                        workspace_path
+                    )));
+                }
+                if !path.is_dir() {
+                    return Err(BitFunError::tool(format!(
+                        "workspace_path '{}' is not a directory",
+                        workspace_path
+                    )));
+                }
             }
 
             prompt.push_str(&format!(

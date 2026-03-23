@@ -253,14 +253,9 @@ pub fn create_main_window(app_handle: &tauri::AppHandle) {
             .hidden_title(true);
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        builder = builder.decorations(false);
-    }
-
     #[cfg(target_os = "windows")]
     {
-        builder = builder.disable_drag_drop_handler();
+        builder = builder.decorations(false);
     }
 
     match builder.build() {

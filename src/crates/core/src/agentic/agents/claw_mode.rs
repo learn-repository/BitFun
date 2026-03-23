@@ -19,14 +19,14 @@ impl ClawMode {
                 "Grep".to_string(),
                 "Glob".to_string(),
                 "WebSearch".to_string(),
-                "IdeControl".to_string(),
                 "MermaidInteractive".to_string(),
-                "view_image".to_string(),
                 "Skill".to_string(),
                 "Git".to_string(),
                 "TerminalControl".to_string(),
                 "SessionControl".to_string(),
                 "SessionMessage".to_string(),
+                "SessionHistory".to_string(),
+                "Cron".to_string(),
             ],
         }
     }
@@ -50,7 +50,7 @@ impl Agent for ClawMode {
         "Personal assistant for daily tasks"
     }
 
-    fn prompt_template_name(&self) -> &str {
+    fn prompt_template_name(&self, _model_name: Option<&str>) -> &str {
         "claw_mode"
     }
 

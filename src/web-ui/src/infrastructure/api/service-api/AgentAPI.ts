@@ -2,7 +2,7 @@
 
 import { api } from './ApiClient';
 import { createTauriCommandError } from '../errors/TauriCommandError';
-import type { ImageContextData as ImageInputContextData } from './ImageAnalysisAPI';
+import type { ImageContextData as ImageInputContextData } from './ImageContextTypes';
 
 
 
@@ -126,7 +126,8 @@ export interface AgenticEvent {
 export interface TextChunkEvent extends AgenticEvent {
   roundId: string;
   text: string;
-  contentType?: 'text' | 'thinking'; 
+  contentType?: 'text' | 'thinking';
+  isThinkingEnd?: boolean;
   subagentParentInfo?: SubagentParentInfo;
 }
 
