@@ -32,6 +32,8 @@
     "inputModelName": "输入自定义模型名称...",
     "useCustomModel": "按 Enter 使用",
     "addCustomModel": "添加自定义模型",
+    "modelAlreadyInList": "该模型已在列表中",
+    "reusedExistingModel": "已使用当前服务商下已有同名模型配置（未新增重复项）",
     "noModelsSelected": "请先选择模型",
     "removeModel": "移除模型",
     "urlHint": "已预填官方 API 地址，如使用代理或私有部署可修改",
@@ -237,12 +239,17 @@
   "messages": {
     "fillRequired": "请填写必要字段",
     "fillModelName": "请填写模型名称",
+    "duplicateModelNameUnderProvider": "该服务商下已有同名模型，请改用其他名称或编辑已有条目",
     "saveFailed": "保存失败",
     "deleteFailed": "删除配置失败",
     "loadFailed": "加载AI配置失败",
     "testSuccess": "测试成功",
     "testFailed": "测试失败",
     "errorDetails": "详细错误",
+    "connectionTestMessages": {
+      "toolCallsNotDetected": "本次测试未检测到工具调用，因此暂时无法验证工具调用能力。",
+      "imageInputCheckFailed": "连接已成功，但图片输入测试未通过。"
+    },
     "autoSetPrimary": "已自动设为主力模型",
     "defaultDescription": "{{name}} 模型配置",
     "cloneName": "{{name}} - 副本",
@@ -251,6 +258,10 @@
   },
   "advancedSettings": {
     "title": "高级设置",
+    "inlineThinkInText": {
+      "label": "解析文本中的 <think> 标签",
+      "hint": "将 OpenAI 兼容文本流中的 <think>...</think> 实时拆分为思考内容，默认关闭"
+    },
     "skipSslVerify": {
       "label": "跳过SSL证书验证",
       "warning": "跳过SSL证书验证存在安全风险，请仅在测试环境或内网环境使用！"

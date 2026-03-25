@@ -17,7 +17,9 @@ use crate::agentic::image_analysis::ImageContextData;
 use crate::agentic::session::SessionManager;
 use crate::agentic::tools::pipeline::{SubagentParentInfo, ToolPipeline};
 use crate::agentic::WorkspaceBinding;
-use crate::service::bootstrap::is_workspace_bootstrap_pending;
+use crate::service::bootstrap::{
+    initialize_workspace_persona_files, is_workspace_bootstrap_pending,
+};
 use crate::util::errors::{BitFunError, BitFunResult};
 use log::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
@@ -120,7 +122,12 @@ impl ConversationCoordinator {
         let path_buf = PathBuf::from(workspace_path);
 
         // Check if this path belongs to any registered remote workspace
-        if let Some(entry) = crate::service::remote_ssh::workspace_state::lookup_remote_connection(workspace_path).await {
+        if let Some(entry) = crate::service::remote_ssh::workspace_state::lookup_remote_connection_with_hint(
+            workspace_path,
+            config.remote_connection_id.as_deref(),
+        )
+        .await
+        {
             if let Some(manager) = crate::service::remote_ssh::workspace_state::get_remote_workspace_manager() {
                 let local_session_path = manager.get_local_session_path(&entry.connection_id);
                 return Some(WorkspaceBinding::new_remote(
@@ -633,7 +640,11 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
         workspace_path: String,
     ) -> BitFunResult<AssistantBootstrapEnsureOutcome> {
         let workspace_root = PathBuf::from(&workspace_path);
-        if !is_workspace_bootstrap_pending(&workspace_root) {
+        // Empty or partial assistant dirs may never have run create_assistant_workspace; fill only
+        // missing persona stubs (never overwrite). Ensures BOOTSTRAP.md exists when appropriate.
+        initialize_workspace_persona_files(&workspace_root).await?;
+        let bootstrap_pending = is_workspace_bootstrap_pending(&workspace_root);
+        if !bootstrap_pending {
             return Ok(AssistantBootstrapEnsureOutcome::Skipped {
                 session_id,
                 reason: AssistantBootstrapSkipReason::BootstrapNotRequired,
@@ -649,7 +660,9 @@ Update the persona files and delete BOOTSTRAP.md as soon as bootstrap is complet
             }
         };
 
-        if self.session_manager.get_turn_count(&session_id) > 0 {
+        let turn_count = self.session_manager.get_turn_count(&session_id);
+
+        if turn_count > 0 {
             return Ok(AssistantBootstrapEnsureOutcome::Skipped {
                 session_id,
                 reason: AssistantBootstrapSkipReason::SessionHasExistingTurns,

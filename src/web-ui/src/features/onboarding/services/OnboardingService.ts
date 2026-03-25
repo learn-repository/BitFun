@@ -5,7 +5,7 @@
 
 import { useOnboardingStore, isModelConfigComplete, type OnboardingModelConfig } from '../store/onboardingStore';
 import type { LocaleId } from '@/infrastructure/i18n/types';
-import type { ThemeId } from '@/infrastructure/theme/types';
+import type { ThemeSelectionId } from '@/infrastructure/theme/types';
 import { configAPI } from '@/infrastructure/api';
 import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { modelConfigManager } from '@/infrastructure/config/services/modelConfigs';
@@ -159,7 +159,7 @@ class OnboardingServiceClass {
    */
   async applyConfiguration(config: {
     language?: LocaleId;
-    theme?: ThemeId;
+    theme?: ThemeSelectionId;
     modelConfig?: OnboardingModelConfig | null;
   }): Promise<void> {
     try {
@@ -206,6 +206,7 @@ class OnboardingServiceClass {
         max_tokens: 8192,
         category: 'general_chat',
         capabilities: ['text_chat', 'function_calling'],
+        inline_think_in_text: false,
         custom_request_body: modelConfig.customRequestBody || undefined,
         skip_ssl_verify: modelConfig.skipSslVerify || undefined,
         custom_headers: modelConfig.customHeaders || undefined,

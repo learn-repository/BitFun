@@ -1,5 +1,7 @@
 //! DTO Module
 
+use bitfun_core::service::remote_ssh::normalize_remote_workspace_path;
+use bitfun_core::service::workspace::manager::WorkspaceKind;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -42,6 +44,15 @@ pub struct WorkspaceIdentityDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceWorktreeInfoDto {
+    pub path: String,
+    pub branch: Option<String>,
+    pub main_repo_path: String,
+    pub is_main: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceInfoDto {
     pub id: String,
     pub name: String,
@@ -56,6 +67,8 @@ pub struct WorkspaceInfoDto {
     pub tags: Vec<String>,
     pub statistics: Option<ProjectStatisticsDto>,
     pub identity: Option<WorkspaceIdentityDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorkspaceWorktreeInfoDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,10 +90,16 @@ impl WorkspaceInfoDto {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        let root_path = if matches!(info.workspace_kind, WorkspaceKind::Remote) {
+            normalize_remote_workspace_path(&info.root_path.to_string_lossy())
+        } else {
+            info.root_path.to_string_lossy().to_string()
+        };
+
         Self {
             id: info.id.clone(),
             name: info.name.clone(),
-            root_path: info.root_path.to_string_lossy().to_string(),
+            root_path,
             workspace_type: WorkspaceTypeDto::from_workspace_type(&info.workspace_type),
             workspace_kind: WorkspaceKindDto::from_workspace_kind(&info.workspace_kind),
             assistant_id: info.assistant_id.clone(),
@@ -97,6 +116,10 @@ impl WorkspaceInfoDto {
                 .identity
                 .as_ref()
                 .map(WorkspaceIdentityDto::from_workspace_identity),
+            worktree: info
+                .worktree
+                .as_ref()
+                .map(WorkspaceWorktreeInfoDto::from_workspace_worktree_info),
             connection_id,
             connection_name,
         }
@@ -112,6 +135,19 @@ impl WorkspaceIdentityDto {
             creature: identity.creature.clone(),
             vibe: identity.vibe.clone(),
             emoji: identity.emoji.clone(),
+        }
+    }
+}
+
+impl WorkspaceWorktreeInfoDto {
+    pub fn from_workspace_worktree_info(
+        info: &bitfun_core::service::workspace::manager::WorkspaceWorktreeInfo,
+    ) -> Self {
+        Self {
+            path: info.path.clone(),
+            branch: info.branch.clone(),
+            main_repo_path: info.main_repo_path.clone(),
+            is_main: info.is_main,
         }
     }
 }

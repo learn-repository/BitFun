@@ -40,6 +40,8 @@ pub struct WorkspaceCreateOptions {
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    /// See [`crate::service::workspace::manager::WorkspaceOpenOptions::remote_connection_id`].
+    pub remote_connection_id: Option<String>,
 }
 
 impl Default for WorkspaceCreateOptions {
@@ -53,6 +55,7 @@ impl Default for WorkspaceCreateOptions {
             display_name: None,
             description: None,
             tags: Vec::new(),
+            remote_connection_id: None,
         }
     }
 }
@@ -242,6 +245,7 @@ impl WorkspaceService {
             })?;
         }
 
+        // New assistant dirs get persona files at creation; coordinator also fills missing files when opening.
         initialize_workspace_persona_files(&path).await?;
 
         self.create_workspace(path, options).await
@@ -537,6 +541,9 @@ impl WorkspaceService {
                 workspace_kind: existing_workspace.workspace_kind.clone(),
                 assistant_id: existing_workspace.assistant_id.clone(),
                 display_name: Some(existing_workspace.name.clone()),
+                remote_connection_id: existing_workspace
+                    .remote_ssh_connection_id()
+                    .map(str::to_string),
             },
         )
         .await?;
@@ -1002,6 +1009,7 @@ impl WorkspaceService {
             workspace_kind: options.workspace_kind.clone(),
             assistant_id: options.assistant_id.clone(),
             display_name: options.display_name.clone(),
+            remote_connection_id: options.remote_connection_id.clone(),
         }
     }
 

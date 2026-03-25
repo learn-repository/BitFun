@@ -124,6 +124,8 @@ pub async fn run() {
                 .level_for("globset", log::LevelFilter::Off)
                 .level_for("hyper_util", log::LevelFilter::Info)
                 .level_for("h2", log::LevelFilter::Info)
+                .level_for("portable_pty", log::LevelFilter::Info)
+                .level_for("russh", log::LevelFilter::Info)
                 .targets(log_targets)
                 .rotation_strategy(RotationStrategy::KeepSome(30))
                 .max_file_size(10 * 1024 * 1024)
@@ -293,6 +295,7 @@ pub async fn run() {
             theme::show_main_window,
             api::agentic_api::create_session,
             api::agentic_api::update_session_model,
+            api::agentic_api::ensure_coordinator_session,
             api::agentic_api::start_dialog_turn,
             api::agentic_api::ensure_assistant_bootstrap,
             api::agentic_api::cancel_dialog_turn,
@@ -338,6 +341,7 @@ pub async fn run() {
             reset_workspace_persona_files,
             check_path_exists,
             get_file_metadata,
+            get_file_editor_sync_hash,
             rename_file,
             export_local_file_to_path,
             reveal_in_explorer,

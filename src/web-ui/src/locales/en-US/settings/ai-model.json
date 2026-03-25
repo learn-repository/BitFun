@@ -32,6 +32,8 @@
     "inputModelName": "Enter model name...",
     "useCustomModel": "Press Enter to use",
     "addCustomModel": "Add Custom Model",
+    "modelAlreadyInList": "This model is already in the list",
+    "reusedExistingModel": "Using the existing model entry for this provider (no duplicate was added)",
     "noModelsSelected": "Select a model first",
     "removeModel": "Remove model",
     "urlHint": "Official API URL pre-filled, modify if using proxy or private deployment",
@@ -237,12 +239,17 @@
   "messages": {
     "fillRequired": "Please fill in required fields",
     "fillModelName": "Please fill in model name",
+    "duplicateModelNameUnderProvider": "This provider already has a model with this name. Use a different name or edit the existing entry.",
     "saveFailed": "Save failed",
     "deleteFailed": "Failed to delete configuration",
     "loadFailed": "Failed to load AI configuration",
     "testSuccess": "Test successful",
     "testFailed": "Test failed",
     "errorDetails": "Error details",
+    "connectionTestMessages": {
+      "toolCallsNotDetected": "This test did not detect any tool calls, so tool calling could not be verified this time.",
+      "imageInputCheckFailed": "The connection succeeded, but the image input check failed."
+    },
     "autoSetPrimary": "Automatically set as primary model",
     "defaultDescription": "{{name}} model configuration",
     "cloneName": "{{name}} - Copy",
@@ -251,6 +258,10 @@
   },
   "advancedSettings": {
     "title": "Advanced Settings",
+    "inlineThinkInText": {
+      "label": "Parse <think> Tags In Text",
+      "hint": "Split OpenAI-compatible text streams containing <think>...</think> into live reasoning content. Disabled by default."
+    },
     "skipSslVerify": {
       "label": "Skip SSL Certificate Verification",
       "warning": "Skipping SSL verification is a security risk, use only in test or internal network environments!"

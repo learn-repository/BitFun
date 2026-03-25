@@ -4,6 +4,7 @@ import { MarkdownRenderer, IconButton } from '@/component-library';
 import { CodeEditor, MarkdownEditor, ImageViewer, DiffEditor } from '@/tools/editor';
 import { useI18n } from '@/infrastructure/i18n';
 import { createLogger } from '@/shared/utils/logger';
+import { globalEventBus } from '@/infrastructure/event-bus';
 
 const log = createLogger('FlexiblePanel');
 
@@ -89,6 +90,8 @@ interface ExtendedFlexiblePanelProps extends FlexiblePanelProps {
   onDirtyStateChange?: (isDirty: boolean) => void;
   /** Whether this panel is the active/visible tab in its EditorGroup */
   isActive?: boolean;
+  /** File no longer exists on disk (from editor); drives tab "deleted" label */
+  onFileMissingFromDiskChange?: (missing: boolean) => void;
 }
 
 const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
@@ -100,6 +103,7 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
   onBeforeClose,
   onDirtyStateChange,
   isActive = true,
+  onFileMissingFromDiskChange,
 }) => {
   const { t } = useI18n('components');
 
@@ -111,7 +115,7 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
 
   // Sync dirty state from MonacoModelManager on component mount
   React.useEffect(() => {
-    if (content?.type !== 'code-editor' && content?.type !== 'markdown-editor') {
+    if (content?.type !== 'code-editor') {
       return;
     }
     
@@ -272,6 +276,8 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
                 readOnly={markdownEditorData.readOnly || false}
                 jumpToLine={markdownJumpToLine}
                 jumpToColumn={markdownJumpToColumn}
+                isActiveTab={isActive}
+                onFileMissingFromDiskChange={onFileMissingFromDiskChange}
                 onContentChange={(_newContent, hasChanges) => {
                   if (onDirtyStateChange) {
                     onDirtyStateChange(hasChanges);
@@ -406,6 +412,8 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
               showMinimap={true}
               theme="vs-dark"
               className={fileViewerClass}
+              isActiveTab={isActive}
+              onFileMissingFromDiskChange={onFileMissingFromDiskChange}
             />
           </div>
         );
@@ -441,6 +449,8 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
                 showMinimap={true}
                 theme="vs-dark"
                 onContentChange={codeData.onContentChange}
+                isActiveTab={isActive}
+                onFileMissingFromDiskChange={onFileMissingFromDiskChange}
               />
             </div>
           </div>
@@ -466,6 +476,8 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
             jumpToLine={editorData.jumpToLine}
             jumpToColumn={editorData.jumpToColumn}
             jumpToRange={editorData.jumpToRange}
+            isActiveTab={isActive}
+            onFileMissingFromDiskChange={onFileMissingFromDiskChange}
             onContentChange={(newContent, hasChanges) => {
                 if (onContentChange) {
                   onContentChange({
@@ -560,6 +572,8 @@ const FlexiblePanel: React.FC<ExtendedFlexiblePanelProps> = memo(({
 
                 const { workspaceAPI } = await import('@/infrastructure/api');
                 await workspaceAPI.writeFileContent(targetWorkspacePath, diffFilePath, content);
+
+                globalEventBus.emit('file-tree:refresh');
 
                 if (onDirtyStateChange) {
                   onDirtyStateChange(false);

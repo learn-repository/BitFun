@@ -16,6 +16,7 @@ import { ConfigPageHeader, ConfigPageLayout, ConfigPageContent, ConfigPageSectio
 import DefaultModelConfig from './DefaultModelConfig';
 import TokenStatsModal from './TokenStatsModal';
 import { createLogger } from '@/shared/utils/logger';
+import { translateConnectionTestMessage } from '@/shared/utils/aiConnectionTestMessages';
 import './AIModelConfig.scss';
 
 const log = createLogger('AIModelConfig');
@@ -65,6 +66,74 @@ function createModelDraft(
 
 function uniqModelNames(modelNames: string[]): string[] {
   return Array.from(new Set(modelNames.map(name => name.trim()).filter(Boolean)));
+}
+
+function modelNameLookupKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** Map lowercased model_name -> config (first wins if duplicates exist in storage). */
+function buildConfiguredModelsByLowerName(models: AIModelConfigType[]): Map<string, AIModelConfigType> {
+  const map = new Map<string, AIModelConfigType>();
+  for (const model of models) {
+    const key = modelNameLookupKey(model.model_name);
+    if (!map.has(key)) {
+      map.set(key, model);
+    }
+  }
+  return map;
+}
+
+function resolveModelNameWithExisting(
+  rawName: string,
+  configuredByLower: Map<string, AIModelConfigType>
+): string {
+  const trimmed = rawName.trim();
+  if (!trimmed) return trimmed;
+  const configured = configuredByLower.get(modelNameLookupKey(trimmed));
+  return configured?.model_name.trim() ?? trimmed;
+}
+
+/**
+ * Trim, optionally collapse to single selection, resolve each name against existing provider models
+ * (case-insensitive), then dedupe so one provider cannot list the same logical model twice.
+ */
+function normalizeProviderModelNameList(
+  modelNames: string[],
+  configuredByLower: Map<string, AIModelConfigType>,
+  singleSelection: boolean
+): string[] {
+  let list = uniqModelNames(modelNames);
+  if (singleSelection) {
+    list = list.slice(0, 1);
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of list) {
+    const resolved = resolveModelNameWithExisting(raw, configuredByLower);
+    if (!resolved) continue;
+    const key = modelNameLookupKey(resolved);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(resolved);
+  }
+  return out;
+}
+
+/** Last line of defense: same logical model name once per save; prefer draft tied to an existing config id. */
+function dedupeSelectedModelDraftsByModelName(drafts: SelectedModelDraft[]): SelectedModelDraft[] {
+  const out: SelectedModelDraft[] = [];
+  for (const draft of drafts) {
+    const k = modelNameLookupKey(draft.modelName);
+    const i = out.findIndex(d => modelNameLookupKey(d.modelName) === k);
+    if (i < 0) {
+      out.push(draft);
+      continue;
+    }
+    const prev = out[i];
+    out[i] = !prev.configId && draft.configId ? draft : prev;
+  }
+  return out;
 }
 
 function getCapabilitiesByCategory(category: ModelCategory): ModelCapability[] {
@@ -293,30 +362,44 @@ const AIModelConfig: React.FC = () => {
     baseConfig?: Partial<AIModelConfigType>,
     singleSelection = false
   ) => {
-    const nextModelNames = singleSelection
-      ? uniqModelNames(modelNames).slice(0, 1)
-      : uniqModelNames(modelNames);
-
     const providerName = (
       baseConfig?.name ||
       editingConfig?.name ||
       currentTemplate?.name ||
       ''
     ).trim();
-    const configuredModelsByName = new Map(
-      getConfiguredModelsForProvider(providerName).map(model => [model.model_name, model])
+    const configuredByLower = buildConfiguredModelsByLowerName(
+      getConfiguredModelsForProvider(providerName)
     );
+    const nextModelNames = normalizeProviderModelNameList(
+      modelNames,
+      configuredByLower,
+      singleSelection
+    );
+
+    const pinnedRowId =
+      singleSelection && baseConfig?.id ? String(baseConfig.id) : undefined;
 
     setSelectedModelDrafts(prevDrafts =>
       nextModelNames.map(modelName => {
-        const existingDraft = prevDrafts.find(draft => draft.modelName === modelName);
+        const lookupKey = modelNameLookupKey(modelName);
+        const existingDraft = prevDrafts.find(
+          draft => modelNameLookupKey(draft.modelName) === lookupKey
+        );
+        const configuredModel = configuredByLower.get(lookupKey);
+
         if (existingDraft) {
-          return existingDraft;
+          const configId = pinnedRowId ?? configuredModel?.id ?? existingDraft.configId;
+          return {
+            ...existingDraft,
+            modelName,
+            configId,
+            key: configId ?? modelName,
+          };
         }
 
-        const configuredModel = configuredModelsByName.get(modelName);
         return createModelDraft(modelName, configuredModel || baseConfig, {
-          configId: configuredModel?.id,
+          configId: pinnedRowId ?? configuredModel?.id,
         });
       })
     );
@@ -360,15 +443,38 @@ const AIModelConfig: React.FC = () => {
     const trimmedModelName = manualModelInput.trim();
     if (!trimmedModelName) return;
 
+    const providerName = (
+      editingConfig?.name ||
+      currentTemplate?.name ||
+      ''
+    ).trim();
+    const configuredByLower = buildConfiguredModelsByLowerName(
+      getConfiguredModelsForProvider(providerName)
+    );
+    const resolvedName = resolveModelNameWithExisting(trimmedModelName, configuredByLower);
+    const matchesExistingSaved = configuredByLower.has(modelNameLookupKey(trimmedModelName));
+    const alreadyInDrafts = selectedModelDrafts.some(
+      draft => modelNameLookupKey(draft.modelName) === modelNameLookupKey(trimmedModelName)
+    );
+
+    if (alreadyInDrafts) {
+      notification.info(t('providerSelection.modelAlreadyInList'));
+      setManualModelInput('');
+      return;
+    }
+
     const nextModelNames = editingConfig?.id
-      ? [trimmedModelName]
+      ? [resolvedName]
       : uniqModelNames([
           ...selectedModelDrafts.map(draft => draft.modelName),
-          trimmedModelName,
+          resolvedName,
         ]);
 
     syncSelectedModelDrafts(nextModelNames, editingConfig || undefined, !!editingConfig?.id);
     setManualModelInput('');
+    if (matchesExistingSaved) {
+      notification.info(t('providerSelection.reusedExistingModel'));
+    }
   };
 
   const buildModelDiscoveryConfig = (config: Partial<AIModelConfigType>): AIModelConfigType | null => {
@@ -406,6 +512,7 @@ const AIModelConfig: React.FC = () => {
       metadata: config.metadata || {},
       enable_thinking_process: config.enable_thinking_process ?? false,
       support_preserved_thinking: config.support_preserved_thinking ?? false,
+      inline_think_in_text: config.inline_think_in_text ?? false,
       reasoning_effort: config.reasoning_effort,
       custom_headers: config.custom_headers,
       custom_headers_mode: config.custom_headers_mode,
@@ -419,6 +526,7 @@ const AIModelConfig: React.FC = () => {
     base_url: config.base_url,
     api_key: config.api_key,
     model_name: config.model_name,
+    inline_think_in_text: config.inline_think_in_text ?? false,
     skip_ssl_verify: config.skip_ssl_verify ?? false,
     custom_headers_mode: config.custom_headers_mode || null,
     custom_headers: config.custom_headers || null,
@@ -526,7 +634,8 @@ const AIModelConfig: React.FC = () => {
       category: 'general_chat',
       capabilities: ['text_chat', 'function_calling'],
       recommended_for: [],
-      metadata: {}
+      metadata: {},
+      inline_think_in_text: false,
     });
     setSelectedModelDrafts(
       configuredProviderModels.length > 0
@@ -562,7 +671,8 @@ const AIModelConfig: React.FC = () => {
       category: 'general_chat',
       capabilities: ['text_chat'],
       recommended_for: [],
-      metadata: {}
+      metadata: {},
+      inline_think_in_text: false,
     });
     setSelectedModelDrafts([]);
     setShowAdvancedSettings(false);  
@@ -596,6 +706,7 @@ const AIModelConfig: React.FC = () => {
       metadata: config.metadata || {},
       enable_thinking_process: config.enable_thinking_process ?? false,
       support_preserved_thinking: config.support_preserved_thinking ?? false,
+      inline_think_in_text: config.inline_think_in_text ?? false,
       reasoning_effort: config.reasoning_effort,
       custom_headers: config.custom_headers,
       custom_headers_mode: config.custom_headers_mode,
@@ -604,6 +715,7 @@ const AIModelConfig: React.FC = () => {
     });
     setSelectedModelDrafts(createDraftsFromConfigs(configuredProviderModels));
     setShowAdvancedSettings(
+      !!config.inline_think_in_text ||
       !!config.skip_ssl_verify ||
       (!!config.custom_request_body && config.custom_request_body.trim() !== '') ||
       (!!config.custom_headers && Object.keys(config.custom_headers).length > 0)
@@ -627,7 +739,12 @@ const AIModelConfig: React.FC = () => {
     
     const hasCustomHeaders = !!config.custom_headers && Object.keys(config.custom_headers).length > 0;
     const hasCustomBody = !!config.custom_request_body && config.custom_request_body.trim() !== '';
-    setShowAdvancedSettings(hasCustomHeaders || hasCustomBody || !!config.skip_ssl_verify);
+    setShowAdvancedSettings(
+      hasCustomHeaders ||
+      hasCustomBody ||
+      !!config.skip_ssl_verify ||
+      !!config.inline_think_in_text
+    );
     setIsEditing(true);
   };
 
@@ -656,7 +773,8 @@ const AIModelConfig: React.FC = () => {
           .map(model => model.id)
           .filter((id): id is string => !!id)
       );
-      const configsToSave: AIModelConfigType[] = selectedModelDrafts.map((draft, index) => {
+      const draftsToSave = dedupeSelectedModelDraftsByModelName(selectedModelDrafts);
+      const configsToSave: AIModelConfigType[] = draftsToSave.map((draft, index) => {
         return {
           id: editingConfig.id || draft.configId || `model_${Date.now()}_${index}`,
           name: providerName,
@@ -679,6 +797,7 @@ const AIModelConfig: React.FC = () => {
           metadata: editingConfig.metadata,
           enable_thinking_process: draft.enableThinking,
           support_preserved_thinking: editingConfig.support_preserved_thinking ?? false,
+          inline_think_in_text: editingConfig.inline_think_in_text ?? false,
           reasoning_effort: editingConfig.reasoning_effort,
           custom_headers: editingConfig.custom_headers,
           custom_headers_mode: editingConfig.custom_headers_mode,
@@ -686,6 +805,20 @@ const AIModelConfig: React.FC = () => {
           custom_request_body: editingConfig.custom_request_body
         };
       });
+
+      if (editingConfig.id && configsToSave[0]) {
+        const dupKey = modelNameLookupKey(configsToSave[0].model_name);
+        const nameConflict = aiModels.some(
+          m =>
+            m.id !== editingConfig.id &&
+            getProviderDisplayName(m) === providerName &&
+            modelNameLookupKey(m.model_name) === dupKey
+        );
+        if (nameConflict) {
+          notification.warning(t('messages.duplicateModelNameUnderProvider'));
+          return;
+        }
+      }
 
       let updatedModels: AIModelConfigType[];
       if (editingConfig.id) {
@@ -752,9 +885,16 @@ const AIModelConfig: React.FC = () => {
             const result = await aiApi.testAIConfigConnection(config);
             const baseMessage = result.success ? t('messages.testSuccess') : t('messages.testFailed');
             let message = baseMessage + (result.response_time_ms ? ` (${result.response_time_ms}ms)` : '');
+            const localizedMessage = translateConnectionTestMessage(result.message_code, t);
 
-            if (!result.success && result.error_details) {
-              message += `\n${t('messages.errorDetails')}: ${result.error_details}`;
+            if (localizedMessage) {
+              message += `\n${localizedMessage}`;
+            }
+
+            if (result.error_details) {
+              message += result.success
+                ? `\n${result.error_details}`
+                : `\n${t('messages.errorDetails')}: ${result.error_details}`;
             }
 
             setTestResults(prev => ({
@@ -818,8 +958,13 @@ const AIModelConfig: React.FC = () => {
       
       const baseMessage = result.success ? t('messages.testSuccess') : t('messages.testFailed');
       let message = baseMessage + (result.response_time_ms ? ` (${result.response_time_ms}ms)` : '');
+      const localizedMessage = translateConnectionTestMessage(result.message_code, t);
       
-      if (!result.success && result.error_details) {
+      if (localizedMessage) {
+        message += `\n${localizedMessage}`;
+      }
+
+      if (result.error_details) {
         message += `\n${t('messages.errorDetails')}: ${result.error_details}`;
       }
       
@@ -1365,6 +1510,7 @@ const AIModelConfig: React.FC = () => {
                           ...prev,
                           provider,
                           request_url: resolveRequestUrl(prev?.base_url || '', provider, prev?.model_name || ''),
+                          inline_think_in_text: provider === 'openai' ? (prev?.inline_think_in_text ?? false) : false,
                           reasoning_effort: isResponsesProvider(provider) ? (prev?.reasoning_effort || 'medium') : undefined,
                         }));
                       }} placeholder={t('form.providerPlaceholder')} options={requestFormatOptions} size="small" />
@@ -1445,9 +1591,13 @@ const AIModelConfig: React.FC = () => {
 
             {showAdvancedSettings && (
               <>
-                {editingConfig.enable_thinking_process && (
-                  <ConfigPageRow label={t('thinking.preserve')} description={t('thinking.preserveHint')} align="center">
-                    <Switch checked={editingConfig.support_preserved_thinking ?? false} onChange={(e) => setEditingConfig(prev => ({ ...prev, support_preserved_thinking: e.target.checked }))} size="small" />
+                {editingConfig.provider === 'openai' && (
+                  <ConfigPageRow label={t('advancedSettings.inlineThinkInText.label')} description={t('advancedSettings.inlineThinkInText.hint')} align="center">
+                    <Switch
+                      checked={editingConfig.inline_think_in_text ?? false}
+                      onChange={(e) => setEditingConfig(prev => ({ ...prev, inline_think_in_text: e.target.checked }))}
+                      size="small"
+                    />
                   </ConfigPageRow>
                 )}
                 <ConfigPageRow label={t('advancedSettings.skipSslVerify.label')} align="center">
@@ -1678,7 +1828,7 @@ const AIModelConfig: React.FC = () => {
           description={t('subtitle')}
           extra={(
             <IconButton
-              variant="primary"
+              variant="ghost"
               size="small"
               onClick={handleCreateNew}
               tooltip={t('actions.addProvider')}

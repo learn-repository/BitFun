@@ -184,6 +184,7 @@
     "addModeTooltip": "Add Plan or Debug",
     "boostSectionAgent": "Agent",
     "boostSectionContext": "Context",
+    "boostAddContext": "Reference file or folder",
     "boostSkills": "Skills",
     "boostSkillsLoading": "Loading skills…",
     "boostSkillsEmpty": "No enabled skills",
@@ -338,6 +339,7 @@
     "generateFailed": "Failed to generate image",
     "fileNamePrefix": "BitFun-Chat",
     "exportSuccess": "Image exported: {{filePath}}",
+    "exportSuccessPrefix": "Image exported: ",
     "exportFailed": "Export failed, please try again",
     "exporting": "Exporting...",
     "exportToImage": "Export as Image"

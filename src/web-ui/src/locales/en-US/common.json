@@ -88,7 +88,7 @@
     },
     "tooltips": {
       "persona": "Nursery — create and manage all assistant instances",
-      "agents": "Which Agents and Agent Teams it can call",
+      "agents": "Which agents it can call",
       "skills": "What it knows — specialized knowledge files",
       "tools": "What it can use — built-in tools & MCP services"
     },
@@ -116,33 +116,30 @@
     "shell": {
       "title": "Shell",
       "views": {
-        "all": "All",
-        "hub": "Hub"
+        "manual": "Mine",
+        "agent": "Agent"
       },
       "actions": {
         "newTerminal": "New Terminal",
-        "newHubTerminal": "New Hub Terminal",
-        "addWorktree": "Add Worktree",
         "refresh": "Refresh"
       },
       "context": {
         "start": "Start",
         "stop": "Stop",
-        "edit": "Edit",
         "editConfig": "Edit Config",
+        "saveConfig": "Save Config",
+        "deleteSavedTerminal": "Delete Saved Terminal",
         "delete": "Delete",
-        "close": "Close",
-        "rename": "Rename",
-        "promoteToHub": "Save to Hub",
-        "newWorktreeTerminal": "New Terminal",
-        "removeWorktree": "Remove Worktree"
+        "close": "Close"
       },
       "badges": {
-        "startupCommand": "cmd"
+        "startupCommand": "cmd",
+        "saved": "saved",
+        "default": "Default"
       },
       "empty": {
-        "all": "Create a terminal from the menu to get started",
-        "hub": "No Hub terminals yet"
+        "manual": "No user terminals yet",
+        "agent": "No agent terminals yet"
       }
     },
     "sessions": {
@@ -268,7 +265,11 @@
       "copyPathFailed": "Failed to copy path",
       "createSessionFailed": "Failed to create session",
       "worktreeCreated": "Worktree created",
+      "worktreeCreatedAndOpened": "Worktree created and opened",
       "worktreeCreateFailed": "Failed to create worktree: {{error}}",
+      "worktreeCreateOrOpenFailed": "Worktree was created, but opening it as a workspace failed: {{error}}",
+      "worktreeDeleted": "Worktree deleted",
+      "deleteWorktreeFailed": "Failed to delete worktree",
       "expandSessions": "Expand sessions",
       "collapseSessions": "Collapse sessions",
       "groups": {
@@ -284,6 +285,7 @@
         "deleteAssistant": "Delete personal assistant",
         "resetWorkspace": "Reset workspace",
         "newWorktree": "New worktree",
+        "deleteWorktree": "Delete worktree",
         "copyPath": "Copy path",
         "reveal": "Reveal in explorer",
         "close": "Close workspace"
@@ -297,13 +299,17 @@
         "title": "Reset {{name}}?",
         "message": "This will clear everything inside the workspace directory and restore the default persona files without deleting the workspace directory itself.",
         "pathLabel": "Workspace path"
+      },
+      "deleteWorktreeDialog": {
+        "title": "Delete {{name}}?",
+        "message": "This will close the workspace and remove the worktree directory.",
+        "pathLabel": "Worktree path"
       }
     },
     "agents": {
       "allAgents": "All Agents",
       "newAgent": "New Agent",
-      "agentsOverview": "Agents",
-      "expertTeams": "Expert Teams"
+      "agentsOverview": "Agents"
     },
     "skills": {
       "allSkills": "All Skills",
@@ -778,7 +784,7 @@
     "quickStart": "Start",
     "heroBadge": "BitFun Workspace",
     "heroTitle": "A real workspace, not just a chat box",
-    "heroDescription": "An AI assistant with personality, memory, and real execution power. Sessions, agent teams, and mini apps all work around the same workflow, so AI is doing work, not just replying.",
+    "heroDescription": "An AI assistant with personality, memory, and real execution power. Sessions and mini apps all work around the same workflow, so AI is doing work, not just replying.",
     "newCodeSession": "New Code Session",
     "newCodeSessionDesc": "Start coding, debug issues, or open a project and jump straight into building",
     "newCoworkSession": "New Cowork Session",
@@ -837,6 +843,7 @@
     "generating": "Generating insights...",
     "generateNew": "Generate New Report",
     "generateBtn": "Generate",
+    "rangeLabel": "Range",
     "history": "Report History",
     "noReports": "No reports yet. Generate your first insights report above.",
     "backToList": "Back to list",
@@ -908,6 +915,8 @@
       "privateKey": "Private Key",
       "sshAgent": "SSH Agent",
       "privateKeyPath": "Private Key Path",
+      "browsePrivateKey": "Choose private key file",
+      "pickPrivateKeyDialogTitle": "Select SSH private key",
       "passphrase": "Passphrase",
       "passphraseOptional": "Leave empty if none",
       "selectWorkspace": "Select Workspace Directory",
@@ -926,6 +935,8 @@
       "enterPassword": "Enter Password",
       "enterKeyPath": "Enter Private Key Path",
       "keyPathDescription": "Enter the private key file path",
+      "authPromptTitle": "SSH authentication",
+      "authPromptAgentHint": "Uses keys already loaded in your SSH agent.",
       "disconnectConfirm": "Are you sure you want to disconnect?",
       "disconnectWorkspaceConfirm": "Are you sure you want to close the remote workspace? This will disconnect from the remote server.",
       "newFile": "New File",

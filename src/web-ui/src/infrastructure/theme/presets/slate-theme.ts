@@ -14,14 +14,14 @@ export const bitfunSlateTheme: ThemeConfig = {
   
   colors: {
     background: {
-      primary: '#1a1c1e',       
-      secondary: '#1a1c1e',     
-      tertiary: '#1a1c1e',      
-      quaternary: '#32363a',    
-      elevated: '#1a1c1e',      
-      workbench: '#1a1c1e',     
-      scene: '#1d2023',
-      tooltip: 'rgba(42, 45, 48, 0.96)',
+      primary: '#14161a',
+      secondary: '#22262c',
+      tertiary: '#14161a',
+      quaternary: '#2c3038',
+      elevated: '#22262c',
+      workbench: '#14161a',
+      scene: '#22262c',
+      tooltip: 'rgba(34, 38, 44, 0.96)',
     },
     
     text: {
@@ -88,12 +88,12 @@ export const bitfunSlateTheme: ThemeConfig = {
     },
     
     element: {
-      subtle: 'rgba(255, 255, 255, 0.06)',    
-      soft: 'rgba(255, 255, 255, 0.10)',      
-      base: 'rgba(255, 255, 255, 0.13)',      
-      medium: 'rgba(255, 255, 255, 0.17)',    
-      strong: 'rgba(255, 255, 255, 0.21)',    
-      elevated: 'rgba(255, 255, 255, 0.25)',  
+      subtle: 'rgba(255, 255, 255, 0.05)',
+      soft: 'rgba(255, 255, 255, 0.07)',
+      base: 'rgba(255, 255, 255, 0.095)',
+      medium: 'rgba(255, 255, 255, 0.125)',
+      strong: 'rgba(255, 255, 255, 0.155)',
+      elevated: 'rgba(255, 255, 255, 0.19)',
     },
     
     git: {

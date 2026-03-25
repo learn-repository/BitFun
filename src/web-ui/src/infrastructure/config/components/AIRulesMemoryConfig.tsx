@@ -230,10 +230,10 @@ function RulesPanel() {
           <ConfigPageRow label={t('list.loading')} align="center"><span /></ConfigPageRow>
         )}
         {!currentRules.isLoading && rules.length === 0 && (
-          <div className="bitfun-ai-rules-config__empty-row">
-            <p>{t('list.empty.description')}</p>
-            <Button variant="secondary" size="small" onClick={() => handleAdd(level)}>
-              <Plus size={14} /> {t('form.actions.add')}
+          <div className="bitfun-collection-empty">
+            <p>{t('list.empty.title')}</p>
+            <Button variant="dashed" size="small" onClick={() => handleAdd(level)}>
+              <Plus size={14} /> {t('toolbar.addTooltip')}
             </Button>
           </div>
         )}
@@ -299,7 +299,7 @@ function RulesPanel() {
   const levelForScope: Record<ScopeTab, RuleLevel> = { user: RuleLevel.User, project: RuleLevel.Project };
   const currentLevel = levelForScope[scopeTab];
   const addButton = (
-    <IconButton variant="primary" size="small" onClick={() => handleAdd(currentLevel)} tooltip={t('toolbar.addTooltip')}>
+    <IconButton variant="ghost" size="small" onClick={() => handleAdd(currentLevel)} tooltip={t('toolbar.addTooltip')}>
       <Plus size={16} />
     </IconButton>
   );
@@ -462,7 +462,7 @@ function MemoryPanel() {
   );
 
   const addButtonUser = (
-    <IconButton variant="primary" size="small" onClick={handleAdd} tooltip={t('toolbar.addTooltip')}>
+    <IconButton variant="ghost" size="small" onClick={handleAdd} tooltip={t('toolbar.addTooltip')}>
       <Plus size={16} />
     </IconButton>
   );

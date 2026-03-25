@@ -14,14 +14,14 @@ export const bitfunDarkTheme: ThemeConfig = {
   
   colors: {
     background: {
-      primary: '#121214',
-      secondary: '#18181a',
-      tertiary: '#121214',
-      quaternary: '#202024',
-      elevated: '#18181a',
-      workbench: '#121214',
-      scene: '#16161a',
-      tooltip: 'rgba(30, 30, 32, 0.92)',  
+      primary: '#0e0e10',
+      secondary: '#1c1c1f',
+      tertiary: '#0e0e10',
+      quaternary: '#252528',
+      elevated: '#1c1c1f',
+      workbench: '#0e0e10',
+      scene: '#1c1c1f',
+      tooltip: 'rgba(28, 28, 31, 0.96)',
     },
     
     text: {
@@ -86,12 +86,12 @@ export const bitfunDarkTheme: ThemeConfig = {
     },
     
     element: {
-      subtle: 'rgba(255, 255, 255, 0.06)',
-      soft: 'rgba(255, 255, 255, 0.10)',
-      base: 'rgba(255, 255, 255, 0.13)',
-      medium: 'rgba(255, 255, 255, 0.17)',
-      strong: 'rgba(255, 255, 255, 0.21)',
-      elevated: 'rgba(255, 255, 255, 0.25)',
+      subtle: 'rgba(255, 255, 255, 0.05)',
+      soft: 'rgba(255, 255, 255, 0.07)',
+      base: 'rgba(255, 255, 255, 0.095)',
+      medium: 'rgba(255, 255, 255, 0.125)',
+      strong: 'rgba(255, 255, 255, 0.155)',
+      elevated: 'rgba(255, 255, 255, 0.19)',
     },
     
     git: {

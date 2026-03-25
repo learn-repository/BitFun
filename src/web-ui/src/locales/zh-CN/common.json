@@ -88,7 +88,7 @@
     },
     "tooltips": {
       "persona": "助理 — 创建与管理所有助理实例",
-      "agents": "它能调用哪些 Agent 与 Agent Team",
+      "agents": "它能调用哪些 Agent",
       "skills": "它懂什么专项知识 — 技能知识文件",
       "tools": "它能用什么工具 — 内置工具与 MCP 服务"
     },
@@ -116,33 +116,30 @@
     "shell": {
       "title": "Shell",
       "views": {
-        "all": "全部",
-        "hub": "Hub"
+        "manual": "我的",
+        "agent": "Agent"
       },
       "actions": {
         "newTerminal": "新建终端",
-        "newHubTerminal": "新建 Hub 终端",
-        "addWorktree": "添加 Worktree",
         "refresh": "刷新"
       },
       "context": {
         "start": "启动",
         "stop": "停止",
-        "edit": "编辑",
         "editConfig": "编辑配置",
+        "saveConfig": "保存配置",
+        "deleteSavedTerminal": "删除已保存终端",
         "delete": "删除",
-        "close": "关闭",
-        "rename": "重命名",
-        "promoteToHub": "保存到 Hub",
-        "newWorktreeTerminal": "新建终端",
-        "removeWorktree": "移除 Worktree"
+        "close": "关闭"
       },
       "badges": {
-        "startupCommand": "cmd"
+        "startupCommand": "cmd",
+        "saved": "已保存",
+        "default": "默认"
       },
       "empty": {
-        "all": "从菜单里创建一个终端开始使用",
-        "hub": "还没有 Hub 终端"
+        "manual": "还没有用户终端",
+        "agent": "还没有 Agent 终端"
       }
     },
     "sessions": {
@@ -268,7 +265,11 @@
       "copyPathFailed": "复制路径失败",
       "createSessionFailed": "新建会话失败",
       "worktreeCreated": "已创建 worktree",
+      "worktreeCreatedAndOpened": "已创建并打开 worktree",
       "worktreeCreateFailed": "创建 worktree 失败：{{error}}",
+      "worktreeCreateOrOpenFailed": "worktree 已创建，但作为工作区打开失败：{{error}}",
+      "worktreeDeleted": "已删除 worktree",
+      "deleteWorktreeFailed": "删除 worktree 失败",
       "expandSessions": "展开会话列表",
       "collapseSessions": "收起会话列表",
       "groups": {
@@ -284,6 +285,7 @@
         "deleteAssistant": "删除个人助理",
         "resetWorkspace": "重置工作区",
         "newWorktree": "新建 worktree",
+        "deleteWorktree": "删除 worktree",
         "copyPath": "复制路径",
         "reveal": "在资源管理器中打开",
         "close": "关闭工作区"
@@ -297,13 +299,17 @@
         "title": "重置 {{name}}？",
         "message": "此操作会清空该工作区目录下的所有内容，并恢复默认 persona 文件；不会删除工作区目录本身。",
         "pathLabel": "工作区路径"
+      },
+      "deleteWorktreeDialog": {
+        "title": "删除 {{name}}？",
+        "message": "此操作会关闭该工作区，并删除对应的 worktree 目录。",
+        "pathLabel": "Worktree 路径"
       }
     },
     "agents": {
       "allAgents": "全部子智能体",
       "newAgent": "新建子智能体",
-      "agentsOverview": "Agent 总览",
-      "expertTeams": "专家团队"
+      "agentsOverview": "Agent 总览"
     },
     "skills": {
       "allSkills": "全部技能",
@@ -778,7 +784,7 @@
     "quickStart": "开始",
     "heroBadge": "BitFun Workspace",
     "heroTitle": "真实工作台，而不只是一个聊天框",
-    "heroDescription": "有个性，有记忆，帮你做事的 AI 助理。会话流、Agent 团队与小应用围绕同一个工作流协同展开，AI 在做事，不只是回答。",
+    "heroDescription": "有个性，有记忆，帮你做事的 AI 助理。会话流与小应用围绕同一个工作流协同展开，AI 在做事，不只是回答。",
     "newCodeSession": "新建 Code 会话",
     "newCodeSessionDesc": "开始代码任务、调试问题，或打开一个项目进入开发状态",
     "newCoworkSession": "新建 Cowork 会话",
@@ -837,6 +843,7 @@
     "generating": "正在生成洞察...",
     "generateNew": "生成新报告",
     "generateBtn": "生成",
+    "rangeLabel": "统计范围",
     "history": "历史报告",
     "noReports": "暂无报告，点击上方按钮生成第一份洞察报告。",
     "backToList": "返回列表",
@@ -908,6 +915,8 @@
       "privateKey": "私钥",
       "sshAgent": "SSH Agent",
       "privateKeyPath": "私钥路径",
+      "browsePrivateKey": "选择私钥文件",
+      "pickPrivateKeyDialogTitle": "选择 SSH 私钥",
       "passphrase": "密码短语",
       "passphraseOptional": "留空表示无密码短语",
       "selectWorkspace": "选择工作区目录",
@@ -926,6 +935,8 @@
       "enterPassword": "请输入密码",
       "enterKeyPath": "请输入私钥路径",
       "keyPathDescription": "输入私钥文件路径",
+      "authPromptTitle": "SSH 认证",
+      "authPromptAgentHint": "将使用本机 SSH Agent 中已加载的密钥进行认证。",
       "disconnectConfirm": "确定要断开连接吗？",
       "disconnectWorkspaceConfirm": "确定要关闭远程工作区吗？这将断开与远程服务器的连接。",
       "newFile": "新建文件",
