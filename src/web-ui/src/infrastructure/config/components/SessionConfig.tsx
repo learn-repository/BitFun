@@ -32,7 +32,16 @@ import './DebugConfig.scss';
 
 const log = createLogger('SessionConfig');
 
+const IS_TAURI_DESKTOP = typeof window !== 'undefined' && '__TAURI__' in window;
+
 const AGENT_SESSION_TITLE = 'session-title-func-agent';
+
+type ComputerUseStatusPayload = {
+  computerUseEnabled: boolean;
+  accessibilityGranted: boolean;
+  screenCaptureGranted: boolean;
+  platformNote: string | null;
+};
 
 const SessionConfig: React.FC = () => {
   const { t } = useTranslation('settings/session-config');
@@ -50,6 +59,12 @@ const SessionConfig: React.FC = () => {
   const [confirmationTimeout, setConfirmationTimeout] = useState('');
   const [toolExecConfigLoading, setToolExecConfigLoading] = useState(false);
 
+  const [computerUseEnabled, setComputerUseEnabled] = useState(false);
+  const [computerUseAccess, setComputerUseAccess] = useState(false);
+  const [computerUseScreen, setComputerUseScreen] = useState(false);
+  const [computerUseNote, setComputerUseNote] = useState<string | null>(null);
+  const [computerUseBusy, setComputerUseBusy] = useState(false);
+
   // ── Debug mode config state ──────────────────────────────────────────────
   const [debugConfig, setDebugConfig] = useState<DebugModeConfig>(DEFAULT_DEBUG_MODE_CONFIG);
   const [debugHasChanges, setDebugHasChanges] = useState(false);
@@ -57,11 +72,23 @@ const SessionConfig: React.FC = () => {
   const [expandedTemplates, setExpandedTemplates] = useState<Set<string>>(new Set());
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
 
-  useEffect(() => {
-    loadAllData();
+  const refreshComputerUseStatus = useCallback(async (): Promise<boolean> => {
+    if (!IS_TAURI_DESKTOP) return false;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const s = await invoke<ComputerUseStatusPayload>('computer_use_get_status');
+      setComputerUseEnabled(s.computerUseEnabled);
+      setComputerUseAccess(s.accessibilityGranted);
+      setComputerUseScreen(s.screenCaptureGranted);
+      setComputerUseNote(s.platformNote ?? null);
+      return true;
+    } catch (error) {
+      log.error('computer_use_get_status failed', error);
+      return false;
+    }
   }, []);
 
-  const loadAllData = async () => {
+  const loadAllData = useCallback(async () => {
     setIsLoading(true);
     try {
       const [
@@ -72,6 +99,7 @@ const SessionConfig: React.FC = () => {
         execTimeout,
         confirmTimeout,
         debugConfigData,
+        computerUseCfg,
       ] = await Promise.all([
         aiExperienceConfigService.getSettingsAsync(),
         configManager.getConfig<AIModelConfig[]>('ai.models') || [],
@@ -80,6 +108,7 @@ const SessionConfig: React.FC = () => {
         configManager.getConfig<number | null>('ai.tool_execution_timeout_secs'),
         configManager.getConfig<number | null>('ai.tool_confirmation_timeout_secs'),
         configManager.getConfig<DebugModeConfig>('ai.debug_mode_config'),
+        configManager.getConfig<boolean>('ai.computer_use_enabled'),
       ]);
 
       setSettings(loadedSettings);
@@ -89,13 +118,24 @@ const SessionConfig: React.FC = () => {
       setExecutionTimeout(execTimeout != null ? String(execTimeout) : '');
       setConfirmationTimeout(confirmTimeout != null ? String(confirmTimeout) : '');
       if (debugConfigData) setDebugConfig(debugConfigData);
+
+      if (IS_TAURI_DESKTOP) {
+        const ok = await refreshComputerUseStatus();
+        if (!ok) setComputerUseEnabled(computerUseCfg ?? false);
+      } else {
+        setComputerUseEnabled(computerUseCfg ?? false);
+      }
     } catch (error) {
       log.error('Failed to load session config data', error);
       setSettings(await aiExperienceConfigService.getSettingsAsync());
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [refreshComputerUseStatus]);
+
+  useEffect(() => {
+    loadAllData();
+  }, [loadAllData]);
 
   // ── Session config handlers ──────────────────────────────────────────────
 
@@ -166,6 +206,52 @@ const SessionConfig: React.FC = () => {
       setSkipToolConfirmation(!checked);
     } finally {
       setToolExecConfigLoading(false);
+    }
+  };
+
+  const handleComputerUseEnabledChange = async (checked: boolean) => {
+    setComputerUseBusy(true);
+    setComputerUseEnabled(checked);
+    try {
+      await configManager.setConfig('ai.computer_use_enabled', checked);
+      const { globalEventBus } = await import('@/infrastructure/event-bus');
+      globalEventBus.emit('mode:config:updated');
+      notificationService.success(
+        checked ? t('messages.saveSuccess') : t('messages.saveSuccess'),
+        { duration: 2000 }
+      );
+      await refreshComputerUseStatus();
+    } catch (error) {
+      log.error('Failed to save computer_use_enabled', error);
+      notificationService.error(t('messages.saveFailed'));
+      setComputerUseEnabled(!checked);
+    } finally {
+      setComputerUseBusy(false);
+    }
+  };
+
+  const handleComputerUseRequestPermissions = async () => {
+    setComputerUseBusy(true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('computer_use_request_permissions');
+      await refreshComputerUseStatus();
+      notificationService.success(t('messages.saveSuccess'), { duration: 2000 });
+    } catch (error) {
+      log.error('computer_use_request_permissions failed', error);
+      notificationService.error(t('messages.saveFailed'));
+    } finally {
+      setComputerUseBusy(false);
+    }
+  };
+
+  const handleComputerUseOpenSettings = async (pane: 'accessibility' | 'screen_capture') => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('computer_use_open_system_settings', { request: { pane } });
+    } catch (error) {
+      log.error('computer_use_open_system_settings failed', error);
+      notificationService.error(t('messages.saveFailed'));
     }
   };
 
@@ -278,7 +364,11 @@ const SessionConfig: React.FC = () => {
   const toggleTemplateExpand = useCallback((language: string) => {
     setExpandedTemplates(prev => {
       const next = new Set(prev);
-      next.has(language) ? next.delete(language) : next.add(language);
+      if (next.has(language)) {
+        next.delete(language);
+      } else {
+        next.add(language);
+      }
       return next;
     });
   }, []);
@@ -365,6 +455,22 @@ const SessionConfig: React.FC = () => {
           </ConfigPageRow>
         </ConfigPageSection>
 
+        {/* ── Agent companion (collapsed input) ─────────────────── */}
+        <ConfigPageSection
+          title={t('features.agentCompanion.title')}
+          description={t('features.agentCompanion.subtitle')}
+        >
+          <ConfigPageRow label={t('features.agentCompanion.enable')} align="center">
+            <div className="bitfun-func-agent-config__row-control">
+              <Switch
+                checked={settings.enable_agent_companion}
+                onChange={(e) => updateSetting('enable_agent_companion', e.target.checked)}
+                size="small"
+              />
+            </div>
+          </ConfigPageRow>
+        </ConfigPageSection>
+
         {/* ── Tool execution behavior ────────────────────────────── */}
         <ConfigPageSection
           title={t('toolExecution.sectionTitle')}
@@ -408,6 +514,133 @@ const SessionConfig: React.FC = () => {
               />
             </div>
           </ConfigPageRow>
+        </ConfigPageSection>
+
+        {/* ── Computer use (desktop) ─────────────────────────────── */}
+        <ConfigPageSection
+          title={t('computerUse.sectionTitle')}
+          description={
+            IS_TAURI_DESKTOP ? t('computerUse.sectionDescription') : t('computerUse.desktopOnly')
+          }
+        >
+          {IS_TAURI_DESKTOP ? (
+            <>
+              <ConfigPageRow label={t('computerUse.enable')} description={t('computerUse.enableDesc')} align="center">
+                <div className="bitfun-func-agent-config__row-control">
+                  <Switch
+                    checked={computerUseEnabled}
+                    onChange={(e) => handleComputerUseEnabledChange(e.target.checked)}
+                    disabled={computerUseBusy}
+                    size="small"
+                  />
+                </div>
+              </ConfigPageRow>
+              {computerUseNote ? (
+                <ConfigPageRow label={t('computerUse.platformNote')} align="start">
+                  <span className="bitfun-func-agent-config__hint">{computerUseNote}</span>
+                </ConfigPageRow>
+              ) : null}
+              <ConfigPageRow
+                label={t('computerUse.accessibility')}
+                description={t('computerUse.accessibilityDesc')}
+                align="center"
+                balanced
+              >
+                <div
+                  className="bitfun-func-agent-config__row-control"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    flexWrap: 'nowrap',
+                    alignItems: 'center',
+                    justifyContent: 'flex-end',
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    <span className={computerUseAccess ? 'bitfun-func-agent-config__perm-status--granted' : undefined}>
+                      {computerUseAccess ? t('computerUse.granted') : t('computerUse.notGranted')}
+                    </span>
+                    <IconButton
+                      type="button"
+                      size="small"
+                      variant="ghost"
+                      aria-label={t('computerUse.refreshStatus')}
+                      tooltip={t('computerUse.refreshStatus')}
+                      disabled={computerUseBusy}
+                      onClick={() => void refreshComputerUseStatus()}
+                    >
+                      <RefreshCw size={14} />
+                    </IconButton>
+                  </span>
+                  {!computerUseAccess ? (
+                    <Button
+                      className="bitfun-func-agent-config__row-action-btn"
+                      size="small"
+                      variant="secondary"
+                      disabled={computerUseBusy}
+                      onClick={() => void handleComputerUseRequestPermissions()}
+                    >
+                      {t('computerUse.request')}
+                    </Button>
+                  ) : null}
+                  <Button
+                    className="bitfun-func-agent-config__row-action-btn"
+                    size="small"
+                    variant="secondary"
+                    disabled={computerUseBusy}
+                    onClick={() => void handleComputerUseOpenSettings('accessibility')}
+                  >
+                    {t('computerUse.openSettings')}
+                  </Button>
+                </div>
+              </ConfigPageRow>
+              <ConfigPageRow
+                label={t('computerUse.screenCapture')}
+                description={t('computerUse.screenCaptureDesc')}
+                align="center"
+                balanced
+              >
+                <div
+                  className="bitfun-func-agent-config__row-control"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    flexWrap: 'nowrap',
+                    alignItems: 'center',
+                    justifyContent: 'flex-end',
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    <span className={computerUseScreen ? 'bitfun-func-agent-config__perm-status--granted' : undefined}>
+                      {computerUseScreen ? t('computerUse.granted') : t('computerUse.notGranted')}
+                    </span>
+                    <IconButton
+                      type="button"
+                      size="small"
+                      variant="ghost"
+                      aria-label={t('computerUse.refreshStatus')}
+                      tooltip={t('computerUse.refreshStatus')}
+                      disabled={computerUseBusy}
+                      onClick={() => void refreshComputerUseStatus()}
+                    >
+                      <RefreshCw size={14} />
+                    </IconButton>
+                  </span>
+                  <Button
+                    className="bitfun-func-agent-config__row-action-btn"
+                    size="small"
+                    variant="secondary"
+                    disabled={computerUseBusy}
+                    onClick={() => void handleComputerUseOpenSettings('screen_capture')}
+                  >
+                    {t('computerUse.openSettings')}
+                  </Button>
+                </div>
+              </ConfigPageRow>
+            </>
+          ) : null}
         </ConfigPageSection>
 
         {/* ── Debug mode settings ───────────────────────────────── */}

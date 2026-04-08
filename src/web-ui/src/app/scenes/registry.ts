@@ -14,13 +14,14 @@ import {
   Settings,
   FileCode2,
   CircleUserRound,
-  Blocks,
   Users,
   Puzzle,
   Boxes,
-  UserCircle2,
   Globe,
   Network,
+  User,
+  BarChart3,
+  ExternalLink,
 } from 'lucide-react';
 import type { SceneTabDef, SceneTabId } from '../components/SceneBar/types';
 
@@ -87,14 +88,6 @@ export const SCENE_TAB_REGISTRY: SceneTabDef[] = [
     defaultOpen: false,
   },
   {
-    id: 'capabilities' as SceneTabId,
-    label: 'Capabilities',
-    Icon: Blocks,
-    pinned: false,
-    singleton: true,
-    defaultOpen: false,
-  },
-  {
     id: 'agents' as SceneTabId,
     label: 'Agents',
     labelKey: 'scenes.agents',
@@ -140,10 +133,19 @@ export const SCENE_TAB_REGISTRY: SceneTabDef[] = [
     defaultOpen: false,
   },
   {
-    id: 'my-agent' as SceneTabId,
-    label: 'My Agent',
-    labelKey: 'scenes.myAgent',
-    Icon: UserCircle2,
+    id: 'assistant' as SceneTabId,
+    label: 'Assistant',
+    labelKey: 'scenes.assistant',
+    Icon: User,
+    pinned: false,
+    singleton: true,
+    defaultOpen: false,
+  },
+  {
+    id: 'insights' as SceneTabId,
+    label: 'Insights',
+    labelKey: 'scenes.insights',
+    Icon: BarChart3,
     pinned: false,
     singleton: true,
     defaultOpen: false,
@@ -157,11 +159,25 @@ export const SCENE_TAB_REGISTRY: SceneTabDef[] = [
     singleton: true,
     defaultOpen: false,
   },
+  {
+    id: 'panel-view' as SceneTabId,
+    label: 'Panel View',
+    labelKey: 'scenes.panelView',
+    Icon: ExternalLink,
+    pinned: false,
+    fixed: false,
+    closable: true,
+    singleton: true,
+    defaultOpen: false,
+  },
 ];
 
 export function getSceneDef(id: SceneTabId): SceneTabDef | undefined {
   return SCENE_TAB_REGISTRY.find(d => d.id === id);
 }
+
+/** Static singleton scene def for the panel-view scene. */
+export const PANEL_VIEW_SCENE_DEF: SceneTabDef = SCENE_TAB_REGISTRY.find(d => d.id === 'panel-view')!;
 
 /** Dynamic scene def for a MiniApp tab (used by SceneBar and useSceneManager). */
 export function getMiniAppSceneDef(appId: string, appName?: string): SceneTabDef {

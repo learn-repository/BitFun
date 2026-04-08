@@ -6,6 +6,12 @@ pub struct PlanMode {
     default_tools: Vec<String>,
 }
 
+impl Default for PlanMode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlanMode {
     pub fn new() -> Self {
         Self {
@@ -19,6 +25,7 @@ impl PlanMode {
                 "Glob".to_string(),
                 "AskUserQuestion".to_string(),
                 "CreatePlan".to_string(),
+                "ComputerUse".to_string(),
             ],
         }
     }

@@ -18,16 +18,22 @@ export interface ContentCanvasProps {
   workspacePath?: string;
   /** App mode */
   mode?: 'agent' | 'project' | 'git';
+  /** Whether the containing scene is currently visible */
+  isSceneActive?: boolean;
   /** Interaction callback */
   onInteraction?: (itemId: string, userInput: string) => Promise<void>;
   /** Before-close callback */
   onBeforeClose?: (content: any) => Promise<boolean>;
+  /** Disable pop-out and panel-close controls (used in panel-view scene) */
+  disablePopOut?: boolean;
 }
 
 export const ContentCanvas: React.FC<ContentCanvasProps> = ({
   workspacePath,
   mode = 'agent',
+  isSceneActive = true,
   onInteraction,
+  disablePopOut = false,
 }) => {
   // Store state
   const {
@@ -102,7 +108,7 @@ export const ContentCanvas: React.FC<ContentCanvasProps> = ({
   const renderContent = () => {
     // Show empty state when primary group has no visible tabs
     if (!hasPrimaryVisibleTabs) {
-      return <EmptyState onClose={collapsePanel} />;
+      return <EmptyState onClose={disablePopOut ? undefined : collapsePanel} />;
     }
 
     return (
@@ -111,10 +117,12 @@ export const ContentCanvas: React.FC<ContentCanvasProps> = ({
         <div className="canvas-content-canvas__editor">
           <EditorArea
             workspacePath={workspacePath}
+            isSceneActive={isSceneActive}
             onOpenMissionControl={handleOpenMissionControl}
             onInteraction={onInteraction}
             onTabCloseWithDirtyCheck={handleCloseWithDirtyCheck}
             onTabCloseAllWithDirtyCheck={handleCloseAllWithDirtyCheck}
+            disablePopOut={disablePopOut}
           />
         </div>
 

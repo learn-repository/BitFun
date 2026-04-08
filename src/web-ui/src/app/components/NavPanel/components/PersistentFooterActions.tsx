@@ -1,5 +1,20 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { Settings, Info, MoreVertical, PictureInPicture2, SquareTerminal, Smartphone, Globe, Network, Layers } from 'lucide-react';
+import {
+  Settings,
+  Info,
+  MoreVertical,
+  PictureInPicture2,
+  SquareTerminal,
+  Terminal,
+  Smartphone,
+  Globe,
+  Network,
+  Layers,
+  PanelsTopLeft,
+  BarChart3,
+  LineChart,
+  ChevronUp,
+} from 'lucide-react';
 import { Tooltip, Modal } from '@/component-library';
 import { useI18n } from '@/infrastructure/i18n/hooks/useI18n';
 import { useSceneManager } from '../../../hooks/useSceneManager';
@@ -13,10 +28,12 @@ import NotificationButton from '../../TitleBar/NotificationButton';
 import { AboutDialog } from '../../AboutDialog';
 import { RemoteConnectDialog } from '../../RemoteConnectDialog';
 import {
-  getRemoteConnectDisclaimerAgreed,
-  setRemoteConnectDisclaimerAgreed,
   RemoteConnectDisclaimerContent,
 } from '../../RemoteConnectDialog/RemoteConnectDisclaimer';
+import {
+  getRemoteConnectDisclaimerAgreed,
+  setRemoteConnectDisclaimerAgreed,
+} from '../../RemoteConnectDialog/remoteConnectDisclaimerStorage';
 import { MERMAID_INTERACTIVE_EXAMPLE } from '@/flow_chat/constants/mermaidExamples';
 
 const PersistentFooterActions: React.FC = () => {
@@ -127,6 +144,13 @@ const PersistentFooterActions: React.FC = () => {
     multimodalHoverTimerRef.current = setTimeout(() => setMultimodalOpen(false), 180);
   }, []);
 
+  const handleOpenInsights = useCallback(() => {
+    openScene('insights');
+  }, [openScene]);
+
+  const insightsTooltip = t('nav.items.insights');
+  const isInsightsActive = activeTabId === 'insights';
+
   const handleShowAbout = () => {
     closeMenu();
     setShowAbout(true);
@@ -174,7 +198,14 @@ const PersistentFooterActions: React.FC = () => {
                 aria-expanded={menuOpen}
                 onClick={toggleMenu}
               >
-                <MoreVertical size={15} />
+                {menuOpen ? (
+                  <MoreVertical size={15} aria-hidden="true" />
+                ) : (
+                  <span className="bitfun-nav-panel__footer-btn-icon-swap" aria-hidden="true">
+                    <MoreVertical size={15} className="bitfun-nav-panel__footer-btn-icon-swap-default" />
+                    <ChevronUp size={15} className="bitfun-nav-panel__footer-btn-icon-swap-hover" />
+                  </span>
+                )}
               </button>
             </Tooltip>
 
@@ -246,7 +277,10 @@ const PersistentFooterActions: React.FC = () => {
               aria-pressed={showSceneNav && navSceneId === 'shell'}
               onClick={handleOpenShell}
             >
-              <SquareTerminal size={15} />
+              <span className="bitfun-nav-panel__footer-btn-icon-swap" aria-hidden="true">
+                <SquareTerminal size={15} className="bitfun-nav-panel__footer-btn-icon-swap-default" />
+                <Terminal size={15} className="bitfun-nav-panel__footer-btn-icon-swap-hover" />
+              </span>
             </button>
           </Tooltip>
 
@@ -261,17 +295,18 @@ const PersistentFooterActions: React.FC = () => {
             const isAnyActive = isBrowserActive || isMermaidActive;
             return (
               <>
-                <Tooltip content={t('nav.multimodalTools')} placement="right" disabled={multimodalOpen}>
-                  <button
-                    type="button"
-                    className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${isAnyActive ? ' is-active' : ''}${multimodalOpen ? ' is-hover-open' : ''}`}
-                    aria-label={t('nav.multimodalTools')}
-                    aria-expanded={multimodalOpen}
-                    aria-haspopup="menu"
-                  >
-                    <Layers size={15} />
-                  </button>
-                </Tooltip>
+                <button
+                  type="button"
+                  className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${isAnyActive ? ' is-active' : ''}${multimodalOpen ? ' is-hover-open' : ''}`}
+                  aria-label={t('nav.multimodalTools')}
+                  aria-expanded={multimodalOpen}
+                  aria-haspopup="menu"
+                >
+                  <span className="bitfun-nav-panel__footer-btn-icon-swap" aria-hidden="true">
+                    <Layers size={15} className="bitfun-nav-panel__footer-btn-icon-swap-default" />
+                    <PanelsTopLeft size={15} className="bitfun-nav-panel__footer-btn-icon-swap-hover" />
+                  </span>
+                </button>
 
                 {multimodalOpen && (
                   <div
@@ -306,10 +341,24 @@ const PersistentFooterActions: React.FC = () => {
             );
           })()}
         </div>
+
+          <Tooltip content={insightsTooltip} placement="right" followCursor>
+            <button
+              type="button"
+              className={`bitfun-nav-panel__footer-btn bitfun-nav-panel__footer-btn--icon${isInsightsActive ? ' is-active' : ''}`}
+              onClick={handleOpenInsights}
+              aria-label={insightsTooltip}
+            >
+              <span className="bitfun-nav-panel__footer-btn-icon-swap" aria-hidden="true">
+                <BarChart3 size={15} className="bitfun-nav-panel__footer-btn-icon-swap-default" />
+                <LineChart size={15} className="bitfun-nav-panel__footer-btn-icon-swap-hover" />
+              </span>
+            </button>
+          </Tooltip>
         </div>
 
         <div className="bitfun-nav-panel__footer-right">
-          <NotificationButton className="bitfun-nav-panel__footer-btn" />
+          <NotificationButton className="bitfun-nav-panel__footer-btn" navFooterHoverIconSwap />
         </div>
       </div>
       <AboutDialog isOpen={showAbout} onClose={() => setShowAbout(false)} />

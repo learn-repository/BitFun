@@ -54,6 +54,8 @@
     transform: translateY(3px);
     
     .bitfun-chat-input__box {
+      position: relative;
+      overflow: hidden;
       min-height: 42px;
       max-height: 42px;
       padding: 0 18px;
@@ -133,7 +135,7 @@
         min-height: 24px !important;
         max-height: 24px !important;
         max-width: 100%;
-        font-size: 14px;
+        font-size: var(--flowchat-font-size-base);
         line-height: 24px;
         overflow: hidden;
         padding: 0 !important;
@@ -145,7 +147,7 @@
           display: block;
           color: var(--color-text-primary);
           opacity: 0.6;
-          font-size: 14px;
+          font-size: var(--flowchat-font-size-base);
           line-height: 24px;
           text-align: center;
           width: 100%;
@@ -160,7 +162,7 @@
         justify-content: center;
         gap: 6px;
         width: 100%;
-        font-size: 13px;
+        font-size: var(--flowchat-font-size-sm);
         line-height: 24px;
         color: var(--color-text-muted);
         opacity: 0.62;
@@ -220,6 +222,96 @@
     &:hover .bitfun-chat-input__space-hint {
       opacity: 0.9;
     }
+
+    &.bitfun-chat-input--pet-visible {
+      .bitfun-chat-input__input-area {
+        z-index: 1;
+      }
+
+      .bitfun-chat-input__actions {
+        z-index: 2;
+      }
+
+      .bitfun-chat-input__space-hint {
+        opacity: 0;
+        transition: opacity 0.36s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      &:hover .bitfun-chat-input__space-hint {
+        opacity: 0.88;
+      }
+
+      &.bitfun-chat-input--pet-split-send.bitfun-chat-input--processing {
+        .bitfun-chat-input__actions {
+          z-index: 5;
+        }
+      }
+    }
+
+    &.bitfun-chat-input--pet-replaces-stop.bitfun-chat-input--processing {
+      .bitfun-chat-input__input-area {
+        right: 52px;
+      }
+
+      &.bitfun-chat-input--pet-split-send .bitfun-chat-input__input-area {
+        right: 112px;
+      }
+    }
+
+    .bitfun-chat-input__pet-wrap {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    /* Full width so flex alignment is relative to the capsule (not the ~40px pet). */
+    .bitfun-chat-input__pet-inner {
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
+      transition:
+        justify-content 0.45s cubic-bezier(0.34, 1.15, 0.64, 1),
+        padding 0.45s cubic-bezier(0.34, 1.15, 0.64, 1);
+    }
+
+    /* Align with former stop control (~same inset as .bitfun-chat-input__actions { right: 14px }). */
+    .bitfun-chat-input__pet-wrap--shift .bitfun-chat-input__pet-inner {
+      justify-content: flex-end;
+      padding-right: 8px;
+    }
+
+    .bitfun-chat-input__pet-wrap--shift.bitfun-chat-input__pet-wrap--split .bitfun-chat-input__pet-inner {
+      padding-right: 42px;
+    }
+
+    .bitfun-chat-input__pet-stop-btn {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      margin: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 10px;
+      line-height: 0;
+
+      &:hover {
+        filter: brightness(1.08);
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--color-accent-primary);
+        outline-offset: 2px;
+      }
+    }
   }
 
   &__space-hint {
@@ -230,7 +322,7 @@
     display: inline-block;
     padding: 0 4px;
     color: var(--color-text-secondary);
-    font-size: 12px;
+    font-size: var(--flowchat-font-size-xs);
     font-weight: 500;
     letter-spacing: 0.01em;
     background: transparent;
@@ -243,7 +335,7 @@
     align-items: center;
     flex-shrink: 0;
     gap: 4px;
-    font-size: 13px;
+    font-size: var(--flowchat-font-size-sm);
     line-height: 24px;
     color: var(--color-text-muted);
     opacity: 0.72;
@@ -413,7 +505,7 @@
   }
 
   &__target-switcher-label {
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     color: var(--color-text-muted);
     font-weight: 400;
     padding: 2px 8px 2px 0;
@@ -431,7 +523,7 @@
     border: none;
     background: transparent;
     color: var(--color-text-muted);
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     font-weight: 400;
     border-radius: 5px;
     cursor: pointer;
@@ -456,7 +548,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     font-weight: 400;
     opacity: 0.65;
 
@@ -466,12 +558,12 @@
     }
   }
   
-  &__expand-button {
+  &__expand-button.icon-btn {
     position: absolute;
     top: 8px;
     right: 8px;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     border: none;
     border-radius: 50%;
     background: transparent;
@@ -480,18 +572,45 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease;
-    opacity: 0.4;
+    opacity: 1;
+    transform: scale(1);
+    transform-origin: center;
+    transition:
+      transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1),
+      background 0.2s ease,
+      color 0.2s ease,
+      box-shadow 0.2s ease;
     animation: bitfun-stacked-reveal 0.22s cubic-bezier(0.4, 0, 0.2, 1) 0.24s both;
-    
-    &:hover {
-      opacity: 1;
+    box-shadow: none;
+
+    svg {
+      opacity: 0.5;
+      transition:
+        opacity 0.2s ease,
+        transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+
+    &:hover:not(:disabled) {
+      transform: scale(1.14);
       color: var(--color-accent-400);
       background: var(--color-accent-100);
+      box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--color-accent-400) 22%, transparent),
+        0 2px 10px color-mix(in srgb, var(--color-accent-400) 12%, transparent);
+
+      svg {
+        opacity: 1;
+        transform: scale(1.12);
+      }
     }
-    
-    &:active {
-      transform: scale(0.9);
+
+    &:active:not(:disabled) {
+      transform: scale(1.02);
+      transition-duration: 0.1s;
+
+      svg {
+        transform: scale(1);
+      }
     }
   }
   
@@ -502,6 +621,8 @@
     width: 100%;
     min-height: 56px;
     overflow: visible;
+    // Last line descenders + clearance above the action row (send is 28px tall in a short bar)
+    padding-bottom: 4px;
   }
   
   &__action-button {
@@ -572,7 +693,7 @@
     padding: 2px 4px 2px 10px;
     border-radius: 999px;
     border: none;
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     font-weight: 500;
     letter-spacing: 0.02em;
     color: var(--color-text-secondary);
@@ -621,7 +742,7 @@
 
   &__agent-boost-empty {
     padding: 12px 14px;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-tertiary);
     text-align: center;
     line-height: 1.35;
@@ -650,7 +771,7 @@
     margin: 0;
     padding: 8px 12px;
     background: transparent;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-secondary);
     cursor: pointer;
     user-select: none;
@@ -696,7 +817,7 @@
     margin: 0;
     padding: 8px 12px;
     background: transparent;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-secondary);
     cursor: pointer;
     user-select: none;
@@ -780,7 +901,7 @@
     justify-content: center;
     gap: 8px;
     padding: 14px 12px;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-muted);
   }
 
@@ -814,7 +935,7 @@
     padding: 5px 8px;
     border-radius: 4px;
     background: transparent;
-    font-size: 12px;
+    font-size: var(--flowchat-font-size-xs);
     color: var(--color-text-primary);
     cursor: pointer;
     user-select: none;
@@ -847,7 +968,7 @@
     padding: 8px 10px 10px;
     border-top: 1px solid var(--border-subtle);
     background: transparent;
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     font-weight: 500;
     color: rgba(120, 160, 255, 0.95);
     cursor: pointer;
@@ -873,7 +994,7 @@
   }
 
   &__mode-pending-indicator {
-    font-size: 9px;
+    font-size: var(--flowchat-font-size-xxs);
     color: rgba(251, 146, 60, 0.9);
     margin-left: 4px;
     display: inline-flex;
@@ -911,7 +1032,7 @@
   
   &__mode-option {
     padding: 7px 12px;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -937,7 +1058,7 @@
         
         &::after {
           content: ' (Pending)';
-          font-size: 9px;
+          font-size: var(--flowchat-font-size-xxs);
           opacity: 0.8;
         }
       }
@@ -970,7 +1091,7 @@
   
   &__mode-divider-text {
     padding: 0 8px;
-    font-size: 9px;
+    font-size: var(--flowchat-font-size-xxs);
     color: var(--color-text-muted);
     white-space: nowrap;
     font-weight: 500;
@@ -983,7 +1104,7 @@
   
   &__mode-submenu-trigger {
     padding: 7px 12px;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -1015,7 +1136,7 @@
   }
   
   &__mode-submenu-active-name {
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     color: rgba(140, 180, 255, 0.9);
     font-weight: 500;
     margin-left: auto;
@@ -1027,7 +1148,7 @@
   }
   
   &__mode-submenu-dots {
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     color: var(--color-text-tertiary);
     margin-left: auto;
     letter-spacing: 1px;
@@ -1038,7 +1159,7 @@
     
     .bitfun-chat-input__mode-option {
       padding-left: 24px;
-      font-size: 10px;
+      font-size: var(--flowchat-font-size-xxs);
       
       &:hover:not(&--disabled) {
         background: rgba(255, 255, 255, 0.04);
@@ -1060,7 +1181,7 @@
     border-radius: 3px;
     background: var(--color-warning-bg);
     color: var(--color-warning);
-    font-size: 8px;
+    font-size: var(--flowchat-font-size-xxs);
     font-weight: 600;
     letter-spacing: 0.5px;
     margin-left: 6px;
@@ -1108,7 +1229,7 @@
     justify-content: space-between;
     padding: 8px 12px;
     border-bottom: 1px solid var(--border-subtle);
-    font-size: 10px;
+    font-size: var(--flowchat-font-size-xxs);
     font-weight: 500;
     color: var(--color-text-muted);
     text-transform: uppercase;
@@ -1116,7 +1237,7 @@
   }
   
   &__slash-command-hint {
-    font-size: 9px;
+    font-size: var(--flowchat-font-size-xxs);
     color: var(--color-text-tertiary);
     font-weight: 400;
     text-transform: none;
@@ -1170,7 +1291,7 @@
   }
   
   &__slash-command-name {
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     font-weight: 500;
     color: rgba(120, 160, 255, 0.9);
     font-family: var(--font-mono);
@@ -1178,13 +1299,13 @@
   }
   
   &__slash-command-label {
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-secondary);
     flex: 1;
   }
   
   &__slash-command-current {
-    font-size: 9px;
+    font-size: var(--flowchat-font-size-xxs);
     padding: 2px 5px;
     border-radius: 3px;
     background: rgba(100, 140, 255, 0.15);
@@ -1195,7 +1316,7 @@
   &__slash-command-empty {
     padding: 16px 12px;
     text-align: center;
-    font-size: 11px;
+    font-size: var(--flowchat-font-size-2xs);
     color: var(--color-text-tertiary);
   }
 
@@ -1244,7 +1365,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 20px;
+    // Must fit IconButton small (28px); fixed 20px caused vertical overflow into the input above
+    min-height: 28px;
+    margin-top: 4px;
     padding: 0 0 $size-gap-2;
   }
   
@@ -1393,7 +1516,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 8px;
+    font-size: var(--flowchat-font-size-xxs);
     font-weight: 700;
     line-height: 1;
     box-shadow: 0 0 0 1px rgba(18, 18, 28, 0.85);

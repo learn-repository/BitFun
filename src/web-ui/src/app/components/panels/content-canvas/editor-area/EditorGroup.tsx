@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next';
 import { TabBar } from '../tab-bar';
 import { DropZone } from './DropZone';
 import FlexiblePanel from '../../base/FlexiblePanel';
+import { usePanelViewCanvasStore } from '../stores';
+import { useSceneStore } from '../../../../stores/sceneStore';
 import type { 
   EditorGroupId, 
   EditorGroupState, 
@@ -22,6 +24,7 @@ export interface EditorGroupProps {
   groupId: EditorGroupId;
   group: EditorGroupState;
   isActive: boolean;
+  isSceneActive?: boolean;
   draggingTabId: string | null;
   draggingFromGroupId: EditorGroupId | null;
   splitMode: SplitMode;
@@ -41,12 +44,14 @@ export interface EditorGroupProps {
   onOpenMissionControl?: () => void;
   onCloseAllTabs?: () => Promise<void> | void;
   onInteraction?: (itemId: string, userInput: string) => Promise<void>;
+  disablePopOut?: boolean;
 }
 
 export const EditorGroup: React.FC<EditorGroupProps> = ({
   groupId,
   group,
   isActive,
+  isSceneActive = true,
   draggingTabId,
   draggingFromGroupId,
   splitMode,
@@ -66,6 +71,7 @@ export const EditorGroup: React.FC<EditorGroupProps> = ({
   onOpenMissionControl,
   onCloseAllTabs,
   onInteraction,
+  disablePopOut = false,
 }) => {
   const { t } = useTranslation('components');
   const visibleTabs = useMemo(() => group.tabs.filter(t => !t.isHidden), [group.tabs]);
@@ -119,6 +125,13 @@ export const EditorGroup: React.FC<EditorGroupProps> = ({
     }
   }, [group.activeTabId, onDirtyStateChange]);
 
+  const handleTabPopOut = useCallback((tabId: string) => {
+    const tab = group.tabs.find(t => t.id === tabId);
+    if (!tab || !tab.content) return;
+    usePanelViewCanvasStore.getState().addTab(tab.content as PanelContent, 'active');
+    useSceneStore.getState().openScene('panel-view');
+  }, [group.tabs]);
+
   const isDragging = draggingTabId !== null;
 
   return (
@@ -142,6 +155,7 @@ export const EditorGroup: React.FC<EditorGroupProps> = ({
         onReorderTab={onReorderTab}
         onOpenMissionControl={onOpenMissionControl}
         onCloseAllTabs={onCloseAllTabs}
+        onTabPopOut={disablePopOut ? undefined : handleTabPopOut}
       />
 
       <DropZone
@@ -162,7 +176,7 @@ export const EditorGroup: React.FC<EditorGroupProps> = ({
               >
                 <FlexiblePanel
                   content={tab.content as any}
-                  isActive={group.activeTabId === tab.id}
+                  isActive={isSceneActive && group.activeTabId === tab.id}
                   onContentChange={group.activeTabId === tab.id ? handleContentChange : undefined}
                   onDirtyStateChange={group.activeTabId === tab.id ? handleDirtyStateChange : undefined}
                   onFileMissingFromDiskChange={

@@ -15,10 +15,10 @@ import {
 import { flowChatStore } from '../store/FlowChatStore';
 import { flowChatManager } from '../services/FlowChatManager';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { aiExperienceConfigService } from '@/infrastructure/config/services';
 import { configManager } from '@/infrastructure/config/services/ConfigManager';
 import { useI18n } from '@/infrastructure/i18n';
 import { useCurrentWorkspace } from '@/infrastructure/contexts/WorkspaceContext';
+import { WorkspaceKind } from '@/shared/types';
 import { generateTempTitle } from '../utils/titleUtils';
 import { createLogger } from '@/shared/utils/logger';
 
@@ -60,7 +60,7 @@ async function getModelContextWindow(modelName?: string): Promise<number> {
 
 export const useFlowChat = () => {
   const { t } = useI18n('flow-chat');
-  const { workspacePath } = useCurrentWorkspace();
+  const { workspacePath, workspace } = useCurrentWorkspace();
   const [state, setState] = useState<FlowChatState>(flowChatStore.getState());
   const processingLock = useRef<boolean>(false);
 
@@ -102,10 +102,16 @@ export const useFlowChat = () => {
       
       const maxContextTokens = await getModelContextWindow(config?.modelName);
       
+      const isRemote = workspace?.workspaceKind === WorkspaceKind.Remote;
+      const remoteConnectionId = isRemote ? workspace?.connectionId : undefined;
+      const remoteSshHost = isRemote ? workspace?.sshHost : undefined;
+
       const response = await agentAPI.createSession({
         sessionName,
         agentType: 'agentic', // Default to agentic; can change via mode selector.
         workspacePath,
+        remoteConnectionId,
+        remoteSshHost,
         config: {
           modelName: config?.modelName || 'default',
           enableTools: true,
@@ -113,6 +119,8 @@ export const useFlowChat = () => {
           autoCompact: true,
           maxContextTokens: maxContextTokens,
           enableContextCompression: true,
+          remoteConnectionId,
+          remoteSshHost,
         }
       });
       
@@ -124,7 +132,8 @@ export const useFlowChat = () => {
       
       const sessionConfig: SessionConfig = {
         modelName: config?.modelName || 'default',
-        ...config
+        ...config,
+        workspaceId: workspace?.id ?? config?.workspaceId,
       };
 
       flowChatStore.createSession(
@@ -134,13 +143,19 @@ export const useFlowChat = () => {
         sessionName,
         maxContextTokens,
         undefined,
-        workspacePath
+        workspacePath,
+        remoteConnectionId,
+        remoteSshHost
       );
       
       return response.sessionId;
       
     } catch (error) {
       log.error('Failed to create session', { error });
+
+      const isRemoteFb = workspace?.workspaceKind === WorkspaceKind.Remote;
+      const remoteConnectionIdFb = isRemoteFb ? workspace?.connectionId : undefined;
+      const remoteSshHostFb = isRemoteFb ? workspace?.sshHost : undefined;
       
       // Fallback to a frontend-only session without Terminal.
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -157,7 +172,8 @@ export const useFlowChat = () => {
       
       const sessionConfig: SessionConfig = {
         modelName: config?.modelName || 'default',
-        ...config
+        ...config,
+        workspaceId: workspace?.id ?? config?.workspaceId,
       };
 
       const sessionCount = flowChatStore.getState().sessions.size + 1;
@@ -169,14 +185,16 @@ export const useFlowChat = () => {
         sessionName,
         undefined,
         undefined,
-        workspacePath
+        workspacePath,
+        remoteConnectionIdFb,
+        remoteSshHostFb
       );
       
       log.warn('Using fallback mode without Terminal');
 
       return sessionId;
     }
-  }, [t, workspacePath]);
+  }, [t, workspacePath, workspace]);
 
   const switchSession = useCallback(async (sessionId: string) => {
     try {
@@ -186,25 +204,25 @@ export const useFlowChat = () => {
     }
   }, []);
 
-  // Avoid useCallback to always read the latest state.
-  const getActiveSession = (): Session | null => {
+  const getActiveSession = useCallback((): Session | null => {
+    const currentState = flowChatStore.getState();
     const session = flowChatStore.getActiveSession();
     if (!session) {
-      log.warn('No active session', { activeSessionId: state.activeSessionId });
+      log.warn('No active session', { activeSessionId: currentState.activeSessionId });
     }
     return session;
-  };
+  }, []);
 
-  // Avoid useCallback to always read the latest state.
-  const getLatestDialogTurn = (sessionId?: string): DialogTurn | null => {
-    const targetSessionId = sessionId || state.activeSessionId;
+  const getLatestDialogTurn = useCallback((sessionId?: string): DialogTurn | null => {
+    const currentState = flowChatStore.getState();
+    const targetSessionId = sessionId || currentState.activeSessionId;
     if (!targetSessionId) return null;
     
-    const session = state.sessions.get(targetSessionId);
+    const session = currentState.sessions.get(targetSessionId);
     if (!session || session.dialogTurns.length === 0) return null;
     
     return session.dialogTurns[session.dialogTurns.length - 1];
-  };
+  }, []);
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
@@ -238,19 +256,14 @@ export const useFlowChat = () => {
       startTime: Date.now()
     };
 
-    const isFirstMessage = session && session.dialogTurns.length === 0 && !session.title;
+    const isFirstMessage =
+      session && session.dialogTurns.length === 0 && session.titleStatus !== 'generated';
     
     flowChatStore.addDialogTurn(targetSessionId, dialogTurn);
 
     if (isFirstMessage) {
       const tempTitle = generateTempTitle(content, 20);
-      if (aiExperienceConfigService.isSessionTitleGenerationEnabled()) {
-        // Set temp title while waiting for coordinator's auto-generated AI title
-        // (delivered via SessionTitleGenerated event).
-        flowChatStore.updateSessionTitle(targetSessionId, tempTitle, 'generating');
-      } else {
-        flowChatStore.updateSessionTitle(targetSessionId, tempTitle, 'generated');
-      }
+      flowChatStore.updateSessionTitle(targetSessionId, tempTitle, 'generating');
     }
 
     return dialogTurnId;
@@ -389,7 +402,7 @@ export const useFlowChat = () => {
     }
 
     processingLock.current = true;
-  }, [state.activeSessionId, state.sessions]);
+  }, [state.activeSessionId]);
 
   const endMessageProcessing = useCallback(() => {
     processingLock.current = false;

@@ -16,6 +16,7 @@ export interface TooltipProps {
   delay?: number;
   disabled?: boolean;
   className?: string;
+  interactive?: boolean;
 }
 
 const assignRef = <T,>(ref: React.Ref<T> | undefined, value: T | null): void => {
@@ -150,6 +151,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
   delay = DEFAULT_TOOLTIP_DELAY,
   disabled = false,
   className = '',
+  interactive = false,
 }) => {
   const [visible, setVisible] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -159,6 +161,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
   const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestMousePositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const gap = 8;
@@ -170,8 +173,8 @@ export const Tooltip: React.FC<TooltipProps> = ({
     const tooltipRect = tooltipRef.current.getBoundingClientRect();
 
     if (followCursor && mousePosition) {
-      let left = mousePosition.x + CURSOR_OFFSET_X;
-      let top = mousePosition.y + CURSOR_OFFSET_Y;
+      const left = mousePosition.x + CURSOR_OFFSET_X;
+      const top = mousePosition.y + CURSOR_OFFSET_Y;
       const pos = applyBoundaryConstraints({ top, left }, tooltipRect, viewportPadding);
       setActualPlacement('bottom');
       setPosition(pos);
@@ -205,6 +208,10 @@ export const Tooltip: React.FC<TooltipProps> = ({
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
+    }
     if (followCursor && e) {
       latestMousePositionRef.current = { x: e.clientX, y: e.clientY };
     }
@@ -218,10 +225,14 @@ export const Tooltip: React.FC<TooltipProps> = ({
     }, delay);
   };
 
-  const hideTooltip = () => {
+  const hideTooltip = useCallback(() => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
+    }
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
     }
     setVisible(false);
     setPositionReady(false);
@@ -229,7 +240,23 @@ export const Tooltip: React.FC<TooltipProps> = ({
       latestMousePositionRef.current = null;
       setMousePosition(null);
     }
-  };
+  }, [followCursor]);
+
+  const scheduleHideTooltip = useCallback(() => {
+    if (!interactive) {
+      hideTooltip();
+      return;
+    }
+
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+    }
+
+    hideTimeoutRef.current = setTimeout(() => {
+      hideTimeoutRef.current = null;
+      hideTooltip();
+    }, 150);
+  }, [hideTooltip, interactive]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
@@ -271,6 +298,9 @@ export const Tooltip: React.FC<TooltipProps> = ({
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
+      if (hideTimeoutRef.current) {
+        clearTimeout(hideTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -290,15 +320,18 @@ export const Tooltip: React.FC<TooltipProps> = ({
   };
 
   const handleMouseLeave = (e: React.MouseEvent) => {
-    if (trigger === 'hover') hideTooltip();
+    if (trigger === 'hover') scheduleHideTooltip();
     if (typeof childProps.onMouseLeave === 'function') {
       (childProps.onMouseLeave as (e: React.MouseEvent) => void)(e);
     }
   };
 
   const handleClick = (e: React.MouseEvent) => {
-    if (trigger === 'click') {
-      visible ? hideTooltip() : showTooltip();
+    // Always hide tooltip on click for better UX (e.g., button tooltips)
+    if (visible) {
+      hideTooltip();
+    } else if (trigger === 'click') {
+      showTooltip();
     }
     if (typeof childProps.onClick === 'function') {
       (childProps.onClick as (e: React.MouseEvent) => void)(e);
@@ -319,7 +352,6 @@ export const Tooltip: React.FC<TooltipProps> = ({
     }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const triggerElement = React.cloneElement(children as React.ReactElement<any>, {
     ref: handleTriggerRef,
     onMouseEnter: handleMouseEnter,
@@ -334,6 +366,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
     'bitfun-tooltip',
     `bitfun-tooltip--${actualPlacement}`,
     visible && positionReady && 'bitfun-tooltip--visible',
+    interactive && 'bitfun-tooltip--interactive',
     className
   ].filter(Boolean).join(' ');
 
@@ -344,6 +377,13 @@ export const Tooltip: React.FC<TooltipProps> = ({
         <div
           ref={tooltipRef}
           className={tooltipClass}
+          onMouseEnter={interactive ? () => {
+            if (hideTimeoutRef.current) {
+              clearTimeout(hideTimeoutRef.current);
+              hideTimeoutRef.current = null;
+            }
+          } : undefined}
+          onMouseLeave={interactive ? scheduleHideTooltip : undefined}
           style={{
             position: 'fixed',
             top: `${position.top}px`,

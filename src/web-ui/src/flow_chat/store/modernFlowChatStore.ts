@@ -5,9 +5,11 @@
  */
 
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { immer } from 'zustand/middleware/immer';
 import type { Session, DialogTurn, ModelRound, FlowItem, FlowToolItem } from '../types/flow-chat';
 import { isCollapsibleTool, READ_TOOL_NAMES, SEARCH_TOOL_NAMES } from '../tool-cards';
+import { flowChatStore } from './FlowChatStore';
 
 /**
  * Explore group statistics (merged computed stats)
@@ -271,18 +273,32 @@ export function sessionToVirtualItems(session: Session | null): VirtualItem[] {
   return items;
 }
 
+function getInitialModernState(): Pick<
+  ModernFlowChatState,
+  'activeSession' | 'virtualItems' | 'visibleTurnInfo'
+> {
+  const legacyState = flowChatStore.getState();
+  const activeSession = legacyState.activeSessionId
+    ? legacyState.sessions.get(legacyState.activeSessionId) ?? null
+    : null;
+
+  return {
+    activeSession,
+    virtualItems: sessionToVirtualItems(activeSession),
+    visibleTurnInfo: null,
+  };
+}
+
 export const useModernFlowChatStore = create<ModernFlowChatState>()(
   immer((set, get) => ({
-    activeSession: null,
-    virtualItems: [],
-    visibleTurnInfo: null,
+    ...getInitialModernState(),
 
     setActiveSession: (session) => {
+      const items = sessionToVirtualItems(session);
       set((state) => {
         state.activeSession = session;
+        state.virtualItems = items;
       });
-
-      get().updateVirtualItems();
     },
 
     updateVirtualItems: () => {
@@ -327,9 +343,9 @@ export const useVisibleTurnInfo = () =>
  * Get actions (does not trigger re-render)
  */
 export const useFlowChatActions = () =>
-  useModernFlowChatStore(state => ({
+  useModernFlowChatStore(useShallow(state => ({
     setActiveSession: state.setActiveSession,
     updateVirtualItems: state.updateVirtualItems,
     setVisibleTurnInfo: state.setVisibleTurnInfo,
     clear: state.clear,
-  }));
+  })));

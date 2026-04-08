@@ -1,7 +1,7 @@
-use super::util::resolve_path_with_workspace;
 use crate::agentic::tools::framework::{
     Tool, ToolRenderOptions, ToolResult, ToolUseContext, ValidationResult,
 };
+use crate::agentic::tools::workspace_paths::resolve_workspace_tool_path;
 use crate::service::git::git_service::GitService;
 use crate::service::git::git_types::GitDiffParams;
 use crate::service::git::git_utils::get_repository_root;
@@ -22,6 +22,12 @@ use std::path::Path;
 /// 2. Git HEAD diff (if git repository)
 /// 3. Return full file content
 pub struct GetFileDiffTool;
+
+impl Default for GetFileDiffTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl GetFileDiffTool {
     pub fn new() -> Self {
@@ -328,7 +334,7 @@ Usage:
     async fn validate_input(
         &self,
         input: &Value,
-        _context: Option<&ToolUseContext>,
+        context: Option<&ToolUseContext>,
     ) -> ValidationResult {
         if let Some(file_path) = input.get("file_path").and_then(|v| v.as_str()) {
             if file_path.is_empty() {
@@ -340,23 +346,48 @@ Usage:
                 };
             }
 
-            let path = Path::new(file_path);
-            if !path.exists() {
-                return ValidationResult {
-                    result: false,
-                    message: Some(format!("File does not exist: {}", file_path)),
-                    error_code: Some(404),
-                    meta: None,
-                };
-            }
+            let is_remote = context.map(|c| c.is_remote()).unwrap_or(false);
 
-            if !path.is_file() {
-                return ValidationResult {
-                    result: false,
-                    message: Some(format!("Path is not a file: {}", file_path)),
-                    error_code: Some(400),
-                    meta: None,
-                };
+            let root_owned = context.and_then(|c| {
+                c.workspace
+                    .as_ref()
+                    .map(|w| w.root_path_string())
+            });
+            let resolved_path = match resolve_workspace_tool_path(
+                file_path,
+                root_owned.as_deref(),
+                is_remote,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    return ValidationResult {
+                        result: false,
+                        message: Some(e.to_string()),
+                        error_code: Some(400),
+                        meta: None,
+                    };
+                }
+            };
+
+            if !is_remote {
+                let path = Path::new(&resolved_path);
+                if !path.exists() {
+                    return ValidationResult {
+                        result: false,
+                        message: Some(format!("File does not exist: {}", resolved_path)),
+                        error_code: Some(404),
+                        meta: None,
+                    };
+                }
+
+                if !path.is_file() {
+                    return ValidationResult {
+                        result: false,
+                        message: Some(format!("Path is not a file: {}", resolved_path)),
+                        error_code: Some(400),
+                        meta: None,
+                    };
+                }
             }
         } else {
             return ValidationResult {
@@ -409,17 +440,48 @@ Usage:
             .and_then(|v| v.as_str())
             .ok_or_else(|| BitFunError::tool("file_path is required".to_string()))?;
 
-        let resolved_path = resolve_path_with_workspace(file_path, context.workspace_root())?;
+        let resolved_path = context.resolve_workspace_tool_path(file_path)?;
 
         debug!(
             "GetFileDiff tool starting diff retrieval for file: {:?}",
             resolved_path
         );
 
+        if context.is_remote() {
+            let ws_fs = context.ws_fs().ok_or_else(|| {
+                BitFunError::tool("Workspace file system not available for remote diff".to_string())
+            })?;
+            let content = ws_fs
+                .read_file_text(&resolved_path)
+                .await
+                .map_err(|e| BitFunError::tool(format!("Failed to read file: {}", e)))?;
+            let total_lines = content.lines().count();
+            let data = json!({
+                "file_path": resolved_path,
+                "diff_type": "full",
+                "diff_format": "unified",
+                "diff_content": content.clone(),
+                "original_content": "",
+                "modified_content": content,
+                "stats": {
+                    "additions": 0,
+                    "deletions": 0,
+                    "total_lines": total_lines
+                },
+                "message": "File full content on remote workspace (baseline/git diff not available locally)"
+            });
+            let result_for_assistant = self.render_tool_result_message(&data);
+            return Ok(vec![ToolResult::Result {
+                data,
+                result_for_assistant: Some(result_for_assistant),
+                image_attachments: None,
+            }]);
+        }
+
         // Priority 1: Try baseline diff
         let path = Path::new(&resolved_path);
         if let Some(result) = self
-            .try_baseline_diff(&path, context.workspace_root())
+            .try_baseline_diff(path, context.workspace_root())
             .await
         {
             match result {
@@ -429,7 +491,8 @@ Usage:
                     return Ok(vec![ToolResult::Result {
                         data,
                         result_for_assistant: Some(result_for_assistant),
-                    }]);
+            image_attachments: None,
+        }]);
                 }
                 Err(e) => {
                     warn!(
@@ -442,7 +505,7 @@ Usage:
         }
 
         // Priority 2: Try git diff
-        if let Some(result) = self.try_git_diff(&path).await {
+        if let Some(result) = self.try_git_diff(path).await {
             match result {
                 Ok(data) => {
                     debug!("GetFileDiff tool using git diff");
@@ -450,7 +513,8 @@ Usage:
                     return Ok(vec![ToolResult::Result {
                         data,
                         result_for_assistant: Some(result_for_assistant),
-                    }]);
+            image_attachments: None,
+        }]);
                 }
                 Err(e) => {
                     warn!(
@@ -464,12 +528,13 @@ Usage:
 
         // Priority 3: Return full file content
         debug!("GetFileDiff tool returning full file content");
-        let data = self.return_full_content(&path)?;
+        let data = self.return_full_content(path)?;
         let result_for_assistant = self.render_tool_result_message(&data);
 
         Ok(vec![ToolResult::Result {
             data,
             result_for_assistant: Some(result_for_assistant),
+            image_attachments: None,
         }])
     }
 }

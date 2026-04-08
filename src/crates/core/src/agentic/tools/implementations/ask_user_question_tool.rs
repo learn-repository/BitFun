@@ -40,6 +40,12 @@ pub struct AskUserQuestionInput {
 /// AskUserQuestion tool
 pub struct AskUserQuestionTool;
 
+impl Default for AskUserQuestionTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AskUserQuestionTool {
     pub fn new() -> Self {
         Self
@@ -337,6 +343,7 @@ Usage notes:
                         "status": "answered"
                     }),
                     result_for_assistant: Some(result_text),
+                    image_attachments: None,
                 }])
             }
             Ok(Err(_)) => {
@@ -347,6 +354,7 @@ Usage notes:
                         "status": "cancelled"
                     }),
                     result_for_assistant: Some("User input request was cancelled.".to_string()),
+                    image_attachments: None,
                 }])
             }
             Err(_) => {
@@ -364,6 +372,7 @@ Usage notes:
                     result_for_assistant: Some(
                         "User didn't answer your questions within 600 seconds.".to_string(),
                     ),
+                    image_attachments: None,
                 }])
             }
         }

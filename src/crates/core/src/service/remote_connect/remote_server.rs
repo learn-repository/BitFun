@@ -347,6 +347,11 @@ pub enum RemoteResponse {
         path: Option<String>,
         project_name: Option<String>,
         git_branch: Option<String>,
+        /// `"normal"` | `"assistant"` | `"remote"` — mirrors [`crate::service::workspace::WorkspaceKind`].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace_kind: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        assistant_id: Option<String>,
     },
     RecentWorkspaces {
         workspaces: Vec<RecentWorkspaceEntry>,
@@ -404,6 +409,10 @@ pub enum RemoteResponse {
         project_name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         git_branch: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace_kind: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        assistant_id: Option<String>,
         sessions: Vec<SessionInfo>,
         has_more_sessions: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -424,7 +433,7 @@ pub enum RemoteResponse {
         #[serde(skip_serializing_if = "Option::is_none")]
         active_turn: Option<ActiveTurnSnapshot>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        model_catalog: Option<RemoteModelCatalog>,
+        model_catalog: Box<Option<RemoteModelCatalog>>,
     },
     AnswerAccepted,
     InteractionAccepted {
@@ -514,6 +523,9 @@ pub struct RecentWorkspaceEntry {
     pub path: String,
     pub name: String,
     pub last_opened: String,
+    /// `"normal"` | `"assistant"` | `"remote"`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,6 +651,10 @@ fn turns_to_chat_messages(turns: &[crate::service::session::DialogTurnData]) -> 
     let mut result = Vec::new();
 
     for turn in turns {
+        if !turn.kind.is_model_visible() {
+            continue;
+        }
+
         let images = turn
             .user_message
             .metadata
@@ -1182,7 +1198,7 @@ impl RemoteSessionStateTracker {
 
         if let Some(item) = state.active_items.iter_mut().rev().find(|i| {
             i.item_type == "tool"
-                && i.tool.as_ref().map_or(false, |t| {
+                && i.tool.as_ref().is_some_and(|t| {
                     t.id == resolved_id || (allow_name_fallback && t.name == tool_name)
                 })
         }) {
@@ -1217,7 +1233,7 @@ impl RemoteSessionStateTracker {
                     ..
                 } => subagent_parent_info
                     .as_ref()
-                    .map_or(false, |p| p.session_id == self.target_session_id),
+                    .is_some_and(|p| p.session_id == self.target_session_id),
                 _ => false,
             }
         } else {
@@ -1317,7 +1333,7 @@ impl RemoteSessionStateTracker {
                         }
                         "ConfirmationNeeded" => {
                             let params = val.get("params").cloned();
-                            let input_preview = params.as_ref().and_then(|v| make_slim_params(v));
+                            let input_preview = params.as_ref().and_then(make_slim_params);
                             Self::upsert_active_tool(
                                 &mut s,
                                 &tool_id,
@@ -1330,7 +1346,7 @@ impl RemoteSessionStateTracker {
                         }
                         "Started" => {
                             let params = val.get("params").cloned();
-                            let input_preview = params.as_ref().and_then(|v| make_slim_params(v));
+                            let input_preview = params.as_ref().and_then(make_slim_params);
                             let tool_input = if tool_name == "AskUserQuestion"
                                 || tool_name == "Task"
                                 || tool_name == "TodoWrite"
@@ -1387,7 +1403,7 @@ impl RemoteSessionStateTracker {
                             }
                             if let Some(item) = s.active_items.iter_mut().rev().find(|i| {
                                 i.item_type == "tool"
-                                    && i.tool.as_ref().map_or(false, |t| {
+                                    && i.tool.as_ref().is_some_and(|t| {
                                         (t.id == tool_id
                                             || (allow_name_fallback && t.name == tool_name))
                                             && t.status == "running"
@@ -1414,7 +1430,7 @@ impl RemoteSessionStateTracker {
                             }
                             if let Some(item) = s.active_items.iter_mut().rev().find(|i| {
                                 i.item_type == "tool"
-                                    && i.tool.as_ref().map_or(false, |t| {
+                                    && i.tool.as_ref().is_some_and(|t| {
                                         (t.id == tool_id
                                             || (allow_name_fallback && t.name == tool_name))
                                             && t.status == "running"
@@ -1443,7 +1459,7 @@ impl RemoteSessionStateTracker {
                             }
                             if let Some(item) = s.active_items.iter_mut().rev().find(|i| {
                                 i.item_type == "tool"
-                                    && i.tool.as_ref().map_or(false, |t| {
+                                    && i.tool.as_ref().is_some_and(|t| {
                                         (t.id == tool_id
                                             || (allow_name_fallback && t.name == tool_name))
                                             && matches!(
@@ -1896,18 +1912,43 @@ impl RemoteServer {
     ) -> RemoteResponse {
         use crate::agentic::persistence::PersistenceManager;
         use crate::infrastructure::PathManager;
+        use crate::service::workspace::{get_global_workspace_service, WorkspaceKind};
 
-        let ws_path = current_workspace_path();
-        let (has_workspace, path_str, project_name, git_branch) = if let Some(ref p) = ws_path {
-            let name = p.file_name().map(|n| n.to_string_lossy().to_string());
-            let branch = git2::Repository::open(p).ok().and_then(|repo| {
-                repo.head()
-                    .ok()
-                    .and_then(|h| h.shorthand().map(String::from))
-            });
-            (true, Some(p.to_string_lossy().to_string()), name, branch)
+        let (
+            ws_path,
+            has_workspace,
+            path_str,
+            project_name,
+            git_branch,
+            workspace_kind,
+            assistant_id,
+        ) = if let Some(ws_service) = get_global_workspace_service() {
+            if let Some(ws) = ws_service.get_current_workspace().await {
+                let p = ws.root_path.clone();
+                let branch = git2::Repository::open(&p).ok().and_then(|repo| {
+                    repo.head()
+                        .ok()
+                        .and_then(|h| h.shorthand().map(String::from))
+                });
+                let kind_str = match ws.workspace_kind {
+                    WorkspaceKind::Normal => "normal",
+                    WorkspaceKind::Assistant => "assistant",
+                    WorkspaceKind::Remote => "remote",
+                };
+                (
+                    Some(p.clone()),
+                    true,
+                    Some(p.to_string_lossy().to_string()),
+                    Some(ws.name.clone()),
+                    branch,
+                    Some(kind_str.to_string()),
+                    ws.assistant_id.clone(),
+                )
+            } else {
+                (None, false, None, None, None, None, None)
+            }
         } else {
-            (false, None, None, None)
+            (None, false, None, None, None, None, None)
         };
 
         let (sessions, has_more) = if let Some(ref wp) = ws_path {
@@ -1953,6 +1994,8 @@ impl RemoteServer {
             path: path_str,
             project_name,
             git_branch,
+            workspace_kind,
+            assistant_id,
             sessions,
             has_more_sessions: has_more,
             authenticated_user_id,
@@ -1994,7 +2037,7 @@ impl RemoteServer {
                 new_messages: None,
                 total_msg_count: None,
                 active_turn: None,
-                model_catalog: None,
+                model_catalog: Box::new(None),
             };
         }
 
@@ -2015,11 +2058,11 @@ impl RemoteServer {
                 new_messages: None,
                 total_msg_count: None,
                 active_turn,
-                model_catalog: if should_send_model_catalog {
+                model_catalog: Box::new(if should_send_model_catalog {
                     current_model_catalog
                 } else {
                     None
-                },
+                }),
             };
         }
 
@@ -2077,11 +2120,11 @@ impl RemoteServer {
             new_messages: send_msgs,
             total_msg_count: send_total,
             active_turn,
-            model_catalog: if should_send_model_catalog {
+            model_catalog: Box::new(if should_send_model_catalog {
                 current_model_catalog
             } else {
                 None
-            },
+            }),
         }
     }
 
@@ -2246,23 +2289,38 @@ impl RemoteServer {
 
         match cmd {
             RemoteCommand::GetWorkspaceInfo => {
-                let ws_path = current_workspace_path();
-                let (project_name, git_branch) = if let Some(ref p) = ws_path {
-                    let name = p.file_name().map(|n| n.to_string_lossy().to_string());
-                    let branch = git2::Repository::open(p).ok().and_then(|repo| {
-                        repo.head()
-                            .ok()
-                            .and_then(|h| h.shorthand().map(String::from))
-                    });
-                    (name, branch)
-                } else {
-                    (None, None)
-                };
+                use crate::service::workspace::{get_global_workspace_service, WorkspaceKind};
+
+                if let Some(ws_service) = get_global_workspace_service() {
+                    if let Some(ws) = ws_service.get_current_workspace().await {
+                        let p = ws.root_path.clone();
+                        let branch = git2::Repository::open(&p).ok().and_then(|repo| {
+                            repo.head()
+                                .ok()
+                                .and_then(|h| h.shorthand().map(String::from))
+                        });
+                        let kind_str = match ws.workspace_kind {
+                            WorkspaceKind::Normal => "normal",
+                            WorkspaceKind::Assistant => "assistant",
+                            WorkspaceKind::Remote => "remote",
+                        };
+                        return RemoteResponse::WorkspaceInfo {
+                            has_workspace: true,
+                            path: Some(p.to_string_lossy().to_string()),
+                            project_name: Some(ws.name.clone()),
+                            git_branch: branch,
+                            workspace_kind: Some(kind_str.to_string()),
+                            assistant_id: ws.assistant_id.clone(),
+                        };
+                    }
+                }
                 RemoteResponse::WorkspaceInfo {
-                    has_workspace: ws_path.is_some(),
-                    path: ws_path.map(|p| p.to_string_lossy().to_string()),
-                    project_name,
-                    git_branch,
+                    has_workspace: false,
+                    path: None,
+                    project_name: None,
+                    git_branch: None,
+                    workspace_kind: None,
+                    assistant_id: None,
                 }
             }
             RemoteCommand::ListRecentWorkspaces => {
@@ -2275,10 +2333,18 @@ impl RemoteServer {
                 let recent = ws_service.get_recent_workspaces().await;
                 let entries = recent
                     .into_iter()
-                    .map(|w| RecentWorkspaceEntry {
-                        path: w.root_path.to_string_lossy().to_string(),
-                        name: w.name.clone(),
-                        last_opened: w.last_accessed.to_rfc3339(),
+                    .map(|w| {
+                        let kind_str = match w.workspace_kind {
+                            crate::service::workspace::WorkspaceKind::Normal => "normal",
+                            crate::service::workspace::WorkspaceKind::Assistant => "assistant",
+                            crate::service::workspace::WorkspaceKind::Remote => "remote",
+                        };
+                        RecentWorkspaceEntry {
+                            path: w.root_path.to_string_lossy().to_string(),
+                            name: w.name.clone(),
+                            last_opened: w.last_accessed.to_rfc3339(),
+                            workspace_kind: Some(kind_str.to_string()),
+                        }
                     })
                     .collect();
                 RemoteResponse::RecentWorkspaces {

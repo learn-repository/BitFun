@@ -2,6 +2,7 @@
 //!
 //! This module manages SSH connections using the pure-Russ SSH implementation
 
+use crate::service::remote_ssh::password_vault::SSHPasswordVault;
 use crate::service::remote_ssh::types::{
     SavedConnection, ServerInfo, SSHConnectionConfig, SSHConnectionResult, SSHAuthMethod,
     SSHConfigEntry, SSHConfigLookupResult,
@@ -64,7 +65,7 @@ struct SSHHandler {
     /// Expected host key (if connecting to known host)
     expected_key: Option<(String, u16, PublicKey)>,
     /// Callback for new host key verification
-    verify_callback: Option<Box<dyn Fn(String, u16, &PublicKey) -> bool + Send + Sync>>,
+    verify_callback: Option<Box<HostKeyVerifyCallback>>,
     /// Known hosts storage for verification
     known_hosts: Option<Arc<tokio::sync::RwLock<HashMap<String, KnownHostEntry>>>>,
     /// Host info for known hosts lookup
@@ -76,6 +77,8 @@ struct SSHHandler {
     /// Uses std::sync::Mutex so it can be read from sync map_err closures.
     disconnect_reason: Arc<std::sync::Mutex<Option<String>>>,
 }
+
+type HostKeyVerifyCallback = dyn Fn(String, u16, &PublicKey) -> bool + Send + Sync;
 
 impl SSHHandler {
     #[allow(dead_code)]
@@ -270,6 +273,7 @@ pub struct SSHConnectionManager {
     /// Remote workspace persistence (multiple workspaces)
     remote_workspaces: Arc<tokio::sync::RwLock<Vec<crate::service::remote_ssh::types::RemoteWorkspace>>>,
     remote_workspace_path: std::path::PathBuf,
+    password_vault: std::sync::Arc<SSHPasswordVault>,
 }
 
 impl SSHConnectionManager {
@@ -278,6 +282,7 @@ impl SSHConnectionManager {
         let config_path = data_dir.join("ssh_connections.json");
         let known_hosts_path = data_dir.join("known_hosts");
         let remote_workspace_path = data_dir.join("remote_workspace.json");
+        let password_vault = std::sync::Arc::new(SSHPasswordVault::new(data_dir));
         Self {
             connections: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             saved_connections: Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -286,6 +291,7 @@ impl SSHConnectionManager {
             known_hosts_path,
             remote_workspaces: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             remote_workspace_path,
+            password_vault,
         }
     }
 
@@ -527,7 +533,7 @@ impl SSHConnectionManager {
 
         let has_proxy_command = ssh_cfg_has(&host_settings, "ProxyCommand");
 
-        return SSHConfigLookupResult {
+        SSHConfigLookupResult {
             found: true,
             config: Some(SSHConfigEntry {
                 host: host.to_string(),
@@ -537,7 +543,7 @@ impl SSHConnectionManager {
                 identity_file,
                 agent: if has_proxy_command { None } else { Some(true) },
             }),
-        };
+        }
     }
 
     #[cfg(not(feature = "ssh_config"))]
@@ -666,6 +672,21 @@ impl SSHConnectionManager {
         self.saved_connections.read().await.clone()
     }
 
+    /// SSH `host` field from the saved profile with this `connection_id` (works when not connected).
+    /// Used to resolve session mirror paths when workspace metadata omitted `sshHost`.
+    pub async fn get_saved_host_for_connection_id(&self, connection_id: &str) -> Option<String> {
+        let cid = connection_id.trim();
+        if cid.is_empty() {
+            return None;
+        }
+        let guard = self.saved_connections.read().await;
+        guard
+            .iter()
+            .find(|c| c.id == cid)
+            .map(|c| c.host.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     /// Save a connection configuration
     pub async fn save_connection(&self, config: &SSHConnectionConfig) -> anyhow::Result<()> {
         let mut guard = self.saved_connections.write().await;
@@ -685,15 +706,49 @@ impl SSHConnectionManager {
             username: config.username.clone(),
             auth_type: match &config.auth {
                 SSHAuthMethod::Password { .. } => crate::service::remote_ssh::types::SavedAuthType::Password,
-                SSHAuthMethod::PrivateKey { key_path, .. } => crate::service::remote_ssh::types::SavedAuthType::PrivateKey { key_path: key_path.clone() },
-                SSHAuthMethod::Agent => crate::service::remote_ssh::types::SavedAuthType::Agent,
+                SSHAuthMethod::PrivateKey { key_path, .. } => {
+                    crate::service::remote_ssh::types::SavedAuthType::PrivateKey {
+                        key_path: key_path.clone(),
+                    }
+                }
             },
             default_workspace: config.default_workspace.clone(),
             last_connected: Some(chrono::Utc::now().timestamp() as u64),
         });
 
         drop(guard);
+
+        match &config.auth {
+            SSHAuthMethod::Password { password } => {
+                if !password.is_empty() {
+                    self.password_vault
+                        .store(&config.id, password)
+                        .await
+                        .with_context(|| format!("store ssh password vault for {}", config.id))?;
+                }
+            }
+            SSHAuthMethod::PrivateKey { .. } => {
+                self.password_vault.remove(&config.id).await?;
+            }
+        }
+
         self.save_connections().await
+    }
+
+    /// Decrypt stored password for password-based saved connections (auto-reconnect).
+    pub async fn load_stored_password(&self, connection_id: &str) -> anyhow::Result<Option<String>> {
+        self.password_vault.load(connection_id).await
+    }
+
+    /// Whether the vault has a stored password for this connection (skip auto-reconnect when false).
+    pub async fn has_stored_password(&self, connection_id: &str) -> bool {
+        match self.load_stored_password(connection_id).await {
+            Ok(opt) => opt.is_some(),
+            Err(e) => {
+                log::warn!("has_stored_password failed for {}: {}", connection_id, e);
+                false
+            }
+        }
     }
 
     /// Delete a saved connection
@@ -701,6 +756,7 @@ impl SSHConnectionManager {
         let mut guard = self.saved_connections.write().await;
         guard.retain(|c| c.id != connection_id);
         drop(guard);
+        self.password_vault.remove(connection_id).await?;
         self.save_connections().await
     }
 
@@ -765,7 +821,6 @@ impl SSHConnectionManager {
                 log::info!("Successfully decoded private key");
                 Some(key_pair)
             }
-            SSHAuthMethod::Agent => None,
         };
 
         let ssh_config = Arc::new(russh::client::Config {
@@ -876,12 +931,6 @@ impl SSHConnectionManager {
                     return Err(anyhow!("Failed to load private key"));
                 }
             }
-            SSHAuthMethod::Agent => {
-                log::debug!("Using SSH agent authentication - agent auth not supported, returning false");
-                // Agent auth is not supported in russh - return false to indicate auth failed
-                // The caller should try another auth method
-                false
-            }
         };
 
         if !auth_success {
@@ -890,8 +939,26 @@ impl SSHConnectionManager {
         }
         log::info!("Authentication successful for user {}", config.username);
 
-        // Get server info
-        let server_info = Self::get_server_info_internal(&handle).await;
+        // Resolve remote home to an absolute path (SFTP does not expand `~`; never rely on literal `~` in UI).
+        let mut server_info = Self::get_server_info_internal(&handle).await;
+        if server_info
+            .as_ref()
+            .map(|s| s.home_dir.trim().is_empty())
+            .unwrap_or(true)
+        {
+            if let Some(home) = Self::probe_remote_home_dir(&handle).await {
+                match &mut server_info {
+                    Some(si) => si.home_dir = home,
+                    None => {
+                        server_info = Some(ServerInfo {
+                            os_type: "unknown".to_string(),
+                            hostname: "unknown".to_string(),
+                            home_dir: home,
+                        });
+                    }
+                }
+            }
+        }
 
         let connection_id = config.id.clone();
 
@@ -916,9 +983,8 @@ impl SSHConnectionManager {
         })
     }
 
-    /// Get server information
+    /// Get server information (partial lines allowed so we can still fill `home_dir` via [`Self::probe_remote_home_dir`]).
     async fn get_server_info_internal(handle: &Handle<SSHHandler>) -> Option<ServerInfo> {
-        // Try to get server info via SSH session
         let (stdout, _stderr, exit_status) = Self::execute_command_internal(handle, "uname -s && hostname && echo $HOME")
             .await
             .ok()?;
@@ -928,15 +994,40 @@ impl SSHConnectionManager {
         }
 
         let lines: Vec<&str> = stdout.trim().lines().collect();
-        if lines.len() < 3 {
+        if lines.is_empty() {
             return None;
         }
 
         Some(ServerInfo {
             os_type: lines[0].to_string(),
-            hostname: lines[1].to_string(),
-            home_dir: lines[2].to_string(),
+            hostname: lines.get(1).unwrap_or(&"").to_string(),
+            home_dir: lines.get(2).unwrap_or(&"").to_string(),
         })
+    }
+
+    /// Resolve remote home directory via SSH `exec` (tilde and `$HOME` are expanded by the remote shell).
+    async fn probe_remote_home_dir(handle: &Handle<SSHHandler>) -> Option<String> {
+        const PROBES: &[&str] = &[
+            "sh -c 'echo ~'",
+            "echo $HOME",
+            "bash -lc 'echo ~'",
+            "bash -c 'echo ~'",
+            "sh -c 'getent passwd \"$(id -un)\" 2>/dev/null | cut -d: -f6'",
+        ];
+        for cmd in PROBES {
+            let Ok((stdout, _, status)) = Self::execute_command_internal(handle, cmd).await else {
+                continue;
+            };
+            if status != 0 {
+                continue;
+            }
+            let first = stdout.trim().lines().next().unwrap_or("").trim();
+            if first.is_empty() || first == "~" {
+                continue;
+            }
+            return Some(first.to_string());
+        }
+        None
     }
 
     /// Execute a command on the remote server
@@ -1016,6 +1107,47 @@ impl SSHConnectionManager {
         guard.get(connection_id).and_then(|c| c.server_info.clone())
     }
 
+    /// If `home_dir` is missing, run [`Self::probe_remote_home_dir`] and persist it on the connection.
+    pub async fn resolve_remote_home_if_missing(&self, connection_id: &str) -> Option<ServerInfo> {
+        let need_probe = {
+            let guard = self.connections.read().await;
+            match guard.get(connection_id) {
+                None => return None,
+                Some(conn) => conn
+                    .server_info
+                    .as_ref()
+                    .map(|s| s.home_dir.trim().is_empty())
+                    .unwrap_or(true),
+            }
+        };
+        if !need_probe {
+            return self.get_server_info(connection_id).await;
+        }
+        let handle = {
+            let guard = self.connections.read().await;
+            guard.get(connection_id)?.handle.clone()
+        };
+        let Some(home) = Self::probe_remote_home_dir(&handle).await else {
+            return self.get_server_info(connection_id).await;
+        };
+        {
+            let mut guard = self.connections.write().await;
+            if let Some(conn) = guard.get_mut(connection_id) {
+                match conn.server_info.as_mut() {
+                    Some(si) => si.home_dir = home.clone(),
+                    None => {
+                        conn.server_info = Some(ServerInfo {
+                            os_type: "unknown".to_string(),
+                            hostname: "unknown".to_string(),
+                            home_dir: home,
+                        });
+                    }
+                }
+            }
+        }
+        self.get_server_info(connection_id).await
+    }
+
     /// Get connection configuration
     pub async fn get_connection_config(&self, connection_id: &str) -> Option<SSHConnectionConfig> {
         let guard = self.connections.read().await;
@@ -1025,6 +1157,40 @@ impl SSHConnectionManager {
     // ============================================================================
     // SFTP Operations
     // ============================================================================
+
+    /// Expand leading `~` using the remote user's home from [`ServerInfo`] (SFTP paths are not shell-expanded).
+    pub async fn resolve_sftp_path(&self, connection_id: &str, path: &str) -> anyhow::Result<String> {
+        let path = path.trim();
+        if path.is_empty() {
+            return Err(anyhow!("Empty remote path"));
+        }
+        if path == "~" || path.starts_with("~/") {
+            let guard = self.connections.read().await;
+            let home = guard
+                .get(connection_id)
+                .and_then(|c| c.server_info.as_ref())
+                .map(|s| s.home_dir.trim())
+                .filter(|h| !h.is_empty());
+            let home = match home {
+                Some(h) => h.to_string(),
+                None => {
+                    return Err(anyhow!(
+                        "Cannot use '~' in remote path: home directory is not available for this connection"
+                    ));
+                }
+            };
+            if path == "~" || path == "~/" {
+                return Ok(home);
+            }
+            let rest = path[2..].trim_start_matches('/');
+            if rest.is_empty() {
+                return Ok(home);
+            }
+            Ok(format!("{}/{}", home.trim_end_matches('/'), rest))
+        } else {
+            Ok(path.to_string())
+        }
+    }
 
     /// Get or create SFTP session for a connection
     pub async fn get_sftp(&self, connection_id: &str) -> anyhow::Result<Arc<SftpSession>> {
@@ -1073,8 +1239,9 @@ impl SSHConnectionManager {
 
     /// Read a file via SFTP
     pub async fn sftp_read(&self, connection_id: &str, path: &str) -> anyhow::Result<Vec<u8>> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        let mut file = sftp.open(path).await
+        let mut file = sftp.open(&path).await
             .map_err(|e| anyhow!("Failed to open remote file '{}': {}", path, e))?;
 
         let mut buffer = Vec::new();
@@ -1087,8 +1254,9 @@ impl SSHConnectionManager {
 
     /// Write a file via SFTP
     pub async fn sftp_write(&self, connection_id: &str, path: &str, content: &[u8]) -> anyhow::Result<()> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        let mut file = sftp.create(path).await
+        let mut file = sftp.create(&path).await
             .map_err(|e| anyhow!("Failed to create remote file '{}': {}", path, e))?;
 
         use tokio::io::AsyncWriteExt;
@@ -1103,72 +1271,81 @@ impl SSHConnectionManager {
 
     /// Read directory via SFTP
     pub async fn sftp_read_dir(&self, connection_id: &str, path: &str) -> anyhow::Result<ReadDir> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        let entries = sftp.read_dir(path).await
+        let entries = sftp.read_dir(&path).await
             .map_err(|e| anyhow!("Failed to read directory '{}': {}", path, e))?;
         Ok(entries)
     }
 
     /// Create directory via SFTP
     pub async fn sftp_mkdir(&self, connection_id: &str, path: &str) -> anyhow::Result<()> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        sftp.create_dir(path).await
+        sftp.create_dir(&path).await
             .map_err(|e| anyhow!("Failed to create directory '{}': {}", path, e))?;
         Ok(())
     }
 
     /// Create directory and all parents via SFTP
     pub async fn sftp_mkdir_all(&self, connection_id: &str, path: &str) -> anyhow::Result<()> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
 
         // Check if path exists
-        match sftp.as_ref().try_exists(path).await {
+        match sftp.as_ref().try_exists(&path).await {
             Ok(true) => return Ok(()), // Already exists
             Ok(false) => {}
             Err(_) => {}
         }
 
         // Try to create
-        sftp.as_ref().create_dir(path).await
+        sftp.as_ref().create_dir(&path).await
             .map_err(|e| anyhow!("Failed to create directory '{}': {}", path, e))?;
         Ok(())
     }
 
     /// Remove file via SFTP
     pub async fn sftp_remove(&self, connection_id: &str, path: &str) -> anyhow::Result<()> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        sftp.remove_file(path).await
+        sftp.remove_file(&path).await
             .map_err(|e| anyhow!("Failed to remove file '{}': {}", path, e))?;
         Ok(())
     }
 
     /// Remove directory via SFTP
     pub async fn sftp_rmdir(&self, connection_id: &str, path: &str) -> anyhow::Result<()> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        sftp.remove_dir(path).await
+        sftp.remove_dir(&path).await
             .map_err(|e| anyhow!("Failed to remove directory '{}': {}", path, e))?;
         Ok(())
     }
 
     /// Rename/move via SFTP
     pub async fn sftp_rename(&self, connection_id: &str, old_path: &str, new_path: &str) -> anyhow::Result<()> {
+        let old_path = self.resolve_sftp_path(connection_id, old_path).await?;
+        let new_path = self.resolve_sftp_path(connection_id, new_path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        sftp.rename(old_path, new_path).await
+        sftp.rename(&old_path, &new_path).await
             .map_err(|e| anyhow!("Failed to rename '{}' to '{}': {}", old_path, new_path, e))?;
         Ok(())
     }
 
     /// Check if path exists via SFTP
     pub async fn sftp_exists(&self, connection_id: &str, path: &str) -> anyhow::Result<bool> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        sftp.as_ref().try_exists(path).await
+        sftp.as_ref().try_exists(&path).await
             .map_err(|e| anyhow!("Failed to check if '{}' exists: {}", path, e))
     }
 
     /// Get file metadata via SFTP
     pub async fn sftp_stat(&self, connection_id: &str, path: &str) -> anyhow::Result<russh_sftp::client::fs::Metadata> {
+        let path = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        sftp.as_ref().metadata(path).await
+        sftp.as_ref().metadata(&path).await
             .map_err(|e| anyhow!("Failed to stat '{}': {}", path, e))
     }
 

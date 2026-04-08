@@ -84,14 +84,17 @@ pub struct ToolConfirmationResponse {
 }
 
 fn build_tool_context(workspace_path: Option<&str>) -> ToolUseContext {
+    let normalized_workspace_path = workspace_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+
     ToolUseContext {
         tool_call_id: None,
         message_id: None,
         agent_type: None,
         session_id: None,
         dialog_turn_id: None,
-        workspace: workspace_path
-            .filter(|path| !path.is_empty())
+        workspace: normalized_workspace_path
             .map(|path| WorkspaceBinding::new(None, PathBuf::from(path))),
         safe_mode: Some(false),
         abort_controller: None,
@@ -99,6 +102,7 @@ fn build_tool_context(workspace_path: Option<&str>) -> ToolUseContext {
         options: None,
         response_state: None,
         image_context_provider: Some(Arc::new(create_image_context_provider())),
+        computer_use_host: None,
         subagent_parent_info: None,
         cancellation_token: None,
         workspace_services: None,
@@ -156,7 +160,7 @@ pub async fn get_all_tools_info() -> Result<Vec<ToolInfo>, String> {
         tool_infos.push(ToolInfo {
             name: tool.name().to_string(),
             description,
-            input_schema: tool.input_schema(),
+            input_schema: tool.input_schema_for_model().await,
             is_readonly: tool.is_readonly(),
             is_concurrency_safe: tool.is_concurrency_safe(None),
             needs_permissions: tool.needs_permissions(None),
@@ -183,7 +187,7 @@ pub async fn get_readonly_tools_info() -> Result<Vec<ToolInfo>, String> {
         tool_infos.push(ToolInfo {
             name: tool.name().to_string(),
             description,
-            input_schema: tool.input_schema(),
+            input_schema: tool.input_schema_for_model().await,
             is_readonly: tool.is_readonly(),
             is_concurrency_safe: tool.is_concurrency_safe(None),
             needs_permissions: tool.needs_permissions(None),
@@ -207,7 +211,7 @@ pub async fn get_tool_info(tool_name: String) -> Result<Option<ToolInfo>, String
             return Ok(Some(ToolInfo {
                 name: tool.name().to_string(),
                 description,
-                input_schema: tool.input_schema(),
+                input_schema: tool.input_schema_for_model().await,
                 is_readonly: tool.is_readonly(),
                 is_concurrency_safe: tool.is_concurrency_safe(None),
                 needs_permissions: tool.needs_permissions(None),
@@ -297,7 +301,9 @@ pub async fn execute_tool(request: ToolExecutionRequest) -> Result<ToolExecution
                     } else {
                         Some(serde_json::json!({
                                         "results": results.iter().map(|r| match r {
-                        bitfun_core::agentic::tools::framework::ToolResult::Result { data, .. } => data.clone(),
+                        bitfun_core::agentic::tools::framework::ToolResult::Result { data, .. } => {
+                            data.clone()
+                        }
                         bitfun_core::agentic::tools::framework::ToolResult::Progress { content, .. } => content.clone(),
                         bitfun_core::agentic::tools::framework::ToolResult::StreamChunk { data, .. } => data.clone(),
                                         }).collect::<Vec<_>>()

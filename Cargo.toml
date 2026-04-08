@@ -4,6 +4,7 @@ members = [
     "src/crates/core",
     "src/crates/transport",
     "src/crates/api-layer",
+    "src/crates/webdriver",
     "src/apps/cli",
     "src/apps/desktop",
     "src/apps/server",
@@ -18,7 +19,7 @@ resolver = "2"
 
 # Shared package metadata — single source of truth for version
 [workspace.package]
-version = "0.2.0" # x-release-please-version
+version = "0.2.2" # x-release-please-version
 authors = ["BitFun Team"]
 edition = "2021"
 
@@ -71,6 +72,7 @@ glob = "0.3"
 ignore = "0.4"
 notify = "6.1"
 dirs = "5.0"
+dark-light = "1.1"
 dunce = "1"
 filetime = "0.2"
 zip = "0.6" # plugin load
@@ -104,6 +106,7 @@ tauri-plugin-dialog = "2.6"
 tauri-plugin-fs = "2"
 tauri-plugin-log = "2"
 tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
 tauri-build = { version = "2", features = [] }
 
 # Windows-specific dependencies

@@ -170,9 +170,19 @@ impl FileTreeService {
     }
 
     pub async fn build_tree(&self, root_path: &str) -> Result<Vec<FileTreeNode>, String> {
+        self.build_tree_with_remote_hint(root_path, None).await
+    }
+
+    pub async fn build_tree_with_remote_hint(
+        &self,
+        root_path: &str,
+        preferred_remote_connection_id: Option<&str>,
+    ) -> Result<Vec<FileTreeNode>, String> {
         // For remote workspaces, delegate to get_directory_contents which handles SSH
         if crate::service::remote_ssh::workspace_state::is_remote_path(root_path).await {
-            return self.get_directory_contents(root_path).await;
+            return self
+                .get_directory_contents_with_remote_hint(root_path, preferred_remote_connection_id)
+                .await;
         }
 
         let root_path_buf = PathBuf::from(root_path);
@@ -196,8 +206,8 @@ impl FileTreeService {
     ) -> BitFunResult<(Vec<FileTreeNode>, FileTreeStatistics)> {
         // For remote workspaces, return simple directory listing with empty stats
         if crate::service::remote_ssh::workspace_state::is_remote_path(root_path).await {
-            let nodes = self.get_directory_contents(root_path).await
-                .map_err(|e| BitFunError::service(e))?;
+            let nodes = self.get_directory_contents_with_remote_hint(root_path, None).await
+                .map_err(BitFunError::service)?;
             let stats = FileTreeStatistics {
                 total_files: nodes.iter().filter(|n| !n.is_directory).count(),
                 total_directories: nodes.iter().filter(|n| n.is_directory).count(),
@@ -242,7 +252,7 @@ impl FileTreeService {
                 &mut stats,
             )
             .await
-            .map_err(|e| BitFunError::service(e))?;
+            .map_err(BitFunError::service)?;
 
         Ok((nodes, stats))
     }
@@ -346,9 +356,9 @@ impl FileTreeService {
                 }
 
                 let last_modified = metadata.and_then(|m| {
-                    m.modified().ok().and_then(|t| {
+                    m.modified().ok().map(|t| {
                         let datetime: chrono::DateTime<chrono::Utc> = t.into();
-                        Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+                        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
                     })
                 });
 
@@ -379,8 +389,8 @@ impl FileTreeService {
                 .with_depth(depth)
                 .with_enhanced_info(is_symlink, permissions, mime_type, None);
 
-                if is_directory {
-                    if !is_symlink || self.options.follow_symlinks {
+                if is_directory
+                    && (!is_symlink || self.options.follow_symlinks) {
                         match self
                             .build_tree_recursive(&entry_path, root_path, visited, depth + 1)
                             .await
@@ -393,7 +403,6 @@ impl FileTreeService {
                             }
                         }
                     }
-                }
 
                 nodes.push(node);
             }
@@ -541,9 +550,9 @@ impl FileTreeService {
                 }
 
                 let last_modified = metadata.and_then(|m| {
-                    m.modified().ok().and_then(|t| {
+                    m.modified().ok().map(|t| {
                         let datetime: chrono::DateTime<chrono::Utc> = t.into();
-                        Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+                        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
                     })
                 });
 
@@ -574,8 +583,8 @@ impl FileTreeService {
                 .with_depth(depth)
                 .with_enhanced_info(is_symlink, permissions, mime_type, None);
 
-                if is_directory {
-                    if !is_symlink || self.options.follow_symlinks {
+                if is_directory
+                    && (!is_symlink || self.options.follow_symlinks) {
                         match self
                             .build_tree_recursive_with_stats(
                                 &entry_path,
@@ -594,7 +603,6 @@ impl FileTreeService {
                             }
                         }
                     }
-                }
 
                 nodes.push(node);
             }
@@ -629,8 +637,23 @@ impl FileTreeService {
     }
 
     pub async fn get_directory_contents(&self, path: &str) -> Result<Vec<FileTreeNode>, String> {
+        self.get_directory_contents_with_remote_hint(path, None).await
+    }
+
+    /// `preferred_remote_connection_id`: when set (e.g. from workspace/session), resolves SSH file ops
+    /// without relying on global `active_connection_hint` — required when multiple remotes share the same root path.
+    pub async fn get_directory_contents_with_remote_hint(
+        &self,
+        path: &str,
+        preferred_remote_connection_id: Option<&str>,
+    ) -> Result<Vec<FileTreeNode>, String> {
         // Check if this path belongs to any registered remote workspace
-        if let Some(entry) = crate::service::remote_ssh::workspace_state::lookup_remote_connection(path).await {
+        if let Some(entry) = crate::service::remote_ssh::workspace_state::lookup_remote_connection_with_hint(
+            path,
+            preferred_remote_connection_id,
+        )
+        .await
+        {
             if let Some(manager) = crate::service::remote_ssh::workspace_state::get_remote_workspace_manager() {
                 if let Some(file_service) = manager.get_file_service().await {
                     match file_service.read_dir(&entry.connection_id, path).await {
@@ -1015,6 +1038,7 @@ impl FileTreeService {
         Ok(final_results)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn search_file_content_static(
         path: &Path,
         file_name: &str,

@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-use-before-define */
 /**
  * AIRulesMemoryConfig — merged Rules & Memory settings page.
  * Two sections (Rules / Memory), each with inner tabs: User | Project.
  * Rules: full CRUD for user/project. Memory: user-level CRUD; project-level placeholder.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Edit2, Trash2, X, Eye, EyeOff } from 'lucide-react';
 import { Select, Input, Textarea, Button, IconButton, Switch, Tooltip, Modal } from '@/component-library';
@@ -329,7 +330,7 @@ function RulesPanel() {
 function MemoryPanel() {
   const { t } = useTranslation('settings/ai-memory');
   const { t: tScope } = useTranslation('settings/ai-context');
-  const notification = useNotification();
+  const { error: notifyError, success: notifySuccess } = useNotification();
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(new Set());
   const [memories, setMemories] = useState<AIMemory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -338,21 +339,21 @@ function MemoryPanel() {
   const [editingMemory, setEditingMemory] = useState<AIMemory | null>(null);
   const [scopeTab, setScopeTab] = useState<ScopeTab>('user');
 
-  const loadMemories = async () => {
+  const loadMemories = useCallback(async () => {
     try {
       setLoading(true);
       const data = await getAllMemories();
       setMemories(data);
     } catch (error) {
-      notification.error(t('messages.loadFailed', { error: String(error) }));
+      notifyError(t('messages.loadFailed', { error: String(error) }));
     } finally {
       setLoading(false);
     }
-  };
+  }, [notifyError, t]);
 
   React.useEffect(() => {
     if (scopeTab === 'user') loadMemories();
-  }, [scopeTab]);
+  }, [scopeTab, loadMemories]);
 
   const memoryTypeMap: Record<MemoryType, { label: string; color: string }> = {
     tech_preference: { label: t('memoryTypes.tech_preference'), color: '#60a5fa' },
@@ -381,11 +382,11 @@ function MemoryPanel() {
     try {
       setIsDeleting(true);
       await deleteMemory(id);
-      notification.success(t('messages.deleteSuccess'));
+      notifySuccess(t('messages.deleteSuccess'));
       await loadMemories();
     } catch (error) {
       log.error('Failed to delete memory', { memoryId: id, error });
-      notification.error(t('messages.deleteFailed', { error: String(error) }));
+      notifyError(t('messages.deleteFailed', { error: String(error) }));
     } finally {
       setIsDeleting(false);
     }
@@ -396,7 +397,7 @@ function MemoryPanel() {
       await toggleMemory(id);
       loadMemories();
     } catch (error) {
-      notification.error(t('messages.toggleFailed', { error: String(error) }));
+      notifyError(t('messages.toggleFailed', { error: String(error) }));
     }
   };
 

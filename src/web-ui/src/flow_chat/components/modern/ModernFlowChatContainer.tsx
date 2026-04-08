@@ -47,7 +47,7 @@ export const ModernFlowChatContainer: React.FC<ModernFlowChatContainerProps> = (
   const autoPinnedSessionIdRef = useRef<string | null>(null);
   const virtualListRef = useRef<VirtualMessageListRef>(null);
   const { workspacePath } = useWorkspaceContext();
-  const { isBtwSession, btwOrigin, btwParentTitle } = useFlowChatSessionRelationship(activeSession);
+  const { btwOrigin, btwParentTitle } = useFlowChatSessionRelationship(activeSession);
   const {
     exploreGroupStates,
     onExploreGroupToggle: handleExploreGroupToggle,
@@ -100,7 +100,7 @@ export const ModernFlowChatContainer: React.FC<ModernFlowChatContainerProps> = (
     onSwitchToChatPanel,
     handleToolConfirm,
     handleToolReject,
-    activeSession?.sessionId,
+    activeSession,
     config,
     exploreGroupStates,
     handleExploreGroupToggle,
@@ -108,13 +108,6 @@ export const ModernFlowChatContainer: React.FC<ModernFlowChatContainerProps> = (
     handleExpandAllInTurn,
     handleCollapseGroup,
   ]);
-
-  const handleCreateBtwSession = useCallback(() => {
-    if (!activeSession?.sessionId) return;
-    window.dispatchEvent(new CustomEvent('fill-chat-input', {
-      detail: { message: '/btw ' }
-    }));
-  }, [activeSession?.sessionId]);
 
   const turnSummaries = useMemo<FlowChatHeaderTurnSummary[]>(() => {
     return (activeSession?.dialogTurns ?? [])
@@ -222,7 +215,7 @@ export const ModernFlowChatContainer: React.FC<ModernFlowChatContainerProps> = (
   
   return (
     <FlowChatContext.Provider value={contextValue}>
-      <div className={`modern-flowchat-container ${className}`}>
+      <div className={`modern-flowchat-container flow-chat-typography ${className}`}>
         <FlowChatHeader
           currentTurn={effectiveVisibleTurnInfo?.turnIndex ?? 0}
           totalTurns={effectiveVisibleTurnInfo?.totalTurns ?? 0}
@@ -231,7 +224,6 @@ export const ModernFlowChatContainer: React.FC<ModernFlowChatContainerProps> = (
           sessionId={activeSession?.sessionId}
           btwOrigin={btwOrigin}
           btwParentTitle={btwParentTitle}
-          onCreateBtwSession={activeSession?.sessionId && !isBtwSession ? handleCreateBtwSession : undefined}
           turns={turnSummaries}
           onJumpToTurn={handleJumpToTurn}
           onJumpToPreviousTurn={handleJumpToPreviousTurn}

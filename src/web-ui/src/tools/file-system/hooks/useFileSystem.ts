@@ -3,6 +3,12 @@ import { FileSystemNode, FileSystemState, FileSystemOptions } from '../types';
 import { fileSystemService } from '../services/FileSystemService';
 import { directoryCache } from '../services/DirectoryCache';
 import { createLogger } from '@/shared/utils/logger';
+import {
+  expandedFoldersAddEquivalent,
+  expandedFoldersContains,
+  expandedFoldersDeleteEquivalent,
+  pathsEquivalentFs,
+} from '@/shared/utils/pathUtils';
 import { useI18n } from '@/infrastructure/i18n';
 import { globalEventBus } from '@/infrastructure/event-bus';
 
@@ -13,9 +19,41 @@ const EMPTY_FILE_TREE: FileSystemNode[] = [];
 /** Polling keeps remote workspaces and lazy-loaded trees in sync when OS/file watch is unreliable. */
 const FILE_TREE_POLL_INTERVAL_MS = 1000;
 
+function areStringArraysEqual(left: string[] = [], right: string[] = []): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}
+
+function cloneOptions(options: FileSystemOptions): FileSystemOptions {
+  return {
+    ...options,
+    excludePatterns: [...(options.excludePatterns ?? [])],
+  };
+}
+
+function didReloadRelevantOptionsChange(
+  previous: FileSystemOptions | null,
+  current: FileSystemOptions
+): boolean {
+  if (!previous) {
+    return false;
+  }
+
+  return (
+    previous.showHiddenFiles !== current.showHiddenFiles ||
+    previous.sortBy !== current.sortBy ||
+    previous.sortOrder !== current.sortOrder ||
+    previous.maxDepth !== current.maxDepth ||
+    !areStringArraysEqual(previous.excludePatterns, current.excludePatterns)
+  );
+}
+
 function findNodeByPath(nodes: FileSystemNode[], targetPath: string): FileSystemNode | undefined {
   for (const node of nodes) {
-    if (node.path === targetPath) return node;
+    if (pathsEquivalentFs(node.path, targetPath)) return node;
     if (node.children) {
       const found = findNodeByPath(node.children, targetPath);
       if (found) return found;
@@ -86,9 +124,12 @@ export function useFileSystem(options: UseFileSystemOptions = {}): UseFileSystem
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const rootPathRef = useRef<string | undefined>(rootPath);
+  rootPathRef.current = rootPath;
   const isLoadingRef = useRef(false);
   const optionsRef = useRef(state.options);
   const expandedFoldersRef = useRef(state.expandedFolders);
+  const lastReloadOptionsRef = useRef<FileSystemOptions | null>(cloneOptions(state.options));
+  const lastReloadRootPathRef = useRef<string | undefined>(rootPath);
   
   useEffect(() => {
     optionsRef.current = state.options;
@@ -273,14 +314,12 @@ export function useFileSystem(options: UseFileSystemOptions = {}): UseFileSystem
 
   const expandFolder = useCallback((folderPath: string, expanded?: boolean) => {
     setState(prev => {
-      const newExpandedFolders = new Set(prev.expandedFolders);
-      const shouldExpand = expanded !== undefined ? expanded : !newExpandedFolders.has(folderPath);
-      
-      if (shouldExpand) {
-        newExpandedFolders.add(folderPath);
-      } else {
-        newExpandedFolders.delete(folderPath);
-      }
+      const shouldExpand =
+        expanded !== undefined ? expanded : !expandedFoldersContains(prev.expandedFolders, folderPath);
+
+      const newExpandedFolders = shouldExpand
+        ? expandedFoldersAddEquivalent(prev.expandedFolders, folderPath)
+        : expandedFoldersDeleteEquivalent(prev.expandedFolders, folderPath);
 
       return {
         ...prev,
@@ -295,7 +334,7 @@ export function useFileSystem(options: UseFileSystemOptions = {}): UseFileSystem
     children: FileSystemNode[]
   ): FileSystemNode[] => {
     return nodes.map(node => {
-      if (node.path === targetPath) {
+      if (pathsEquivalentFs(node.path, targetPath)) {
         return {
           ...node,
           children: children,
@@ -343,29 +382,21 @@ export function useFileSystem(options: UseFileSystemOptions = {}): UseFileSystem
   }, [updateNodeChildrenInTree]);
 
   const expandFolderLazy = useCallback(async (folderPath: string) => {
-    if (state.expandedFolders.has(folderPath)) {
-      setState(prev => {
-        const newExpandedFolders = new Set(prev.expandedFolders);
-        newExpandedFolders.delete(folderPath);
-        return {
-          ...prev,
-          expandedFolders: newExpandedFolders
-        };
-      });
+    if (expandedFoldersContains(state.expandedFolders, folderPath)) {
+      setState(prev => ({
+        ...prev,
+        expandedFolders: expandedFoldersDeleteEquivalent(prev.expandedFolders, folderPath),
+      }));
       return;
     }
 
     const cachedChildren = directoryCache.get(folderPath);
     const needsLoading = !loadedPathsRef.current.has(folderPath) && !cachedChildren;
 
-    setState(prev => {
-      const newExpandedFolders = new Set(prev.expandedFolders);
-      newExpandedFolders.add(folderPath);
-      return {
-        ...prev,
-        expandedFolders: newExpandedFolders
-      };
-    });
+    setState(prev => ({
+      ...prev,
+      expandedFolders: expandedFoldersAddEquivalent(prev.expandedFolders, folderPath),
+    }));
 
     if (cachedChildren) {
       setState(prev => ({
@@ -506,13 +537,33 @@ export function useFileSystem(options: UseFileSystemOptions = {}): UseFileSystem
         silentRefreshing: false
       }));
     }
-  }, [autoLoad, rootPath, enableLazyLoad]);
+  }, [autoLoad, rootPath, enableLazyLoad, loadFileTree, loadFileTreeLazy]);
 
   useEffect(() => {
-    if (rootPath && state.fileTree.length > 0) {
-      loadFileTree();
+    const rootChanged = lastReloadRootPathRef.current !== rootPath;
+    const optionsChanged = didReloadRelevantOptionsChange(lastReloadOptionsRef.current, state.options);
+
+    lastReloadRootPathRef.current = rootPath;
+    lastReloadOptionsRef.current = cloneOptions(state.options);
+
+    if (!rootPath || rootChanged || !optionsChanged || state.fileTree.length === 0) {
+      return;
     }
-  }, [state.options.showHiddenFiles, state.options.excludePatterns]);
+
+    if (enableLazyLoad) {
+      void loadFileTreeLazy(rootPath);
+      return;
+    }
+
+    void loadFileTree(rootPath);
+  }, [
+    enableLazyLoad,
+    loadFileTree,
+    loadFileTreeLazy,
+    rootPath,
+    state.fileTree.length,
+    state.options,
+  ]);
 
   useEffect(() => {
     if (!rootPath) {

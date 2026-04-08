@@ -3,7 +3,7 @@
  * Supports mixed streaming output.
  */
 
-import type { SessionKind } from '@/shared/types/session-history';
+import type { DialogTurnKind, SessionKind } from '@/shared/types/session-history';
 
 // Base type for streaming items.
 export interface FlowItem {
@@ -35,6 +35,7 @@ export interface FlowThinkingItem extends FlowItem {
 export interface FlowToolItem extends FlowItem {
   type: 'tool';
   toolName: string;
+  terminalSessionId?: string;
   toolCall: {
     input: any;
     id: string;
@@ -105,11 +106,13 @@ export interface TokenUsage {
 export interface DialogTurn {
   id: string;
   sessionId: string; // Used for event filtering.
+  kind?: DialogTurnKind;
   userMessage: {
     id: string;
     content: string;
     timestamp: number;
     hasImages?: boolean;
+    metadata?: Record<string, any>;
     images?: Array<{
       id: string;
       name: string;
@@ -130,7 +133,7 @@ export interface DialogTurn {
   enhancedMessage?: string;
   
   modelRounds: ModelRound[];  // Model rounds in chronological order.
-  status: 'pending' | 'image_analyzing' | 'processing' | 'completed' | 'cancelling' | 'cancelled' | 'error'; // Includes image_analyzing.
+  status: 'pending' | 'image_analyzing' | 'processing' | 'finishing' | 'completed' | 'cancelling' | 'cancelled' | 'error'; // Includes image_analyzing.
   startTime: number;
   endTime?: number;
   error?: string;
@@ -187,8 +190,14 @@ export interface Session {
   // Sessions are always kept in store for event processing; only display is filtered.
   workspacePath?: string;
 
+  /** Stable backend id — always set for new sessions; do not infer workspace from path alone. */
+  workspaceId?: string;
+
   /** SSH remote: same `workspacePath` on different hosts must not share coordinator/persistence. */
   remoteConnectionId?: string;
+
+  /** SSH config host for `~/.bitfun/remote_ssh/{host}/...` session paths when disconnected. */
+  remoteSshHost?: string;
 
   /**
    * Optional parent session id for hierarchical sessions.
@@ -232,8 +241,11 @@ export interface SessionConfig {
   agentType?: string;
   context?: Record<string, string>;
   workspacePath?: string;
+  /** Binds session to `WorkspaceInfo.id` (path alone is insufficient for remotes). */
+  workspaceId?: string;
   /** Disambiguates sessions when multiple remote workspaces share the same `workspacePath`. */
   remoteConnectionId?: string;
+  remoteSshHost?: string;
 }
 
 export interface QueuedMessage {

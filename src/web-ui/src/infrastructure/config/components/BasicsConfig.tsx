@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FontPreferencePanel } from '@/infrastructure/font-preference';
 import { useTranslation } from 'react-i18next';
-import { FolderOpen, Upload } from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 import {
   Alert,
   Select,
@@ -8,8 +9,6 @@ import {
   Tooltip,
   ConfigPageLoading,
   ConfigPageMessage,
-  ConfigPageRefreshButton,
-  IconButton,
 } from '@/component-library';
 import { configAPI, workspaceAPI } from '@/infrastructure/api';
 import { systemAPI } from '@/infrastructure/api/service-api/SystemAPI';
@@ -17,7 +16,6 @@ import { getTerminalService } from '@/tools/terminal';
 import type { ShellInfo } from '@/tools/terminal/types/session';
 import {
   useTheme,
-  useThemeManagement,
   ThemeMetadata,
   ThemeConfig as ThemeConfigType,
   SYSTEM_THEME_ID,
@@ -42,51 +40,25 @@ const log = createLogger('BasicsConfig');
 function BasicsAppearanceSection() {
   const { t } = useTranslation('settings/basics');
   const { themeId, themes, setTheme, loading } = useTheme();
-  const { importTheme } = useThemeManagement();
   const { currentLanguage, supportedLocales, selectLanguage, isChanging } = useLanguageSelector();
-  const [importing, setImporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleThemeChange = async (newThemeId: string) => {
     await setTheme(newThemeId);
   };
 
-  const handleImportTheme = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setImporting(true);
-    try {
-      const text = await file.text();
-      const themeData = JSON.parse(text);
-      await importTheme(themeData);
-      alert(t('appearance.importSuccess'));
-    } catch (error) {
-      log.error('Failed to import theme', error);
-      alert(t('appearance.importFailed'));
-    } finally {
-      setImporting(false);
-      event.target.value = '';
-    }
-  };
-
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const getThemeDisplayName = (theme: ThemeMetadata) => {
+  const getThemeDisplayName = useCallback((theme: ThemeMetadata) => {
     const i18nKey = `appearance.presets.${theme.id}`;
     return theme.builtin
       ? t(`${i18nKey}.name`, { defaultValue: theme.name })
       : theme.name;
-  };
+  }, [t]);
 
-  const getThemeDisplayDescription = (theme: ThemeMetadata) => {
+  const getThemeDisplayDescription = useCallback((theme: ThemeMetadata) => {
     const i18nKey = `appearance.presets.${theme.id}`;
     return theme.builtin
       ? t(`${i18nKey}.description`, { defaultValue: theme.description || '' })
       : theme.description || '';
-  };
+  }, [t]);
 
   const themeSelectOptions = useMemo(
     () => [
@@ -101,37 +73,13 @@ function BasicsAppearanceSection() {
         description: getThemeDisplayDescription(theme),
       })),
     ],
-    [themes, t]
+    [themes, t, getThemeDisplayDescription, getThemeDisplayName]
   );
 
   return (
     <div className="theme-config">
       <div className="theme-config__content">
-        <ConfigPageSection
-          title={t('appearance.title')}
-          description={t('appearance.hint')}
-          extra={
-            <>
-              <IconButton
-                variant="ghost"
-                size="small"
-                onClick={handleImportClick}
-                disabled={importing || loading}
-                isLoading={importing}
-                title={importing ? t('appearance.importing') : t('appearance.importTheme')}
-              >
-                <Upload size={16} />
-              </IconButton>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                onChange={handleImportTheme}
-                style={{ display: 'none' }}
-              />
-            </>
-          }
-        >
+        <ConfigPageSection title={t('appearance.title')} description={t('appearance.hint')}>
           <ConfigPageRow
             label={t('appearance.language')}
             description={t('appearance.languageRowHint', {
@@ -157,7 +105,7 @@ function BasicsAppearanceSection() {
           <ConfigPageRow
             label={t('appearance.themes')}
             description={t('appearance.themeRowHint', {
-              defaultValue: 'Pick an installed theme or manage custom themes.',
+              defaultValue: 'Choose the interface color theme.',
             })}
             align="center"
           >
@@ -380,11 +328,6 @@ function BasicsLoggingSection() {
     [configLevel, showMessage, t]
   );
 
-  const handleRefresh = useCallback(async () => {
-    await loadData();
-    showMessage('info', t('logging.messages.refreshed'));
-  }, [loadData, showMessage, t]);
-
   const handleOpenFolder = useCallback(async () => {
     const folder = runtimeInfo?.sessionLogDir;
     if (!folder) {
@@ -415,14 +358,6 @@ function BasicsLoggingSection() {
         <ConfigPageSection
           title={t('logging.sections.logging')}
           description={t('logging.sections.loggingHint')}
-          extra={
-            <ConfigPageRefreshButton
-              tooltip={t('logging.actions.refreshTooltip')}
-              onClick={handleRefresh}
-              loading={loading}
-              disabled={loading || saving}
-            />
-          }
         >
           <ConfigPageRow
             label={t('logging.sections.level')}
@@ -528,11 +463,6 @@ function BasicsTerminalSection() {
     [showMessage, t]
   );
 
-  const handleRefresh = useCallback(async () => {
-    await loadData();
-    showMessage('info', t('terminal.messages.refreshed'));
-  }, [loadData, showMessage, t]);
-
   const shouldShowPowerShellCoreRecommendation = useMemo(() => {
     const isWindows = platform === 'windows';
     if (!isWindows) return false;
@@ -593,14 +523,6 @@ function BasicsTerminalSection() {
         <ConfigPageSection
           title={t('terminal.sections.terminal')}
           description={terminalSectionDescription}
-          extra={
-            <ConfigPageRefreshButton
-              tooltip={t('terminal.controls.refreshTooltip')}
-              onClick={handleRefresh}
-              loading={loading}
-              disabled={loading}
-            />
-          }
         >
           <ConfigPageRow
             label={t('terminal.sections.defaultTerminal')}
@@ -876,6 +798,57 @@ function ThemePreviewThumbnail({ theme }: ThemePreviewThumbnailProps) {
   );
 }
 
+function BasicsNotificationsSection() {
+  const { t } = useTranslation('settings/basics');
+  const [enabled, setEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const val = await configManager.getConfig<boolean>('app.notifications.dialog_completion_notify');
+        setEnabled(val !== false);
+      } catch {
+        setEnabled(true);
+      }
+    })();
+  }, []);
+
+  const handleToggle = async (checked: boolean) => {
+    setSaving(true);
+    try {
+      await configAPI.setConfig('app.notifications.dialog_completion_notify', checked);
+      setEnabled(checked);
+      setMessage({ type: 'success', text: t('notifications.messages.saveSuccess') });
+    } catch {
+      setMessage({ type: 'error', text: t('notifications.messages.saveFailed') });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ConfigPageSection
+      title={t('notifications.title')}
+      description={t('notifications.hint')}
+    >
+      <ConfigPageMessage message={message} />
+      <ConfigPageRow
+        label={t('notifications.dialogCompletion.label')}
+        description={t('notifications.dialogCompletion.description')}
+        align="center"
+      >
+        <Switch
+          checked={enabled}
+          onChange={(e) => { void handleToggle(e.target.checked); }}
+          disabled={saving}
+        />
+      </ConfigPageRow>
+    </ConfigPageSection>
+  );
+}
+
 const BasicsConfig: React.FC = () => {
   const { t } = useTranslation('settings/basics');
 
@@ -884,9 +857,11 @@ const BasicsConfig: React.FC = () => {
       <ConfigPageHeader title={t('title')} subtitle={t('subtitle')} />
       <ConfigPageContent className="bitfun-basics-config__content">
         <BasicsAppearanceSection />
+        <FontPreferencePanel />
         <BasicsLaunchAtLoginSection />
         <BasicsLoggingSection />
         <BasicsTerminalSection />
+        <BasicsNotificationsSection />
       </ConfigPageContent>
     </ConfigPageLayout>
   );

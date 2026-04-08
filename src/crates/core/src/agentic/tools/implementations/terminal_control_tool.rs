@@ -10,6 +10,12 @@ use terminal_core::{CloseSessionRequest, SignalRequest, TerminalApi};
 /// TerminalControl tool - kill or interrupt a terminal session
 pub struct TerminalControlTool;
 
+impl Default for TerminalControlTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalControlTool {
     pub fn new() -> Self {
         Self
@@ -163,7 +169,8 @@ The terminal_session_id is returned inside <terminal_session_id>...</terminal_se
                         "Sent interrupt (SIGINT) to terminal session '{}'.",
                         terminal_session_id
                     )),
-                }])
+            image_attachments: None,
+        }])
             }
 
             "kill" => {
@@ -217,7 +224,8 @@ The terminal_session_id is returned inside <terminal_session_id>...</terminal_se
                         "action": "kill",
                     }),
                     result_for_assistant: Some(result_for_assistant),
-                }])
+            image_attachments: None,
+        }])
             }
 
             _ => Err(BitFunError::tool(format!(

@@ -1,8 +1,7 @@
 /**
  * SSH Remote Feature - React Context Provider
  */
-
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { createLogger } from '@/shared/utils/logger';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { WorkspaceKind } from '@/shared/types/global-state';
@@ -10,50 +9,61 @@ import type { SSHConnectionConfig, RemoteWorkspace } from './types';
 import { sshApi } from './sshApi';
 import { flowChatStore } from '@/flow_chat/store/FlowChatStore';
 import { normalizeRemoteWorkspacePath } from '@/shared/utils/pathUtils';
+import {
+  SSHContext,
+  type ConnectionStatus,
+  type SSHContextValue,
+} from './SSHRemoteContext';
 
 const log = createLogger('SSHRemoteProvider');
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
-
-interface SSHContextValue {
-  // Connection state
-  status: ConnectionStatus;
-  isConnected: boolean;
-  isConnecting: boolean;
-  connectionId: string | null;
-  connectionConfig: SSHConnectionConfig | null;
-  remoteWorkspace: RemoteWorkspace | null;
-  connectionError: string | null;
-
-  // Per-workspace connection statuses (keyed by connectionId)
-  workspaceStatuses: Record<string, ConnectionStatus>;
-
-  // UI state
-  showConnectionDialog: boolean;
-  showFileBrowser: boolean;
-  error: string | null;
-
-  // Actions
-  connect: (connectionId: string, config: SSHConnectionConfig) => Promise<void>;
-  disconnect: () => Promise<void>;
-  openWorkspace: (path: string) => Promise<void>;
-  closeWorkspace: () => Promise<void>;
-
-  // UI actions
-  setShowConnectionDialog: (show: boolean) => void;
-  setShowFileBrowser: (show: boolean) => void;
-  clearError: () => void;
+/** Match opened `WorkspaceInfo` so list_sessions maps to ~/.bitfun/remote_ssh/... */
+function sshHostForRemoteWorkspace(connectionId: string, remotePath: string): string | undefined {
+  const norm = normalizeRemoteWorkspacePath(remotePath);
+  const cid = connectionId.trim();
+  for (const w of workspaceManager.getState().openedWorkspaces.values()) {
+    if (w.workspaceKind !== WorkspaceKind.Remote) continue;
+    if ((w.connectionId ?? '').trim() !== cid) continue;
+    if (normalizeRemoteWorkspacePath(w.rootPath) === norm) {
+      const h = w.sshHost?.trim();
+      if (h) return h;
+    }
+  }
+  return undefined;
 }
 
-export const SSHContext = createContext<SSHContextValue | null>(null);
-
-export const useSSHRemoteContext = () => {
-  const context = useContext(SSHContext);
-  if (!context) {
-    throw new Error('useSSHRemoteContext must be used within SSHRemoteProvider');
+/** After parallel reconnects: prefer the user's active remote workspace, else last in sidebar order (matches legacy serial last-write). */
+function pickGlobalRemoteAfterReconnect(
+  connected: Array<{ workspace: RemoteWorkspace; connectionId: string }>,
+  orderedList: RemoteWorkspace[]
+): { workspace: RemoteWorkspace; connectionId: string } | null {
+  if (connected.length === 0) return null;
+  const st = workspaceManager.getState();
+  const aid = st.activeWorkspaceId;
+  if (aid) {
+    const aw = st.openedWorkspaces.get(aid);
+    if (aw && aw.workspaceKind === WorkspaceKind.Remote && aw.connectionId) {
+      const arp = normalizeRemoteWorkspacePath(aw.rootPath);
+      const hit = connected.find(
+        c =>
+          c.connectionId === aw.connectionId &&
+          normalizeRemoteWorkspacePath(c.workspace.remotePath) === arp
+      );
+      if (hit) return hit;
+    }
   }
-  return context;
-};
+  for (let i = orderedList.length - 1; i >= 0; i--) {
+    const ws = orderedList[i];
+    const hit = connected.find(
+      c =>
+        c.connectionId === ws.connectionId &&
+        normalizeRemoteWorkspacePath(c.workspace.remotePath) ===
+          normalizeRemoteWorkspacePath(ws.remotePath)
+    );
+    if (hit) return hit;
+  }
+  return connected[connected.length - 1] ?? null;
+}
 
 interface SSHRemoteProviderProps {
   children: React.ReactNode;
@@ -70,32 +80,16 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  /** Fallback only when home cannot be resolved (never use literal `~` for SFTP). */
+  const [remoteFileBrowserInitialPath, setRemoteFileBrowserInitialPath] = useState('/tmp');
   // Per-workspace connection statuses (keyed by connectionId)
   const [workspaceStatuses, setWorkspaceStatuses] = useState<Record<string, ConnectionStatus>>({});
   const heartbeatInterval = useRef<number | null>(null);
+  const startHeartbeatRef = useRef<(connId: string) => void>(() => {});
+  const checkRemoteWorkspaceRef = useRef<() => Promise<void>>(async () => {});
 
   const setWorkspaceStatus = useCallback((connId: string, st: ConnectionStatus) => {
     setWorkspaceStatuses(prev => ({ ...prev, [connId]: st }));
-  }, []);
-
-  // Wait for workspace manager to finish loading, then check remote workspaces
-  useEffect(() => {
-    const state = workspaceManager.getState();
-    if (!state.loading) {
-      // Already loaded — kick off immediately
-      void checkRemoteWorkspace();
-      return;
-    }
-    // Wait for loading to complete
-    const unsubscribe = workspaceManager.addEventListener(event => {
-      if (event.type === 'workspace:loading' && !event.loading) {
-        unsubscribe();
-        void checkRemoteWorkspace();
-      }
-    });
-    return unsubscribe;
-    // checkRemoteWorkspace is defined below but stable (no deps change it)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Cleanup heartbeat on unmount
@@ -112,7 +106,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
   // Waits RETRY_WAIT_MS between each attempt (fixed, not exponential).
   const RETRY_WAIT_MS = 10_000;
 
-  const tryReconnectWithRetry = async (
+  const tryReconnectWithRetry = useCallback(async (
     workspace: RemoteWorkspace,
     maxRetries: number,
     timeoutMs: number
@@ -127,17 +121,13 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
       return false;
     }
 
-    // Determine auth method from tagged enum
+    // Determine auth method from tagged enum (password uses empty string; backend fills from vault)
     let authMethod: SSHConnectionConfig['auth'] | null = null;
     if (savedConn.authType.type === 'PrivateKey') {
       authMethod = { type: 'PrivateKey', keyPath: savedConn.authType.keyPath };
-    } else if (savedConn.authType.type === 'Agent') {
-      authMethod = { type: 'Agent' };
     } else {
-      // Password auth cannot auto-reconnect because BitFun intentionally does not
-      // persist passwords. The user must reconnect manually after restarting the app.
-      log.warn('Skipping auto-reconnect: password auth requires user input', { connectionId: workspace.connectionId });
-      return false;
+      // Caller must only invoke password reconnect when vault has a password (see checkRemoteWorkspace).
+      authMethod = { type: 'Password', password: '' };
     }
 
     const reconnectConfig: SSHConnectionConfig = {
@@ -176,6 +166,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
           connectionId: result.connectionId,
           connectionName: savedConn.name,
           remotePath: workspace.remotePath,
+          sshHost: reconnectConfig.host?.trim() || workspace.sshHost?.trim() || undefined,
         };
 
         log.info('Successfully reconnected to remote workspace', {
@@ -193,12 +184,48 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
     }
 
     return false;
-  };
+  }, []);
 
-  const checkRemoteWorkspace = async () => {
+  const statusRef = useRef<ConnectionStatus>(status);
+  statusRef.current = status;
+
+  const handleConnectionLost = useCallback((connId: string) => {
+    log.warn('Remote connection lost, attempting auto-reconnect...');
+    setStatus('error');
+    setWorkspaceStatus(connId, 'error');
+    setConnectionError('Connection lost. Attempting to reconnect...');
+    setIsConnected(false);
+    if (heartbeatInterval.current) {
+      clearInterval(heartbeatInterval.current);
+      heartbeatInterval.current = null;
+    }
+    // Attempt auto-reconnect in background
+    void checkRemoteWorkspaceRef.current();
+  }, [setWorkspaceStatus]);
+
+  const startHeartbeat = useCallback((connId: string) => {
+    if (heartbeatInterval.current) {
+      clearInterval(heartbeatInterval.current);
+    }
+
+    heartbeatInterval.current = window.setInterval(async () => {
+      try {
+        const connected = await sshApi.isConnected(connId);
+        if (!connected && statusRef.current === 'connected') {
+          handleConnectionLost(connId);
+        }
+      } catch {
+        // Ignore heartbeat errors
+      }
+    }, 30000);
+  }, [handleConnectionLost]);
+  startHeartbeatRef.current = startHeartbeat;
+
+  const checkRemoteWorkspace = useCallback(async () => {
     try {
       // ── Collect all remote workspaces to reconnect ──────────────────────
-      const allWorkspaces = Array.from(workspaceManager.getState().openedWorkspaces.values());
+      const wmState0 = workspaceManager.getState();
+      const allWorkspaces = Array.from(wmState0.openedWorkspaces.values());
       const openedRemote = allWorkspaces.filter(
         ws => ws.workspaceKind === WorkspaceKind.Remote && ws.connectionId
       );
@@ -222,6 +249,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
           connectionId: ws.connectionId,
           connectionName: ws.connectionName || 'Remote',
           remotePath: rp,
+          sshHost: ws.sshHost?.trim() || undefined,
         });
       }
 
@@ -241,111 +269,154 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
 
       log.info(`checkRemoteWorkspace: found ${toReconnect.size} remote workspace(s)`);
 
-      // Mark all as 'connecting' immediately so the UI shows the pending state
+      const reconnectList = Array.from(toReconnect.values());
+      const savedConnectionsList = await sshApi.listSavedConnections();
+
+      const skipPasswordAutoReconnect = new Set<string>();
+      for (const ws of reconnectList) {
+        const sc = savedConnectionsList.find(c => c.id === ws.connectionId);
+        if (sc?.authType.type === 'Password') {
+          let hasVault = false;
+          try {
+            hasVault = await sshApi.hasStoredPassword(sc.id);
+          } catch {
+            hasVault = false;
+          }
+          if (!hasVault) {
+            skipPasswordAutoReconnect.add(ws.connectionId);
+          }
+        }
+      }
+
       const initialStatuses: Record<string, ConnectionStatus> = {};
       for (const [, ws] of toReconnect) {
-        initialStatuses[ws.connectionId] = 'connecting';
+        initialStatuses[ws.connectionId] = skipPasswordAutoReconnect.has(ws.connectionId)
+          ? 'error'
+          : 'connecting';
       }
       setWorkspaceStatuses(prev => ({ ...prev, ...initialStatuses }));
 
-      // ── Process each workspace ──────────────────────────────────────────
-      for (const [, workspace] of toReconnect) {
-        const isAlreadyOpened = openedRemote.some(
-          ws =>
-            normalizeRemoteWorkspacePath(ws.rootPath) ===
-            normalizeRemoteWorkspacePath(workspace.remotePath)
-        );
+      type ConnectedEntry = { workspace: RemoteWorkspace; connectionId: string };
+      const results = await Promise.all(
+        reconnectList.map(async workspace => {
+          const isAlreadyOpened = openedRemote.some(
+            ws =>
+              ws.connectionId === workspace.connectionId &&
+              normalizeRemoteWorkspacePath(ws.rootPath) ===
+                normalizeRemoteWorkspacePath(workspace.remotePath)
+          );
 
-        // Check if SSH is already live
-        const alreadyConnected = await sshApi.isConnected(workspace.connectionId).catch(() => false);
+          const alreadyConnected = await sshApi.isConnected(workspace.connectionId).catch(() => false);
 
-        if (alreadyConnected) {
-          log.info('Remote workspace already connected', { connectionId: workspace.connectionId });
-          // Register with SSH state manager (idempotent)
-          await sshApi.openWorkspace(workspace.connectionId, workspace.remotePath).catch(() => {});
-          setWorkspaceStatus(workspace.connectionId, 'connected');
-          setIsConnected(true);
-          setConnectionId(workspace.connectionId);
-          setRemoteWorkspace(workspace);
-          startHeartbeat(workspace.connectionId);
+          if (alreadyConnected) {
+            log.info('Remote workspace already connected', { connectionId: workspace.connectionId });
+            await sshApi.openWorkspace(workspace.connectionId, workspace.remotePath).catch(() => {});
+            setWorkspaceStatus(workspace.connectionId, 'connected');
 
-          if (!isAlreadyOpened) {
-            await workspaceManager.openRemoteWorkspace(workspace).catch(() => {});
+            if (!isAlreadyOpened) {
+              await workspaceManager.openRemoteWorkspace(workspace).catch(() => {});
+            }
+            void flowChatStore
+              .initializeFromDisk(
+                workspace.remotePath,
+                workspace.connectionId,
+                workspace.sshHost?.trim() ||
+                  sshHostForRemoteWorkspace(workspace.connectionId, workspace.remotePath)
+              )
+              .catch(() => {});
+
+            return { ok: true as const, connected: { workspace, connectionId: workspace.connectionId } };
           }
-          // Re-initialize sessions now that the workspace is registered in the state manager
-          void flowChatStore.initializeFromDisk(workspace.remotePath).catch(() => {});
-          continue;
-        }
 
-        // Not connected — attempt auto-reconnect
-        log.info('Remote workspace disconnected, attempting auto-reconnect', {
-          connectionId: workspace.connectionId,
-          remotePath: workspace.remotePath,
-        });
-
-        const result = await tryReconnectWithRetry(workspace, 5, 5000);
-
-        if (result !== false) {
-          log.info('Reconnection successful', { newConnectionId: result.connectionId });
-          setWorkspaceStatus(result.workspace.connectionId, 'connected');
-          setIsConnected(true);
-          setConnectionId(result.connectionId);
-          setRemoteWorkspace(result.workspace);
-          startHeartbeat(result.connectionId);
-
-          if (!isAlreadyOpened) {
-            await workspaceManager.openRemoteWorkspace(result.workspace).catch(() => {});
+          if (skipPasswordAutoReconnect.has(workspace.connectionId)) {
+            log.info('Skipping auto-reconnect: password auth but no stored password', {
+              connectionId: workspace.connectionId,
+            });
+            return { ok: false as const };
           }
-          // Re-initialize sessions now that the workspace is registered in the state manager
-          void flowChatStore.initializeFromDisk(result.workspace.remotePath).catch(() => {});
-        } else {
-          // Reconnection failed (or skipped for password auth) — remove the workspace
-          // from the sidebar. Password-auth workspaces can never auto-reconnect, and
-          // showing a permanently-broken entry would confuse the user.
-          log.warn('Auto-reconnect failed, removing workspace from sidebar', {
+
+          log.info('Remote workspace disconnected, attempting auto-reconnect', {
             connectionId: workspace.connectionId,
+            remotePath: workspace.remotePath,
           });
-          await workspaceManager.removeRemoteWorkspace(workspace.connectionId).catch(() => {});
-        }
+          const result = await tryReconnectWithRetry(workspace, 5, 5000);
+
+          if (result !== false) {
+            log.info('Reconnection successful', { newConnectionId: result.connectionId });
+            setWorkspaceStatus(result.workspace.connectionId, 'connected');
+
+            if (!isAlreadyOpened) {
+              await workspaceManager.openRemoteWorkspace(result.workspace).catch(() => {});
+            }
+            void flowChatStore
+              .initializeFromDisk(
+                result.workspace.remotePath,
+                result.workspace.connectionId,
+                result.workspace.sshHost?.trim() ||
+                  sshHostForRemoteWorkspace(
+                    result.workspace.connectionId,
+                    result.workspace.remotePath
+                  )
+              )
+              .catch(() => {});
+
+            return {
+              ok: true as const,
+              connected: { workspace: result.workspace, connectionId: result.connectionId },
+            };
+          }
+
+          const savedConn = savedConnectionsList.find(c => c.id === workspace.connectionId);
+          log.warn('Auto-reconnect failed', {
+            connectionId: workspace.connectionId,
+            auth: savedConn?.authType.type,
+          });
+          if (savedConn?.authType.type === 'Password') {
+            // Keep workspace in sidebar; user reconnects manually. No auto password dialog.
+            setWorkspaceStatus(workspace.connectionId, 'error');
+          } else {
+            await workspaceManager
+              .removeRemoteWorkspace(workspace.connectionId, workspace.remotePath)
+              .catch(() => {});
+          }
+          return { ok: false as const };
+        })
+      );
+
+      const connectedEntries: ConnectedEntry[] = results
+        .filter((r): r is { ok: true; connected: ConnectedEntry } => r.ok)
+        .map(r => r.connected);
+
+      const chosen = pickGlobalRemoteAfterReconnect(connectedEntries, reconnectList);
+      if (chosen) {
+        setIsConnected(true);
+        setConnectionId(chosen.connectionId);
+        setRemoteWorkspace(chosen.workspace);
+        startHeartbeatRef.current(chosen.connectionId);
       }
     } catch (e) {
       log.error('checkRemoteWorkspace failed', e);
     }
-  };
+  }, [setWorkspaceStatus, tryReconnectWithRetry]);
+  checkRemoteWorkspaceRef.current = checkRemoteWorkspace;
 
-  const statusRef = useRef<ConnectionStatus>(status);
-  statusRef.current = status;
-
-  const startHeartbeat = (connId: string) => {
-    if (heartbeatInterval.current) {
-      clearInterval(heartbeatInterval.current);
+  // Wait for workspace manager to finish loading, then check remote workspaces
+  useEffect(() => {
+    const state = workspaceManager.getState();
+    if (!state.loading) {
+      void checkRemoteWorkspace();
+      return;
     }
 
-    heartbeatInterval.current = window.setInterval(async () => {
-      try {
-        const connected = await sshApi.isConnected(connId);
-        if (!connected && statusRef.current === 'connected') {
-          handleConnectionLost(connId);
-        }
-      } catch {
-        // Ignore heartbeat errors
+    const unsubscribe = workspaceManager.addEventListener(event => {
+      if (event.type === 'workspace:loading' && !event.loading) {
+        unsubscribe();
+        void checkRemoteWorkspace();
       }
-    }, 30000);
-  };
+    });
 
-  const handleConnectionLost = (connId: string) => {
-    log.warn('Remote connection lost, attempting auto-reconnect...');
-    setStatus('error');
-    setWorkspaceStatus(connId, 'error');
-    setConnectionError('Connection lost. Attempting to reconnect...');
-    setIsConnected(false);
-    if (heartbeatInterval.current) {
-      clearInterval(heartbeatInterval.current);
-      heartbeatInterval.current = null;
-    }
-    // Attempt auto-reconnect in background
-    void checkRemoteWorkspace();
-  };
+    return unsubscribe;
+  }, [checkRemoteWorkspace]);
 
   const connect = useCallback(async (_connId: string, config: SSHConnectionConfig) => {
     log.debug('SSH connect called', { host: config.host });
@@ -360,6 +431,18 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
 
       if (result.success && result.connectionId) {
         log.info('SSH connection successful', { connectionId: result.connectionId });
+        let home = result.serverInfo?.homeDir?.trim();
+        if (!home && result.connectionId) {
+          try {
+            const info = await sshApi.getServerInfo(result.connectionId);
+            home = info?.homeDir?.trim();
+          } catch {
+            /* non-desktop or probe skipped */
+          }
+        }
+        setRemoteFileBrowserInitialPath(
+          home && home.length > 0 ? normalizeRemoteWorkspacePath(home) : '/tmp'
+        );
         setStatus('connected');
         setIsConnected(true);
         setConnectionId(result.connectionId);
@@ -388,7 +471,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
     } finally {
       setIsConnecting(false);
     }
-  }, []);
+  }, [startHeartbeat]);
 
   const disconnect = useCallback(async () => {
     const currentRemoteWorkspace = remoteWorkspace;
@@ -412,6 +495,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
     setRemoteWorkspace(null);
     setIsConnected(false);
     setShowFileBrowser(false);
+    setRemoteFileBrowserInitialPath('/tmp');
 
     if (currentRemoteWorkspace) {
       setWorkspaceStatus(currentRemoteWorkspace.connectionId, 'disconnected');
@@ -434,6 +518,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
       connectionId,
       connectionName: connName,
       remotePath,
+      sshHost: connectionConfig?.host?.trim() || undefined,
     };
     setRemoteWorkspace(remoteWs);
     setShowFileBrowser(false);
@@ -480,6 +565,7 @@ export const SSHRemoteProvider: React.FC<SSHRemoteProviderProps> = ({ children }
     showConnectionDialog,
     showFileBrowser,
     error,
+    remoteFileBrowserInitialPath,
     connect,
     disconnect,
     openWorkspace,

@@ -9,6 +9,12 @@ pub struct CoworkMode {
     default_tools: Vec<String>,
 }
 
+impl Default for CoworkMode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoworkMode {
     pub fn new() -> Self {
         Self {
@@ -32,6 +38,7 @@ impl CoworkMode {
                 "Bash".to_string(),
                 "TerminalControl".to_string(),
                 "WebSearch".to_string(),
+                "ComputerUse".to_string(),
             ],
         }
     }

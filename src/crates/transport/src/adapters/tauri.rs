@@ -1,7 +1,7 @@
-/// Tauri transport adapter
-///
-/// Uses Tauri's app.emit() system to send events to frontend
-/// Maintains compatibility with current implementation
+﻿//! Tauri transport adapter
+//!
+//! Uses Tauri's app.emit() system to send events to frontend
+//! Maintains compatibility with current implementation
 
 #[cfg(feature = "tauri-adapter")]
 use crate::traits::{TextChunk, ToolEventPayload, TransportAdapter};
@@ -306,6 +306,7 @@ impl TransportAdapter for TauriTransportAdapter {
                 compression_ratio,
                 duration_ms,
                 has_summary,
+                summary_source,
             } => {
                 self.app_handle.emit(
                     "agentic://context-compression-completed",
@@ -319,6 +320,7 @@ impl TransportAdapter for TauriTransportAdapter {
                         "compressionRatio": compression_ratio,
                         "durationMs": duration_ms,
                         "hasSummary": has_summary,
+                        "summarySource": summary_source,
                         "subagentParentInfo": subagent_parent_info,
                     }),
                 )?;

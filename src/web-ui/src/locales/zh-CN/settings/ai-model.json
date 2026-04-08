@@ -36,6 +36,8 @@
     "reusedExistingModel": "已使用当前服务商下已有同名模型配置（未新增重复项）",
     "noModelsSelected": "请先选择模型",
     "removeModel": "移除模型",
+    "expandModelSettings": "展开「{{name}}」的详细设置",
+    "collapseModelSettings": "收起「{{name}}」的详细设置",
     "urlHint": "已预填官方 API 地址，如使用代理或私有部署可修改",
     "formatHint": "已根据提供商自动选择，通常无需修改"
   },
@@ -151,6 +153,8 @@
   "thinking": {
     "enable": "启用思考",
     "enableHint": "需要模型支持思考模式",
+    "summaryOn": "思考开",
+    "summaryOff": "思考关",
     "optionEnabled": "启用",
     "optionDisabled": "禁用",
     "preserve": "保留历史思考",
@@ -207,27 +211,7 @@
     "newConfig": "新建配置",
     "addModel": "添加模型",
     "addProvider": "添加服务商",
-    "createFirst": "创建第一个配置",
-    "viewStats": "查看统计"
-  },
-  "tokenStats": {
-    "title": "Token消耗统计",
-    "loading": "加载中...",
-    "noData": "暂无统计数据",
-    "totalTokens": "总消耗",
-    "inputTokens": "输入Token",
-    "outputTokens": "输出Token",
-    "cachedTokens": "缓存Token",
-    "sessionCount": "会话数",
-    "requestCount": "请求次数",
-    "firstUsed": "首次使用",
-    "lastUsed": "最近使用",
-    "clearStats": "清除统计",
-    "confirmClear": "确定要清除该模型的所有统计数据吗？此操作不可恢复。",
-    "rangeAll": "全部",
-    "range30Days": "近30天",
-    "range7Days": "近7天",
-    "includeSubagent": "包含子代理"
+    "createFirst": "创建第一个配置"
   },
   "empty": {
     "noModels": "暂无模型配置",

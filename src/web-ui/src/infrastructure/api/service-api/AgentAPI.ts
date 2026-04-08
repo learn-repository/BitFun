@@ -24,6 +24,7 @@ export interface SessionConfig {
   enableContextCompression?: boolean;
   compressionThreshold?: number;
   remoteConnectionId?: string;
+  remoteSshHost?: string;
 }
 
  
@@ -33,6 +34,7 @@ export interface CreateSessionRequest {
   agentType: string;
   workspacePath: string;
   remoteConnectionId?: string;
+  remoteSshHost?: string;
   config?: SessionConfig;
 }
 
@@ -53,6 +55,13 @@ export interface StartDialogTurnRequest {
   workspacePath?: string;
   /** Optional multimodal image contexts (snake_case fields, aligned with backend ImageContextData). */
   imageContexts?: ImageInputContextData[];
+}
+
+export interface CompactSessionRequest {
+  sessionId: string;
+  workspacePath?: string;
+  remoteConnectionId?: string;
+  remoteSshHost?: string;
 }
 
  
@@ -92,13 +101,14 @@ export interface UpdateSessionModelRequest {
   modelName: string;
 }
 
- 
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'tool' | 'system';
-  content: any;
-  timestamp: number;
+export interface UpdateSessionTitleRequest {
+  sessionId: string;
+  title: string;
+  workspacePath?: string;
+  remoteConnectionId?: string;
+  remoteSshHost?: string;
 }
+
  
 export interface ModeInfo {
   id: string;
@@ -159,6 +169,7 @@ export interface CompressionEvent extends AgenticEvent {
   compressionRatio?: number;       
   durationMs?: number;             
   hasSummary?: boolean;            
+  summarySource?: 'model' | 'local_fallback' | 'none';
   
   error?: string;                  
   subagentParentInfo?: SubagentParentInfo;
@@ -190,6 +201,14 @@ export class AgentAPI {
     }
   }
 
+  async compactSession(request: CompactSessionRequest): Promise<{ success: boolean; message: string }> {
+    try {
+      return await api.invoke<{ success: boolean; message: string }>('compact_session', { request });
+    } catch (error) {
+      throw createTauriCommandError('compact_session', error, request);
+    }
+  }
+
   async ensureAssistantBootstrap(
     request: EnsureAssistantBootstrapRequest
   ): Promise<EnsureAssistantBootstrapResponse> {
@@ -212,10 +231,15 @@ export class AgentAPI {
   }
 
    
-  async deleteSession(sessionId: string, workspacePath: string, remoteConnectionId?: string): Promise<void> {
+  async deleteSession(
+    sessionId: string,
+    workspacePath: string,
+    remoteConnectionId?: string,
+    remoteSshHost?: string
+  ): Promise<void> {
     try {
       await api.invoke<void>('delete_session', { 
-        request: { sessionId, workspacePath, remoteConnectionId } 
+        request: { sessionId, workspacePath, remoteConnectionId, remoteSshHost } 
       });
     } catch (error) {
       throw createTauriCommandError('delete_session', error, { sessionId, workspacePath });
@@ -223,10 +247,15 @@ export class AgentAPI {
   }
 
    
-  async restoreSession(sessionId: string, workspacePath: string, remoteConnectionId?: string): Promise<SessionInfo> {
+  async restoreSession(
+    sessionId: string,
+    workspacePath: string,
+    remoteConnectionId?: string,
+    remoteSshHost?: string
+  ): Promise<SessionInfo> {
     try {
       return await api.invoke<SessionInfo>('restore_session', {
-        request: { sessionId, workspacePath, remoteConnectionId },
+        request: { sessionId, workspacePath, remoteConnectionId, remoteSshHost },
       });
     } catch (error) {
       throw createTauriCommandError('restore_session', error, { sessionId, workspacePath });
@@ -241,6 +270,7 @@ export class AgentAPI {
     sessionId: string;
     workspacePath: string;
     remoteConnectionId?: string;
+    remoteSshHost?: string;
   }): Promise<void> {
     try {
       await api.invoke<void>('ensure_coordinator_session', { request });
@@ -257,33 +287,30 @@ export class AgentAPI {
     }
   }
 
+  async updateSessionTitle(request: UpdateSessionTitleRequest): Promise<string> {
+    try {
+      return await api.invoke<string>('update_session_title', { request });
+    } catch (error) {
+      throw createTauriCommandError('update_session_title', error, request);
+    }
+  }
+
 
    
-  async listSessions(workspacePath: string, remoteConnectionId?: string): Promise<SessionInfo[]> {
+  async listSessions(
+    workspacePath: string,
+    remoteConnectionId?: string,
+    remoteSshHost?: string
+  ): Promise<SessionInfo[]> {
     try {
       return await api.invoke<SessionInfo[]>('list_sessions', {
-        request: { workspacePath, remoteConnectionId },
+        request: { workspacePath, remoteConnectionId, remoteSshHost },
       });
     } catch (error) {
       throw createTauriCommandError('list_sessions', error, { workspacePath });
     }
   }
 
-   
-  async getSessionMessages(sessionId: string, limit?: number): Promise<Message[]> {
-    try {
-      return await api.invoke<Message[]>('get_session_messages', {
-        request: {
-          sessionId,
-          limit
-        }
-      });
-    } catch (error) {
-      throw createTauriCommandError('get_session_messages', error, { sessionId, limit });
-    }
-  }
-
-   
   async confirmToolExecution(sessionId: string, toolId: string): Promise<void> {
     try {
       await api.invoke<void>('confirm_tool_execution', {

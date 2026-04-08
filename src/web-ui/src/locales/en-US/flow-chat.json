@@ -87,7 +87,15 @@
     "fillToInput": "Fill to input",
     "cannotRollback": "Cannot rollback",
     "rollbackTo": "Rollback to before turn {{index}} (delete this and following turns)",
-    "rollbackConfirm": "Are you sure you want to rollback to before turn {{index}}?\n\nThis will:\n• Undo all file modifications from that turn onwards\n• Delete that turn and all following dialog records (irreversible)",
+    "rollbackDialogTitle": "Rollback to before turn {{index}}?",
+    "rollbackDialogIntro": "This will:",
+    "rollbackDialogBulletFiles": "Undo all file modifications from that turn onwards",
+    "rollbackDialogBulletHistory": "Delete that turn and all following dialog records (irreversible)",
+    "rollbackPanelDialogTitle": "Roll back to before turn {{index}}?",
+    "rollbackPanelDialogIntro": "This will:",
+    "rollbackPanelBulletRestore": "Restore files to the state before turn {{index}}",
+    "rollbackPanelBulletUndo": "Undo all file changes from that turn onward",
+    "rollbackPanelBulletHistory": "Keep the session history (you can roll forward again anytime)",
     "rollbackSuccess": "Rolled back and deleted subsequent dialog records",
     "rollbackFailed": "Rollback failed"
   },
@@ -118,6 +126,8 @@
     "imageAddedSuccess": "Successfully added {{count}} images",
     "imageAddedSingle": "Added clipboard image: {{name}}",
     "imagePasteFailed": "Image paste failed",
+    "largePastePlaceholder": "[Pasted Content {{count}} chars]",
+    "messageTooLarge": "Message exceeds the maximum length of {{max}} characters ({{count}} provided).",
     "openWorkspaceFolder": "Open workspace folder",
     "openWorkspaceFolderFailed": "Failed to open workspace folder: {{error}}",
     "spaceToActivate": "Press <space>Space</space> to type"
@@ -184,6 +194,7 @@
     "addModeTooltip": "Add Plan or Debug",
     "boostSectionAgent": "Agent",
     "boostSectionContext": "Context",
+    "boostStartBtw": "Start side question",
     "boostAddContext": "Reference file or folder",
     "boostSkills": "Skills",
     "boostSkillsLoading": "Loading skills…",
@@ -195,6 +206,17 @@
     "noIncrementalModes": "No add-on modes available",
     "switchMode": "Switch Mode",
     "quickAction": "Quick action",
+    "compactAction": "Compact session",
+    "compactNoSession": "No active session for /compact",
+    "compactBusy": "Wait until the session is idle before using /compact.",
+    "compactUsage": "Use /compact without extra arguments.",
+    "compactFailed": "Session compaction failed",
+    "initAction": "Generate AGENTS.md",
+    "initNoSession": "No active session for /init",
+    "initBusy": "Wait until the session is idle before using /init.",
+    "initUsage": "Use /init without extra arguments.",
+    "initFailed": "AGENTS.md initialization failed",
+    "initPrompt": "Please generate or update AGENTS.md based on the current project content",
     "currentMode": "Current mode: {{mode}}",
     "noMatchingMode": "No matching mode",
     "noMatchingCommand": "No matching command",
@@ -311,7 +333,12 @@
     "clickToViewDiff": "Click to view diff",
     "review": {
       "displayMessage": "Review modified files:\n{{files}}",
-      "prompt": "Please review the following files modified in this session:\n\n{{files}}"
+      "displayMessageFiltered": "Review filtered files:\n{{files}}\n\nSkipped {{skipped}} excluded files.",
+      "filteredNotice": "Review will analyze {{included}} files and skip {{skipped}} excluded files such as lock, generated, or binary assets.",
+      "noEligibleFiles": "No reviewable files remain after excluded files were filtered out.",
+      "prompt": "Please review the following files modified in this session:\n\n{{files}}",
+      "promptFiltered": "Please review the following modified files in this session:\n\n{{files}}\n\nDo not review the {{skipped}} skipped files because they matched the excluded lock, generated, or binary file rules.",
+      "threadTitle": "Code review"
     }
   },
   "sessionFileModificationsBar": {
@@ -435,6 +462,20 @@
       "blame": "Blame",
       "cherryPick": "Cherry-pick"
     },
+    "initMiniApp": {
+      "title": "Mini App",
+      "operationInit": "Init",
+      "skeletonReady": "Ready",
+      "creatingShort": "…",
+      "untitled": "(unnamed)",
+      "failed": "Failed",
+      "createFailed": "Could not create Mini App",
+      "openInMiniApp": "Open in Mini App",
+      "openInMiniAppTitle": "Open in Mini App",
+      "labelAppId": "app_id",
+      "labelPath": "path",
+      "nameLabel": "App: {{name}}"
+    },
     "terminal": {
       "executeCommand": "Execute command:",
       "commandEmpty": "[Command empty - please edit]",
@@ -460,6 +501,7 @@
     },
     "plan": {
       "loadingPlan": "Loading plan...",
+      "generating": "Generating...",
       "clickToOpenPlan": "Click to open plan file",
       "remainingTodos": "{{count}} Remaining To-dos",
       "viewPlan": "View Plan",
@@ -494,6 +536,7 @@
       "notAnswered": "Not answered",
       "timeout": "Timeout (10 minutes)",
       "parseError": "Unable to parse question data",
+      "loadingQuestions": "Receiving questions…",
       "other": "Other",
       "customInputHint": "Provide custom text input",
       "pleaseSpecify": "Please specify..."
@@ -540,6 +583,8 @@
       "processing": "Processing..."
     },
     "taskTool": {
+      "headerLine": "{{agentType}} agent: {{description}}",
+      "defaultAgentKind": "Sub-agent",
       "waitingConfirm": "Waiting for confirmation",
       "executing": "Executing...",
       "subAgentFailed": "Sub-agent task execution failed",
@@ -570,7 +615,7 @@
       }
     },
     "diagram": {
-      "interactive": "Interactive Visualization:",
+      "interactive": "Interactive diagram:",
       "preparing": "Preparing",
       "creating": "Creating",
       "mermaidInteractive": "Mermaid Interactive Chart"
@@ -603,7 +648,10 @@
       "cancel": "Cancel",
       "loadingApp": "Loading interactive app...",
       "appLoadError": "Failed to load app",
-      "interactiveApp": "interactive app"
+      "interactiveApp": "interactive app",
+      "actionLabel": "MCP:",
+      "failedLabel": "MCP failed",
+      "executionFailed": "MCP execution failed"
     },
     "default": {
       "waitingConfirm": "Waiting for confirmation",
@@ -616,10 +664,10 @@
     "skill": {
       "unknownSkill": "Unknown skill",
       "unknown": "Unknown",
-      "userLevel": "User level",
-      "projectLevel": "Project level",
       "loadSkillFailed": "Load skill failed",
-      "skillAction": "Skill:"
+      "skillAction": "Skill:",
+      "loadingSkill": "Loading",
+      "preparingSkill": "Preparing to load"
     },
     "readFile": {
       "parsingParams": "Parsing parameters...",
@@ -691,7 +739,10 @@
       "manualTrigger": "Manual trigger",
       "autoTrigger": "Auto trigger",
       "contextCompressionFailed": "Context compression failed",
-      "contextCompression": "Context compression:"
+      "contextCompression": "Context compression:",
+      "localFallbackHeader": "Model request failed; local structured trimming",
+      "localFallbackNotice": "Model-based summary was unavailable, so this compression used local structured truncation.",
+      "noSummaryNotice": "No additional summary was generated for this compaction pass."
     },
     "globSearch": {
       "parsingPattern": "Parsing search pattern...",
@@ -783,7 +834,11 @@
       "aiProcessing": "AI is processing...",
       "inputMessage": "Enter message...",
       "processing": "Processing...",
-      "startNewChat": "Start new chat..."
+      "startNewChat": "Start new chat...",
+      "openSessionMenu": "Sessions & new",
+      "moreMenu": "More",
+      "newCodeSessionItem": "Code session",
+      "newCoworkSessionItem": "Cowork session"
     },
     "chatInput": {
       "inputHint": "Enter content..."
@@ -845,12 +900,12 @@
     "subtitleEvening": "Quiet nights are perfect for immersive coding",
     "greetingNight": "Late night",
     "subtitleNight": "Inspiration never sleeps. Let's keep going",
-    "aiPartner": "Flow Developer",
+    "aiPartner": "Coding partner",
     "subtitleMorningCowork": "Morning clarity is the best. Let's shape your ideas and tasks for today",
     "subtitleAfternoonCowork": "Afternoon check-in — anything to push forward or organize?",
     "subtitleEveningCowork": "Wrap up, reflect, or set the stage for tomorrow — all good here",
     "subtitleNightCowork": "Late nights are great for planning and clearing your head",
-    "aiPartnerCowork": "Flow Partner",
+    "aiPartnerCowork": "Collaboration partner",
     "aiPartnerClaw": "I'm your assistant",
     "subtitleMorningClaw": "What can I help you with today?",
     "subtitleAfternoonClaw": "What can I help you with?",

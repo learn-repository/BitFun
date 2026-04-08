@@ -20,24 +20,43 @@ export type ThemeId =
   | 'bitfun-cyber'
   | 'bitfun-slate';
 
+/** Matches main app `themes.current` when following OS appearance. */
+export const SYSTEM_THEME_ID = 'system' as const;
+
+export type ThemePreferenceId = ThemeId | typeof SYSTEM_THEME_ID;
+
 export interface ModelConfig {
   provider: string;
   apiKey: string;
   baseUrl: string;
   modelName: string;
-  format: 'openai' | 'anthropic';
+  format: 'openai' | 'anthropic' | 'gemini' | 'responses';
   configName?: string;
   customRequestBody?: string;
   skipSslVerify?: boolean;
   customHeaders?: Record<string, string>;
   customHeadersMode?: 'merge' | 'replace';
+  /** Aligns with main app model capabilities when testing image input. */
+  capabilities?: string[];
+  /** Aligns with main app model category (e.g. multimodal). */
+  category?: string;
 }
+
+/** Matches backend `ConnectionTestMessageCode` (camelCase JSON). */
+export type ConnectionTestMessageCode = 'toolCallsNotDetected' | 'imageInputCheckFailed';
 
 export interface ConnectionTestResult {
   success: boolean;
   responseTimeMs: number;
   modelResponse?: string;
+  messageCode?: ConnectionTestMessageCode;
   errorDetails?: string;
+}
+
+/** Remote model id from installer list_models command (settings-aligned shape). */
+export interface RemoteModelInfo {
+  id: string;
+  displayName?: string;
 }
 
 /** Installation options sent to the Rust backend */
@@ -49,7 +68,7 @@ export interface InstallOptions {
   addToPath: boolean;
   launchAfterInstall: boolean;
   appLanguage: 'zh-CN' | 'en-US';
-  themePreference: ThemeId;
+  themePreference: ThemePreferenceId;
   modelConfig: ModelConfig | null;
 }
 
@@ -77,6 +96,6 @@ export const DEFAULT_OPTIONS: InstallOptions = {
   addToPath: true,
   launchAfterInstall: true,
   appLanguage: 'zh-CN',
-  themePreference: 'bitfun-light',
+  themePreference: SYSTEM_THEME_ID,
   modelConfig: null,
 };

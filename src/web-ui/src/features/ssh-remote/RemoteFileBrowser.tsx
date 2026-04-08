@@ -3,7 +3,7 @@
  * Used to browse and select remote directory as workspace
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useI18n } from '@/infrastructure/i18n';
 import { Button } from '@/component-library';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -26,7 +26,10 @@ import './RemoteFileBrowser.scss';
 
 interface RemoteFileBrowserProps {
   connectionId: string;
+  /** Defaults to `/tmp` if parent does not pass a resolved absolute home (avoid literal `~` for SFTP). */
   initialPath?: string;
+  /** Used by the Home button; defaults to `initialPath`. */
+  homePath?: string;
   onSelect: (path: string) => void;
   onCancel: () => void;
 }
@@ -48,8 +51,29 @@ function joinRemotePath(dir: string, fileName: string): string {
   if (!dir || dir === '/') {
     return `/${name}`;
   }
+  if (dir === '~') {
+    return name ? `~/${name}` : '~';
+  }
   const base = dir.endsWith('/') ? dir.slice(0, -1) : dir;
   return `${base}/${name}`;
+}
+
+/** Parent directory for remote paths (supports `~` and absolute POSIX paths). */
+function getRemoteParentPath(path: string): string | null {
+  if (path === '/' || path === '~') return null;
+  if (path.startsWith('~/')) {
+    const rest = path.slice(2);
+    const parts = rest.split('/').filter(Boolean);
+    if (parts.length === 0) return null;
+    parts.pop();
+    if (parts.length === 0) return '~';
+    return `~/${parts.join('/')}`;
+  }
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return '/';
+  parts.pop();
+  return `/${parts.join('/')}`;
 }
 
 function isTauriDesktop(): boolean {
@@ -58,10 +82,12 @@ function isTauriDesktop(): boolean {
 
 export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
   connectionId,
-  initialPath = '/',
+  initialPath = '/tmp',
+  homePath,
   onSelect,
   onCancel,
 }) => {
+  const homeAnchor = homePath ?? initialPath;
   const { t } = useI18n('common');
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [pathInputValue, setPathInputValue] = useState(initialPath);
@@ -86,22 +112,7 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
   const [transferBusy, setTransferBusy] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadDirectory(currentPath);
-  }, [currentPath]);
-
-  // Close context menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
-        setContextMenu({ show: false, x: 0, y: 0, entry: null });
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const loadDirectory = async (path: string) => {
+  const loadDirectory = useCallback(async (path: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -118,7 +129,22 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [connectionId]);
+
+  useEffect(() => {
+    loadDirectory(currentPath);
+  }, [currentPath, loadDirectory]);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu({ show: false, x: 0, y: 0, entry: null });
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const navigateTo = (path: string) => {
     setCurrentPath(path);
@@ -131,7 +157,12 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
     if (e.key === 'Enter') {
       const val = pathInputValue.trim();
       if (val) {
-        navigateTo(val.startsWith('/') ? val : `/${val}`);
+        const nav = val.startsWith('~')
+          ? val
+          : val.startsWith('/')
+            ? val
+            : `/${val}`;
+        navigateTo(nav);
       }
     } else if (e.key === 'Escape') {
       setPathInputValue(currentPath);
@@ -167,6 +198,30 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
       y: e.clientY,
       entry,
     });
+  };
+
+  const handleDownloadEntry = async (entry: RemoteFileEntry) => {
+    if (entry.isDir) return;
+    if (!isTauriDesktop()) {
+      setError(t('ssh.remote.transferNeedsDesktop'));
+      return;
+    }
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const localPath = await save({
+      title: t('ssh.remote.downloadDialogTitle'),
+      defaultPath: entry.name,
+    });
+    if (localPath === null) return;
+
+    setTransferBusy(true);
+    setError(null);
+    try {
+      await sshApi.downloadToLocalPath(connectionId, entry.path, localPath);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('ssh.remote.transferFailed'));
+    } finally {
+      setTransferBusy(false);
+    }
   };
 
   const handleContextMenuAction = async (action: string) => {
@@ -221,7 +276,7 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
       return;
     }
 
-    const parentPath = getParentPath(renameEntry.path) || '/';
+    const parentPath = getRemoteParentPath(renameEntry.path) ?? '/';
     const newPath = parentPath.endsWith('/')
       ? `${parentPath}${renameValue.trim()}`
       : `${parentPath}/${renameValue.trim()}`;
@@ -232,37 +287,6 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
       loadDirectory(currentPath);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to rename');
-    }
-  };
-
-  const getParentPath = (path: string): string | null => {
-    if (path === '/') return null;
-    const parts = path.split('/').filter(Boolean);
-    parts.pop();
-    return '/' + parts.join('/');
-  };
-
-  const handleDownloadEntry = async (entry: RemoteFileEntry) => {
-    if (entry.isDir) return;
-    if (!isTauriDesktop()) {
-      setError(t('ssh.remote.transferNeedsDesktop'));
-      return;
-    }
-    const { save } = await import('@tauri-apps/plugin-dialog');
-    const localPath = await save({
-      title: t('ssh.remote.downloadDialogTitle'),
-      defaultPath: entry.name,
-    });
-    if (localPath === null) return;
-
-    setTransferBusy(true);
-    setError(null);
-    try {
-      await sshApi.downloadToLocalPath(connectionId, entry.path, localPath);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('ssh.remote.transferFailed'));
-    } finally {
-      setTransferBusy(false);
     }
   };
 
@@ -327,7 +351,22 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
     return <File size={18} className="remote-file-browser__entry-icon remote-file-browser__entry-icon--file" />;
   };
 
-  const pathParts = currentPath.split('/').filter(Boolean);
+  const pathParts = (() => {
+    if (currentPath === '/' || currentPath === '') return [];
+    if (currentPath === '~') return ['~'];
+    if (currentPath.startsWith('~/')) {
+      return ['~', ...currentPath.slice(2).split('/').filter(Boolean)];
+    }
+    return currentPath.split('/').filter(Boolean);
+  })();
+
+  const pathAtSegment = (index: number) => {
+    if (pathParts[0] === '~') {
+      if (index === 0) return '~';
+      return `~/${pathParts.slice(1, index + 1).join('/')}`;
+    }
+    return `/${pathParts.slice(0, index + 1).join('/')}`;
+  };
 
   return (
     <div className="remote-file-browser-overlay">
@@ -366,8 +405,8 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
             >
               <button
                 className="remote-file-browser__breadcrumb-btn"
-                onClick={(e) => { e.stopPropagation(); navigateTo('/'); }}
-                title="Root"
+                onClick={(e) => { e.stopPropagation(); navigateTo(homeAnchor); }}
+                title={t('ssh.remote.homeFolder') || 'Home folder'}
               >
                 <Home size={14} />
               </button>
@@ -376,13 +415,13 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
                 <span className="remote-file-browser__breadcrumb-current">/</span>
               ) : (
                 pathParts.map((part, index) => {
-                  const path = '/' + pathParts.slice(0, index + 1).join('/');
+                  const segPath = pathAtSegment(index);
                   const isLast = index === pathParts.length - 1;
                   return (
-                    <React.Fragment key={path}>
+                    <React.Fragment key={segPath}>
                       <button
                         className={`remote-file-browser__breadcrumb-btn ${isLast ? 'remote-file-browser__breadcrumb-btn--current' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); navigateTo(path); }}
+                        onClick={(e) => { e.stopPropagation(); navigateTo(segPath); }}
                       >
                         {part}
                       </button>
@@ -407,9 +446,12 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
           </button>
           <button
             className="remote-file-browser__toolbar-btn"
-            onClick={() => navigateTo(getParentPath(currentPath) || '/')}
+            onClick={() => {
+              const p = getRemoteParentPath(currentPath);
+              if (p !== null) navigateTo(p);
+            }}
             title="Go up"
-            disabled={currentPath === '/' || transferBusy}
+            disabled={getRemoteParentPath(currentPath) === null || transferBusy}
           >
             <ArrowLeft size={16} />
           </button>
@@ -462,10 +504,10 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
               </thead>
               <tbody className="remote-file-browser__tbody">
                 {/* Parent directory link */}
-                {currentPath !== '/' && (
+                {getRemoteParentPath(currentPath) !== null && (
                   <tr
                     onClick={() => {
-                      const parent = getParentPath(currentPath);
+                      const parent = getRemoteParentPath(currentPath);
                       if (parent !== null) navigateTo(parent);
                     }}
                     className="remote-file-browser__row remote-file-browser__row--parent"
@@ -569,11 +611,12 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
                 }}
               />
               <div className="remote-file-browser__dialog-actions">
-                <Button variant="secondary" onClick={() => setRenameEntry(null)}>
+                <Button variant="secondary" size="small" onClick={() => setRenameEntry(null)}>
                   {t('actions.cancel')}
                 </Button>
                 <Button
                   variant="primary"
+                  size="small"
                   onClick={handleRename}
                   disabled={!renameValue.trim() || renameValue.trim() === renameEntry.name}
                 >
@@ -612,11 +655,12 @@ export const RemoteFileBrowser: React.FC<RemoteFileBrowserProps> = ({
             )}
           </div>
           <div className="remote-file-browser__footer-actions">
-            <Button variant="secondary" onClick={onCancel}>
+            <Button variant="secondary" size="small" onClick={onCancel}>
               {t('actions.cancel')}
             </Button>
             <Button
               variant="primary"
+              size="small"
               onClick={openSelectedWorkspace}
               disabled={false}
             >

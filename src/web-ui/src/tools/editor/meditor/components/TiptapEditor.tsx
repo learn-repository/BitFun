@@ -32,8 +32,8 @@ import {
 } from '../extensions/MarkdownTableExtensions';
 import {
   InlineAiPreviewExtension,
-  inlineAiPreviewPluginKey,
 } from '../extensions/InlineAiPreviewExtension';
+import { inlineAiPreviewPluginKey } from '../extensions/InlineAiPreviewPluginKey';
 import { RawHtmlBlock, RawHtmlInline, RenderOnlyBlock } from '../extensions/RawHtmlExtensions';
 import { getBlockIndexForLine } from '../utils/markdownBlocks';
 import {
@@ -328,7 +328,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
   const inlineAiInputComposingRef = useRef(false);
   const [inlineAiState, setInlineAiState] = useState<InlineAiState | null>(null);
 
-  const initialContent = useMemo(() => markdownToTiptapDoc(value), []);
+  const initialContent = useMemo(() => markdownToTiptapDoc(value), [value]);
   const inlineAiTriggerHint = t('editor.meditor.inlineAi.triggerHint');
 
   useEffect(() => {
@@ -785,6 +785,9 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
 
     let responseText = '';
     let isCleanedUp = false;
+    let unlistenChunk: () => void = () => {};
+    let unlistenCompleted: () => void = () => {};
+    let unlistenFailed: () => void = () => {};
 
     const cleanup = () => {
       if (isCleanedUp) {
@@ -809,7 +812,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
       }
     };
 
-    const unlistenChunk = editorAiAPI.onTextChunk(event => {
+    unlistenChunk = editorAiAPI.onTextChunk(event => {
       if (event.requestId !== requestId) {
         return;
       }
@@ -827,7 +830,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
       } : current);
     });
 
-    const unlistenCompleted = editorAiAPI.onCompleted(event => {
+    unlistenCompleted = editorAiAPI.onCompleted(event => {
       if (event.requestId !== requestId) {
         return;
       }
@@ -857,7 +860,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
       } : current);
     });
 
-    const unlistenFailed = editorAiAPI.onError(event => {
+    unlistenFailed = editorAiAPI.onError(event => {
       if (event.requestId !== requestId) {
         return;
       }
@@ -1063,6 +1066,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
       {inlineAiState?.isOpen && inlineAiState.status === 'idle' && (
         <div
           className="m-editor-inline-ai"
+          data-testid="md-inline-ai-panel"
           style={{
             top: `${inlineAiState.anchorTop}px`,
             left: `${inlineAiState.anchorLeft}px`,
@@ -1079,6 +1083,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
                   variant="filled"
                   inputSize="medium"
                   className="m-editor-inline-ai__composer-input"
+                  data-testid="md-inline-ai-input"
                   prefix={<PenLine size={14} strokeWidth={1.75} />}
                   value={inlineAiState.query}
                   onChange={(event) => {
@@ -1146,6 +1151,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
                 <button
                   type="button"
                   className="m-editor-inline-ai__quick-action m-editor-inline-ai__quick-action--primary"
+                  data-testid="md-inline-ai-continue"
                   onClick={() => {
                     handleInlineAiQuickAction('continue', '');
                   }}
@@ -1158,6 +1164,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
                 <button
                   type="button"
                   className="m-editor-inline-ai__quick-action"
+                  data-testid="md-inline-ai-summary"
                   onClick={() => {
                     handleInlineAiQuickAction('summary', t('editor.meditor.inlineAi.summaryDirection'));
                   }}
@@ -1170,6 +1177,7 @@ export const TiptapEditor = React.forwardRef<TiptapEditorHandle, TiptapEditorPro
                 <button
                   type="button"
                   className="m-editor-inline-ai__quick-action"
+                  data-testid="md-inline-ai-todo"
                   onClick={() => {
                     handleInlineAiQuickAction('todo', t('editor.meditor.inlineAi.todoDirection'));
                   }}

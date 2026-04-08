@@ -6,14 +6,17 @@
  */
 
 @use '../../../../../component-library/styles/tokens.scss' as *;
+@use '../../../../../component-library/styles/nav-panel-font-scope.scss' as nav-font;
 
 .bitfun-nav-panel {
   &__inline-list {
     display: flex;
     flex-direction: column;
-    padding: 2px $size-gap-2 $size-gap-1;
+    padding: 2px $size-gap-2 2px;
     gap: 1px;
-    margin: 1px $size-gap-2 2px calc(#{$size-gap-2} + 14px);
+    // No vertical margin: spacing between assistant blocks comes from 2px top/bottom padding only
+    // (see .bitfun-nav-panel__items--session-blocks gap: 0), aligned with __workspace-item padding.
+    margin: 0 $size-gap-2 0 calc(#{$size-gap-2} + 4px);
   }
 
   &__inline-action {
@@ -26,8 +29,8 @@
     border: 1px dashed var(--border-subtle);
     border-radius: $size-radius-sm;
     background: transparent;
-    color: var(--color-text-muted);
-    font-size: 12px;
+    color: var(--color-text-primary);
+    font-size: var(--font-size-xs);
     cursor: pointer;
     flex: 1;
     min-width: 0;
@@ -46,7 +49,7 @@
   }
 
   &__inline-empty {
-    font-size: 12px;
+    font-size: var(--font-size-xs);
     color: var(--color-text-muted);
     padding: 4px $size-gap-1;
     font-style: italic;
@@ -62,7 +65,7 @@
     border-radius: 4px;
     background: transparent;
     color: var(--color-text-secondary);
-    font-size: 13px;
+    font-size: var(--font-size-sm);
     font-weight: 400;
     cursor: pointer;
     width: 100%;
@@ -77,7 +80,6 @@
 
     &.is-active {
       color: var(--color-text-primary);
-      font-weight: 500;
       background: var(--element-bg-soft);
     }
 
@@ -93,14 +95,14 @@
 
     &.is-child {
       min-height: 24px;
-      font-size: 12px;
-      padding-left: calc(#{$size-gap-1} + 18px);
+      font-size: var(--font-size-xs);
+      padding-left: calc(#{$size-gap-1} + 14px);
       position: relative;
 
       &::before {
         content: '';
         position: absolute;
-        left: 10px;
+        left: 8px;
         top: 0;
         width: 1px;
         height: 50%;
@@ -111,9 +113,9 @@
       &::after {
         content: '';
         position: absolute;
-        left: 10px;
+        left: 8px;
         top: 50%;
-        width: 12px;
+        width: 10px;
         height: 1px;
         background: color-mix(in srgb, var(--border-subtle) 92%, transparent);
         opacity: 0.95;
@@ -135,21 +137,22 @@
 
   &__inline-item-icon {
     flex-shrink: 0;
-    opacity: 0.6;
+    opacity: 0.78;
     display: flex;
     align-items: center;
-    color: var(--color-text-muted);
-
-    &.is-code {
-      color: color-mix(in srgb, var(--color-primary) 70%, var(--color-text-muted));
-    }
+    color: inherit;
+    transform: scale(1);
+    transform-origin: center;
+    transition: opacity $motion-fast $easing-standard,
+                transform $motion-fast $easing-standard;
 
     &.is-cowork {
-      color: color-mix(in srgb, var(--color-accent-500) 70%, var(--color-text-muted));
+      color: var(--color-text-secondary);
     }
 
     &.is-running {
-      color: var(--color-primary);
+      color: var(--color-text-secondary);
+      transition: opacity $motion-fast $easing-standard;
       animation: bitfun-nav-session-spin 1s linear infinite;
     }
 
@@ -157,6 +160,11 @@
     .bitfun-nav-panel__inline-item.is-active & {
       opacity: 1;
     }
+  }
+
+  // 「助理会话」区块：行前导图标悬停微微放大（与顶部 __top-action-icon-slot 的 1.07 一致；运行中 Loader 仅用旋转动画）
+  &__items--session-blocks &__inline-item:hover &__inline-item-icon:not(.is-running) {
+    transform: scale(1.07);
   }
 
   &__inline-item-main {
@@ -185,7 +193,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--element-bg-soft) 42%, transparent);
     color: var(--color-text-muted);
-    font-size: 9px;
+    font-size: var(--font-size-xxs);
     font-weight: 500;
     letter-spacing: 0.02em;
     opacity: 0.78;
@@ -199,7 +207,7 @@
   }
 
   &__inline-item-tooltip-title {
-    font-size: 12px;
+    font-size: var(--font-size-xs);
     font-weight: 600;
     color: var(--color-text-primary);
     line-height: 1.4;
@@ -207,7 +215,7 @@
   }
 
   &__inline-item-tooltip-meta {
-    font-size: 11px;
+    font-size: var(--font-size-2xs);
     color: var(--color-text-secondary);
     line-height: 1.4;
     word-break: break-word;
@@ -235,7 +243,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--color-text-muted);
+    color: var(--color-text-primary);
     cursor: pointer;
     transition: color $motion-fast $easing-standard,
                 background $motion-fast $easing-standard;
@@ -248,6 +256,8 @@
   }
 
   &__inline-item-menu-popover {
+    @include nav-font.nav-panel-font-token-scope;
+
     position: fixed;
     width: max-content;
     min-width: 140px;
@@ -272,7 +282,7 @@
     border: none;
     background: transparent;
     color: var(--color-text-secondary);
-    font-size: $font-size-sm;
+    font-size: var(--font-size-sm);
     font-weight: 400;
     cursor: pointer;
     text-align: left;
@@ -321,13 +331,13 @@
     }
 
     .bitfun-input {
-      font-size: 12px;
+      font-size: var(--font-size-xs);
       line-height: 16px;
     }
 
     .bitfun-input-container:focus-within {
-      border-color: color-mix(in srgb, var(--color-primary) 65%, var(--border-subtle));
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+      border-color: color-mix(in srgb, var(--color-text-primary) 35%, var(--border-subtle));
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 12%, transparent);
     }
   }
 
@@ -341,22 +351,22 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--color-text-muted);
-    font-size: 11px;
+    color: var(--color-text-primary);
+    font-size: var(--font-size-2xs);
     cursor: pointer;
     width: 100%;
     transition: color $motion-fast $easing-standard,
                 background $motion-fast $easing-standard;
 
     &:hover {
-      color: var(--color-primary);
-      background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+      color: var(--color-text-primary);
+      background: var(--element-bg-soft);
     }
   }
 
   &__inline-toggle-dots {
     letter-spacing: 1px;
-    font-size: 13px;
+    font-size: var(--font-size-sm);
     line-height: 1;
     opacity: 0.7;
   }
@@ -371,7 +381,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--color-text-muted);
+    color: var(--color-text-primary);
     cursor: pointer;
     flex-shrink: 0;
     transition: color $motion-fast $easing-standard,
@@ -408,7 +418,7 @@
   // Inline item badge (count / status text)
   &__inline-item-badge {
     flex-shrink: 0;
-    font-size: 10px;
+    font-size: var(--font-size-xxs);
     line-height: 1;
     color: var(--color-text-muted);
     margin-left: auto;
@@ -476,5 +486,13 @@
   .bitfun-nav-panel__inline-item-icon.is-running {
     animation: none;
     opacity: 0.8;
+  }
+
+  .bitfun-nav-panel__items--session-blocks .bitfun-nav-panel__inline-item:hover .bitfun-nav-panel__inline-item-icon:not(.is-running) {
+    transform: scale(1);
+  }
+
+  .bitfun-nav-panel__items--session-blocks .bitfun-nav-panel__inline-item-icon:not(.is-running) {
+    transition: opacity $motion-fast $easing-standard;
   }
 }

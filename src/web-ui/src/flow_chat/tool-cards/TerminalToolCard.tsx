@@ -18,7 +18,7 @@ import type { ToolCardProps } from '../types/flow-chat';
 import { Terminal, Play, X, ExternalLink, Square } from 'lucide-react';
 import { createTerminalTab } from '@/shared/utils/tabUtils';
 import { BaseToolCard, ToolCardHeader } from './BaseToolCard';
-import { CubeLoading, IconButton } from '../../component-library';
+import { CubeLoading, IconButton, Tooltip } from '../../component-library';
 import { TerminalOutputRenderer } from '@/tools/terminal/components';
 import { createLogger } from '@/shared/utils/logger';
 import { useToolCardHeightContract } from './useToolCardHeightContract';
@@ -84,6 +84,10 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   const progressMessage = (toolItem as any)._progressMessage || '';
   
   const terminalSessionId = useMemo(() => {
+    if (toolItem.terminalSessionId && !toolItem.terminalSessionId.startsWith('FlowChat-')) {
+      return toolItem.terminalSessionId;
+    }
+
     if (toolResult?.result?.terminal_session_id) {
       const id = toolResult.result.terminal_session_id;
       if (typeof id === 'string' && !id.startsWith('FlowChat-')) {
@@ -96,7 +100,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     }
     
     return undefined;
-  }, [toolResult, propTerminalSessionId]);
+  }, [toolItem.terminalSessionId, toolResult, propTerminalSessionId]);
 
   const showConfirmButtons = status === 'pending_confirmation';
   const showInterruptButton = status === 'running';
@@ -109,8 +113,10 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   const [isExpanded, setIsExpanded] = useState(() => getInitialExpandedState(toolId, status));
   const [isExecuting, setIsExecuting] = useState(false);
   const [isEditingCommand, setIsEditingCommand] = useState(false);
+  const [isCommandTruncated, setIsCommandTruncated] = useState(false);
   const [editedCommand, setEditedCommand] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const commandRef = useRef<HTMLElement | null>(null);
   const hasInitializedExpand = useRef(false);
   const previousStatusRef = useRef<string>(status);
   const {
@@ -187,6 +193,50 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     }
   }, [status]);
 
+  const updateCommandTruncation = useCallback(() => {
+    const element = commandRef.current;
+    if (!element) {
+      setIsCommandTruncated(false);
+      return;
+    }
+
+    const nextValue = element.scrollWidth - element.clientWidth > 1;
+    setIsCommandTruncated((prev) => (prev === nextValue ? prev : nextValue));
+  }, []);
+
+  useEffect(() => {
+    if (isEditingCommand) {
+      setIsCommandTruncated(false);
+      return;
+    }
+
+    const element = commandRef.current;
+    if (!element) {
+      setIsCommandTruncated(false);
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(updateCommandTruncation);
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => {
+          updateCommandTruncation();
+        })
+      : null;
+
+    resizeObserver?.observe(element);
+    if (element.parentElement) {
+      resizeObserver?.observe(element.parentElement);
+    }
+
+    window.addEventListener('resize', updateCommandTruncation);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateCommandTruncation);
+    };
+  }, [command, isEditingCommand, updateCommandTruncation]);
+
   const handleStartEdit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditedCommand(command || '');
@@ -243,7 +293,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     } finally {
       setIsExecuting(false);
     }
-  }, [command, editedCommand, isEditingCommand, toolCall?.input, onConfirm]);
+  }, [applyExpandedState, command, editedCommand, isEditingCommand, onConfirm, toolCall?.input]);
 
   const handleReject = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -289,11 +339,58 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
     createTerminalTab(terminalSessionId, terminalName);
   }, [terminalSessionId]);
 
-  const output = toolResult?.result?.output || '';
-  const exitCode = toolResult?.result?.exit_code ?? 0;
-  const workingDir = toolResult?.result?.working_directory || '';
-  const executionTimeMs = toolResult?.result?.execution_time_ms;
-  const wasInterrupted = toolResult?.result?.interrupted || false;
+  const {
+    output,
+    exitCode,
+    workingDir,
+    executionTimeMs,
+    wasInterrupted,
+  } = useMemo(() => {
+    const raw = toolResult?.result;
+    let rec: Record<string, unknown> | null = null;
+    if (raw != null && typeof raw === 'string') {
+      try {
+        rec = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        rec = null;
+      }
+    } else if (raw != null && typeof raw === 'object') {
+      rec = raw as Record<string, unknown>;
+    }
+
+    if (!rec) {
+      return {
+        output: '',
+        exitCode: 0,
+        workingDir: '',
+        executionTimeMs: undefined as number | undefined,
+        wasInterrupted: false,
+      };
+    }
+
+    const stdout = typeof rec.stdout === 'string' ? rec.stdout : '';
+    const stderr = typeof rec.stderr === 'string' ? rec.stderr : '';
+    const combinedOut = [stdout, stderr].filter((s) => s.length > 0).join('\n');
+    const outputField = typeof rec.output === 'string' ? rec.output : '';
+    const output = outputField || combinedOut;
+
+    const exitRaw = rec.exit_code;
+    const exitCode = typeof exitRaw === 'number' ? exitRaw : 0;
+
+    const workingDir =
+      typeof rec.working_directory === 'string' ? rec.working_directory : '';
+
+    const execInResult =
+      typeof rec.execution_time_ms === 'number' ? rec.execution_time_ms : undefined;
+    const durationInResult =
+      typeof rec.duration_ms === 'number' ? rec.duration_ms : undefined;
+    const executionTimeMs =
+      execInResult ?? durationInResult ?? toolResult?.duration_ms;
+
+    const wasInterrupted = Boolean(rec.interrupted);
+
+    return { output, exitCode, workingDir, executionTimeMs, wasInterrupted };
+  }, [toolResult?.result, toolResult?.duration_ms]);
 
   const isLoading = status === 'preparing' || status === 'streaming' || status === 'running';
   const isFailed = status === 'error';
@@ -303,6 +400,20 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   };
 
   const renderStatusIcon = () => {
+    if (terminalSessionId) {
+      return (
+        <IconButton 
+          className="terminal-action-btn external-btn"
+          variant="ghost"
+          size="xs"
+          onClick={handleOpenInPanel}
+          tooltip={t('toolCards.terminal.openInPanel')}
+        >
+          <ExternalLink size={12} />
+        </IconButton>
+      );
+    }
+
     if (isLoading) {
       return <CubeLoading size="small" />;
     }
@@ -325,16 +436,32 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
         />
       );
     }
-    
-    return (
+
+    const commandNode = (
       <code 
+        ref={commandRef}
         className={`terminal-command ${canEditCommand ? 'editable' : ''}`}
         onClick={canEditCommand ? handleStartEdit : undefined}
-        title={canEditCommand ? t('toolCards.terminal.clickToEditCommand') : undefined}
+        title={canEditCommand && !isCommandTruncated ? t('toolCards.terminal.clickToEditCommand') : undefined}
       >
         {command || (canEditCommand ? <span className="command-empty">{t('toolCards.terminal.commandEmpty')}</span> : <span className="command-empty">{t('toolCards.terminal.noCommand')}</span>)}
       </code>
     );
+
+    if (command && isCommandTruncated) {
+      return (
+        <Tooltip
+          content={<div className="terminal-command-tooltip-content">{command}</div>}
+          placement="bottom"
+          className="terminal-command-tooltip"
+          interactive
+        >
+          {commandNode}
+        </Tooltip>
+      );
+    }
+
+    return commandNode;
   };
 
   const renderStatusText = () => {
@@ -365,15 +492,18 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
   };
 
   const renderHeader = () => {
+    const statusText = renderStatusText();
+    const hasHeaderExtra = Boolean(statusText || showConfirmButtons || showInterruptButton);
+
     return (
       <ToolCardHeader
         icon={renderToolIcon()}
         iconClassName="terminal-icon"
         action={t('toolCards.terminal.executeCommand')}
         content={renderCommandContent()}
-        extra={
+        extra={hasHeaderExtra ? (
           <>
-            {renderStatusText()}
+            {statusText}
 
             {showConfirmButtons && (
               <div className="terminal-confirm-actions" onClick={(e) => e.stopPropagation()}>
@@ -415,20 +545,8 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
                 <Square size={12} fill="currentColor" />
               </IconButton>
             )}
-
-            {terminalSessionId && (
-              <IconButton 
-                className="terminal-action-btn external-btn"
-                variant="ghost"
-                size="xs"
-                onClick={handleOpenInPanel}
-                tooltip={t('toolCards.terminal.openInPanel')}
-              >
-                <ExternalLink size={12} />
-              </IconButton>
-            )}
           </>
-        }
+        ) : undefined}
         statusIcon={renderStatusIcon()}
       />
     );
@@ -529,6 +647,7 @@ export const TerminalToolCard: React.FC<TerminalToolCardProps> = ({
         errorContent={isFailed ? renderErrorContent() : null}
         isFailed={isFailed}
         requiresConfirmation={showConfirmButtons}
+        headerExpandAffordance
       />
     </div>
   );

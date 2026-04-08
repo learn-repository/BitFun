@@ -19,7 +19,7 @@ pub struct InstallOptions {
     pub launch_after_install: bool,
     /// First-launch app language (zh-CN / en-US)
     pub app_language: String,
-    /// First-launch theme preference (BitFun built-in theme id)
+    /// First-launch theme preference (`system` or BitFun built-in theme id)
     pub theme_preference: String,
     /// Optional first-launch model configuration.
     pub model_config: Option<ModelConfig>,
@@ -44,18 +44,24 @@ pub struct ModelConfig {
     pub custom_headers: Option<HashMap<String, String>>,
     #[serde(default)]
     pub custom_headers_mode: Option<String>,
+    /// Optional capability ids (e.g. `image_understanding`) — aligns with main app when set.
+    #[serde(default)]
+    pub capabilities: Option<Vec<String>>,
+    /// Optional model category (e.g. `multimodal`) — aligns with main app when set.
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
+/// One entry from provider model discovery (installer-local; mirrors main app shape).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConnectionTestResult {
-    pub success: bool,
-    pub response_time_ms: u64,
+pub struct RemoteModelInfo {
+    pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_response: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_details: Option<String>,
+    pub display_name: Option<String>,
 }
+
+pub use crate::connection_test::types::ConnectionTestResult;
 
 /// Progress update sent to the frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +99,7 @@ impl Default for InstallOptions {
             add_to_path: true,
             launch_after_install: true,
             app_language: "zh-CN".to_string(),
-            theme_preference: "bitfun-light".to_string(),
+            theme_preference: "system".to_string(),
             model_config: None,
         }
     }

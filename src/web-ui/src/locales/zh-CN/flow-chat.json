@@ -87,7 +87,15 @@
     "fillToInput": "填充到输入框",
     "cannotRollback": "无法回滚",
     "rollbackTo": "回滚到第 {{index}} 轮之前（删除该轮及之后）",
-    "rollbackConfirm": "确定要回滚到第 {{index}} 轮之前吗？\n\n这将：\n• 撤销从该轮开始的所有文件修改\n• 删除该轮及之后的对话记录（不可恢复）",
+    "rollbackDialogTitle": "确定回滚到第 {{index}} 轮之前？",
+    "rollbackDialogIntro": "将执行：",
+    "rollbackDialogBulletFiles": "撤销从该轮开始的所有文件修改",
+    "rollbackDialogBulletHistory": "删除该轮及之后的对话记录（不可恢复）",
+    "rollbackPanelDialogTitle": "回滚到第 {{index}} 轮之前？",
+    "rollbackPanelDialogIntro": "将执行：",
+    "rollbackPanelBulletRestore": "将文件恢复到第 {{index}} 轮之前的状态",
+    "rollbackPanelBulletUndo": "撤销从该轮开始的所有文件变更",
+    "rollbackPanelBulletHistory": "保留会话历史（之后仍可继续对话）",
     "rollbackSuccess": "已回滚并删除后续对话记录",
     "rollbackFailed": "回滚失败"
   },
@@ -118,6 +126,8 @@
     "imageAddedSuccess": "成功添加 {{count}} 张图片",
     "imageAddedSingle": "已添加剪贴板图片: {{name}}",
     "imagePasteFailed": "图片粘贴失败",
+    "largePastePlaceholder": "[已粘贴内容 {{count}} 字符]",
+    "messageTooLarge": "消息超过最大长度 {{max}} 个字符（当前 {{count}} 个字符）。",
     "openWorkspaceFolder": "打开工作区文件夹",
     "openWorkspaceFolderFailed": "打开工作区文件夹失败：{{error}}",
     "spaceToActivate": "按<space>空格键</space>快速键入"
@@ -184,6 +194,7 @@
     "addModeTooltip": "附加 Plan 或 Debug",
     "boostSectionAgent": "智能体",
     "boostSectionContext": "上下文",
+    "boostStartBtw": "发起侧问",
     "boostAddContext": "引用文件或文件夹",
     "boostSkills": "Skills",
     "boostSkillsLoading": "正在加载 Skills…",
@@ -195,6 +206,17 @@
     "noIncrementalModes": "暂无可附加模式",
     "switchMode": "切换模式",
     "quickAction": "快捷操作",
+    "compactAction": "压缩会话",
+    "compactNoSession": "当前没有可用于 /compact 的会话",
+    "compactBusy": "请等待当前会话空闲后再使用 /compact。",
+    "compactUsage": "请直接使用 /compact，不要附加额外参数。",
+    "compactFailed": "会话压缩失败",
+    "initAction": "生成 AGENTS.md",
+    "initNoSession": "当前没有可用于 /init 的会话",
+    "initBusy": "请等待当前会话空闲后再使用 /init。",
+    "initUsage": "请直接使用 /init，不要附加额外参数。",
+    "initFailed": "初始化 AGENTS.md 失败",
+    "initPrompt": "请根据当前项目内容生成或更新 AGENTS.md",
     "currentMode": "当前模式: {{mode}}",
     "noMatchingMode": "没有匹配的模式",
     "noMatchingCommand": "没有匹配的命令",
@@ -311,7 +333,12 @@
     "clickToViewDiff": "点击查看 Diff",
     "review": {
       "displayMessage": "审查修改的文件：\n{{files}}",
-      "prompt": "请审查本次会话中修改的以下文件：\n\n{{files}}"
+      "displayMessageFiltered": "审查过滤后的文件：\n{{files}}\n\n已跳过 {{skipped}} 个命中排除规则的文件。",
+      "filteredNotice": "本次将分析 {{included}} 个文件，并跳过 {{skipped}} 个命中排除规则的文件，例如锁文件、生成物或二进制资源。",
+      "noEligibleFiles": "排除命中规则的文件后，本次会话里没有可审查文件。",
+      "prompt": "请审查本次会话中修改的以下文件：\n\n{{files}}",
+      "promptFiltered": "请审查本次会话中修改的以下文件：\n\n{{files}}\n\n请不要审查另外 {{skipped}} 个已跳过的文件，因为它们命中了锁文件、生成物或二进制文件的排除规则。",
+      "threadTitle": "代码审查"
     }
   },
   "sessionFileModificationsBar": {
@@ -427,6 +454,20 @@
       "blame": "追溯",
       "cherryPick": "挑选"
     },
+    "initMiniApp": {
+      "title": "小应用",
+      "operationInit": "初始化",
+      "skeletonReady": "已初始化",
+      "creatingShort": "…",
+      "untitled": "（未命名）",
+      "failed": "失败",
+      "createFailed": "无法创建小应用",
+      "openInMiniApp": "在小应用中打开",
+      "openInMiniAppTitle": "在小应用场景中打开",
+      "labelAppId": "app_id",
+      "labelPath": "path",
+      "nameLabel": "应用：{{name}}"
+    },
     "terminal": {
       "executeCommand": "执行命令:",
       "commandEmpty": "[命令为空 - 请编辑]",
@@ -452,6 +493,7 @@
     },
     "plan": {
       "loadingPlan": "正在加载计划...",
+      "generating": "生成中...",
       "clickToOpenPlan": "点击打开计划文件",
       "remainingTodos": "剩余 {{count}} 个待办",
       "viewPlan": "查看计划",
@@ -486,6 +528,7 @@
       "notAnswered": "未回答",
       "timeout": "等待超时（10分钟）",
       "parseError": "无法解析问题数据",
+      "loadingQuestions": "正在接收问题…",
       "other": "其他",
       "customInputHint": "提供自定义文本",
       "pleaseSpecify": "请输入..."
@@ -532,6 +575,8 @@
       "processing": "处理中..."
     },
     "taskTool": {
+      "headerLine": "{{agentType}} 智能体：{{description}}",
+      "defaultAgentKind": "子代理",
       "waitingConfirm": "等待确认",
       "executing": "执行中...",
       "subAgentFailed": "子代理任务执行失败",
@@ -562,7 +607,7 @@
       }
     },
     "diagram": {
-      "interactive": "可视化交互视图:",
+      "interactive": "交互图表:",
       "preparing": "准备中",
       "creating": "创建中",
       "mermaidInteractive": "Mermaid 交互图表"
@@ -595,7 +640,10 @@
       "cancel": "取消",
       "loadingApp": "加载交互应用中...",
       "appLoadError": "加载应用失败",
-      "interactiveApp": "交互应用"
+      "interactiveApp": "交互应用",
+      "actionLabel": "MCP：",
+      "failedLabel": "MCP 失败",
+      "executionFailed": "MCP 执行失败"
     },
     "default": {
       "waitingConfirm": "等待确认",
@@ -608,10 +656,10 @@
     "skill": {
       "unknownSkill": "未知技能",
       "unknown": "未知",
-      "userLevel": "用户级",
-      "projectLevel": "项目级",
       "loadSkillFailed": "加载技能失败",
-      "skillAction": "Skill技能:"
+      "skillAction": "技能:",
+      "loadingSkill": "正在加载",
+      "preparingSkill": "准备加载"
     },
     "readFile": {
       "parsingParams": "解析参数中...",
@@ -683,7 +731,10 @@
       "manualTrigger": "手动触发",
       "autoTrigger": "自动触发",
       "contextCompressionFailed": "上下文压缩失败",
-      "contextCompression": "上下文压缩:"
+      "contextCompression": "上下文压缩:",
+      "localFallbackHeader": "模型请求异常，已改用本地结构化裁剪",
+      "localFallbackNotice": "本次压缩无法使用模型生成总结，因此改用了本地结构化裁剪。",
+      "noSummaryNotice": "本次压缩没有生成额外的总结内容。"
     },
     "globSearch": {
       "parsingPattern": "解析搜索模式中...",
@@ -775,7 +826,11 @@
       "aiProcessing": "AI 正在处理中...",
       "inputMessage": "输入消息...",
       "processing": "处理中...",
-      "startNewChat": "开始新对话..."
+      "startNewChat": "开始新对话...",
+      "openSessionMenu": "会话与新建",
+      "moreMenu": "更多",
+      "newCodeSessionItem": "编程会话",
+      "newCoworkSessionItem": "办公会话"
     },
     "chatInput": {
       "inputHint": "输入内容..."
@@ -837,12 +892,12 @@
     "subtitleEvening": "夜晚安静，最适合沉浸式编码",
     "greetingNight": "夜深了",
     "subtitleNight": "灵感不眠，让我们继续",
-    "aiPartner": "心流开发者",
+    "aiPartner": "编程搭档",
     "subtitleMorningCowork": "清晨头脑最清醒，把今天的想法和任务整理一下吧",
     "subtitleAfternoonCowork": "下午好，有什么要推进或整理的，一起来",
     "subtitleEveningCowork": "收尾、复盘、或是为明天做准备——都行",
     "subtitleNightCowork": "夜深了，适合规划和沉淀，有什么想梳理的？",
-    "aiPartnerCowork": "心流伙伴",
+    "aiPartnerCowork": "协作搭档",
     "aiPartnerClaw": "我是你的助理",
     "subtitleMorningClaw": "今天有什么需要帮忙的？",
     "subtitleAfternoonClaw": "有什么需要帮忙的？",

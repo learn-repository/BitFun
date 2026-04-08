@@ -51,8 +51,8 @@
     "chatPanel": "Chat",
     "showChatPanel": "Show Chat Panel",
     "hideChatPanel": "Hide Chat Panel",
-    "switchToToolbar": "Switch to Toolbar Mode",
-    "remoteConnect": "Remote Control (Beta)",
+    "switchToToolbar": "Floating window mode",
+    "remoteConnect": "Remote Control",
     "modeSwitchAriaLabel": "View mode switch",
     "modeCowork": "Cowork",
     "modeCoder": "Coder",
@@ -90,12 +90,25 @@
       "persona": "Nursery — create and manage all assistant instances",
       "agents": "Which agents it can call",
       "skills": "What it knows — specialized knowledge files",
-      "tools": "What it can use — built-in tools & MCP services"
+      "tools": "What it can use — built-in tools & MCP services",
+      "addWorkspace": "Add workspace"
     },
     "sections": {
       "workspace": "Workspace",
-      "myAgent": "My Agent",
-      "shell": "Shell"
+      "extensions": "Customize",
+      "shell": "Shell",
+      "assistantSessions": "Assistant Sessions"
+    },
+    "search": {
+      "triggerPlaceholder": "Search",
+      "triggerTooltip": "Search (Ctrl+K)",
+      "inputPlaceholder": "Search workspaces, assistants, sessions...",
+      "groupWorkspaces": "Open Workspaces",
+      "groupAssistants": "Assistants",
+      "groupSessions": "All Sessions",
+      "empty": "No results found",
+      "sessionSearchHintDefault": "Type a keyword to search sessions in open workspaces",
+      "sessionWorkspaceHint": "in {{workspace}}"
     },
     "displayModes": {
       "pro": "Expert Mode",
@@ -106,7 +119,7 @@
       "assistantDesc": "Best for ongoing work with context and personal preferences."
     },
     "myAgent": {
-      "title": "My Agent",
+      "title": "Extensions",
       "categories": {
         "agents": "Agents",
         "extensions": "Extensions",
@@ -139,13 +152,16 @@
       },
       "empty": {
         "manual": "No user terminals yet",
-        "agent": "No agent terminals yet"
+        "agent": "No agent terminals yet",
+        "quickNew": "Quick new terminal"
       }
     },
     "sessions": {
       "newSession": "New session",
       "newCodeSession": "New Code session",
       "newCoworkSession": "New Cowork session",
+      "newCodeSessionShort": "Code Session",
+      "newCoworkSessionShort": "Office Session",
       "newClawSession": "New Claw session",
       "modeCode": "Code",
       "modeCowork": "Cowork",
@@ -158,7 +174,9 @@
       "cancelEdit": "Cancel",
       "showMore": "{{count}} more sessions",
       "showAll": "{{count}} more (show all)",
-      "showLess": "Show less"
+      "showLess": "Show less",
+      "assistantOwner": "Assistant: {{name}}",
+      "needProjectWorkspaceForSession": "Open or add a project workspace first. Code and Cowork sessions cannot be created in the assistant area."
     },
     "scheduledJobs": {
       "title": "Scheduled Jobs",
@@ -217,7 +235,8 @@
         "edit": "Edit job",
         "delete": "Delete job",
         "save": "Save changes",
-        "create": "Create job"
+        "create": "Create job",
+        "cancel": "Cancel"
       },
       "editor": {
         "editTitle": "Edit job",
@@ -264,6 +283,7 @@
       "revealFailed": "Failed to reveal workspace folder",
       "copyPathFailed": "Failed to copy path",
       "createSessionFailed": "Failed to create session",
+      "initSessionFailed": "Failed to start AGENTS.md initialization session",
       "worktreeCreated": "Worktree created",
       "worktreeCreatedAndOpened": "Worktree created and opened",
       "worktreeCreateFailed": "Failed to create worktree: {{error}}",
@@ -279,11 +299,10 @@
       "actions": {
         "more": "More actions",
         "newSession": "New session",
-        "newCodeSession": "New Code session",
-        "newCoworkSession": "New Cowork session",
         "newAssistant": "New personal assistant",
         "deleteAssistant": "Delete personal assistant",
         "resetWorkspace": "Reset workspace",
+        "initAgents": "Initialize AGENTS.md",
         "newWorktree": "New worktree",
         "deleteWorktree": "Delete worktree",
         "copyPath": "Copy path",
@@ -320,7 +339,8 @@
       "mcpServices": "MCP Services"
     },
     "actions": {
-      "openMyAgent": "My Agent"
+      "openMyAgent": "My Agent",
+      "customize": "Customize"
     },
     "moreOptions": "More options",
     "multimodalTools": "Multimodal Tools",
@@ -350,7 +370,7 @@
     "errorCreateFailed": "Failed to create project"
   },
   "remoteConnect": {
-    "title": "Remote Control (Beta)",
+    "title": "Remote Control",
     "tabLan": "LAN",
     "tabBitfunServer": "BitFun Server",
     "tabNgrok": "NAT Traversal",
@@ -416,7 +436,7 @@
     "openNgrokSetup": "Open ngrok setup page",
     "disclaimerTitle": "Remote Connect Disclaimer",
     "disclaimerIntro": "Before enabling Remote Connect, please read and accept the following:",
-    "disclaimerItemBeta": "Remote Connect is currently in Beta. It may contain undiscovered security vulnerabilities, functional defects, or incompatible changes. Please use it with full awareness of the risks.",
+    "disclaimerItemGeneralRisk": "Remote Connect may contain undiscovered security vulnerabilities, functional defects, or incompatible changes. Please use it with full awareness of the risks.",
     "disclaimerItemSecurity": "Remote Connect enables network communication paths (including but not limited to LAN, third-party relay, self-hosted relay, bot channels, and other pathways). Use it only on trusted devices and networks.",
     "disclaimerItemEncryption": "Remote message payloads are protected with end-to-end encryption (X25519 ECDH + AES-256-GCM with ephemeral key pairs per session); relay servers cannot decrypt message content. However, required metadata (such as device name, connection state, service endpoint, and other connection-context details) is not covered by business-message encryption and may still be visible to network paths, service nodes, or other infrastructure.",
     "disclaimerItemOpenSource": "BitFun's Remote Connect encryption implementation is fully open-source. You are free to audit the source code to verify its security.",
@@ -669,7 +689,8 @@
     "renameSymbol": "Rename Symbol",
     "quickFix": "Quick Fix...",
     "goToSymbol": "Go to Symbol...",
-    "highlightAllOccurrences": "Highlight All Occurrences"
+    "highlightAllOccurrences": "Highlight All Occurrences",
+    "addToChat": "Add to Chat Context"
   },
   "document": {
     "delete": "Delete Document"
@@ -723,6 +744,7 @@
   },
   "tabs": {
     "configCenter": "Config Center",
+    "diff": "Diff",
     "fixPreview": "Fix Preview",
     "gitDiff": "Git Diff",
     "gitSettings": "Git Settings",
@@ -735,8 +757,8 @@
     "settingsWithSection": "Settings - {{section}}"
   },
   "welcome": {
-    "greetingMorning": "Good Morning, Flow Developer",
-    "greetingAfternoon": "Welcome Back to the Flow Zone",
+    "greetingMorning": "Good morning, creator",
+    "greetingAfternoon": "Welcome back — let's build",
     "greetingEvening": "Good Evening, Creator",
     "greetingNight": "Hello Night Owl, Code Poet",
     "subtitleMorning": "\"A new day, new possibilities. Let's create something amazing.\"",
@@ -768,14 +790,18 @@
     "settings": "Settings",
     "fileViewer": "File Viewer",
     "projectContext": "Profile",
-    "capabilities": "Capabilities",
     "agents": "Agents",
     "skills": "Skills",
     "miniApps": "Mini App",
     "browser": "Browser",
     "mermaidEditor": "Mermaid",
-    "myAgent": "My Agent",
-    "shell": "Shell"
+    "insights": "Insights",
+    "assistant": "Assistant",
+    "shell": "Shell",
+    "panelView": "Panel View"
+  },
+  "loading": {
+    "scenes": "Loading scene"
   },
   "welcomeScene": {
     "tabLabel": "Welcome",
@@ -822,6 +848,7 @@
     "comingSoon": "Coming Soon",
     "recentWorkspaces": "Switch Workspace",
     "openOtherProject": "Open",
+    "removeFromRecent": "Remove from recent",
     "newProject": "New",
     "noOtherWorkspaces": "No other workspaces",
     "emptyHint": "Pick a scene and let's build something great",
@@ -913,12 +940,13 @@
       "authMethod": "Authentication Method",
       "password": "Password",
       "privateKey": "Private Key",
-      "sshAgent": "SSH Agent",
       "privateKeyPath": "Private Key Path",
       "browsePrivateKey": "Choose private key file",
       "pickPrivateKeyDialogTitle": "Select SSH private key",
       "passphrase": "Passphrase",
       "passphraseOptional": "Leave empty if none",
+      "homeFolder": "Home folder",
+      "clickToEditPath": "Click to edit path",
       "selectWorkspace": "Select Workspace Directory",
       "openWorkspace": "Open as Workspace",
       "selected": "Selected",
@@ -936,7 +964,6 @@
       "enterKeyPath": "Enter Private Key Path",
       "keyPathDescription": "Enter the private key file path",
       "authPromptTitle": "SSH authentication",
-      "authPromptAgentHint": "Uses keys already loaded in your SSH agent.",
       "disconnectConfirm": "Are you sure you want to disconnect?",
       "disconnectWorkspaceConfirm": "Are you sure you want to close the remote workspace? This will disconnect from the remote server.",
       "newFile": "New File",
@@ -953,5 +980,8 @@
       "transferNeedsDesktop": "Upload and download require the desktop app.",
       "transferring": "Transferring..."
     }
+  },
+  "notify": {
+    "dialogCompleted": "AI agent has finished the task."
   }
 }

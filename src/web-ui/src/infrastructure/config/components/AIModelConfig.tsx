@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Edit2, Trash2, Wifi, Loader, AlertTriangle, X, Settings, ExternalLink, BarChart3, Eye, EyeOff } from 'lucide-react';
+import { Plus, SquarePen, Trash2, Wifi, Loader, AlertTriangle, X, Settings, ExternalLink, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button, Switch, Select, IconButton, NumberInput, Card, Checkbox, Modal, Input, Textarea, type SelectOption } from '@/component-library';
 import { 
   AIModelConfig as AIModelConfigType, 
@@ -14,7 +14,6 @@ import { aiApi, systemAPI } from '@/infrastructure/api';
 import { useNotification } from '@/shared/notification-system';
 import { ConfigPageHeader, ConfigPageLayout, ConfigPageContent, ConfigPageSection, ConfigPageRow, ConfigCollectionItem } from './common';
 import DefaultModelConfig from './DefaultModelConfig';
-import TokenStatsModal from './TokenStatsModal';
 import { createLogger } from '@/shared/utils/logger';
 import { translateConnectionTestMessage } from '@/shared/utils/aiConnectionTestMessages';
 import './AIModelConfig.scss';
@@ -120,6 +119,24 @@ function normalizeProviderModelNameList(
   return out;
 }
 
+/** Compact display for context/output token counts (e.g. 200000 -> "200K", 1000000 -> "1M"). */
+function formatTokenCountShort(n: number): string {
+  if (!Number.isFinite(n) || n < 0) {
+    return String(n);
+  }
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    const s = m % 1 === 0 ? `${m}` : m.toFixed(1).replace(/\.0$/, '');
+    return `${s}M`;
+  }
+  if (n >= 1_000) {
+    const k = n / 1_000;
+    const s = k % 1 === 0 ? `${k}` : k.toFixed(1).replace(/\.0$/, '');
+    return `${s}K`;
+  }
+  return String(n);
+}
+
 /** Last line of defense: same logical model name once per save; prefer draft tied to an existing config id. */
 function dedupeSelectedModelDraftsByModelName(drafts: SelectedModelDraft[]): SelectedModelDraft[] {
   const out: SelectedModelDraft[] = [];
@@ -203,10 +220,7 @@ const AIModelConfig: React.FC = () => {
   const notification = useNotification();
   
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  
-  const [showTokenStats, setShowTokenStats] = useState(false);
-  const [selectedModelForStats, setSelectedModelForStats] = useState<{ id: string; name: string } | null>(null);
-  
+
   const [creationMode, setCreationMode] = useState<'selection' | 'form' | null>(null);
   
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
@@ -223,6 +237,7 @@ const AIModelConfig: React.FC = () => {
   const [hasAttemptedRemoteFetch, setHasAttemptedRemoteFetch] = useState(false);
   const [selectedModelDrafts, setSelectedModelDrafts] = useState<SelectedModelDraft[]>([]);
   const [manualModelInput, setManualModelInput] = useState('');
+  const [expandedModelCards, setExpandedModelCards] = useState<Set<string>>(new Set());
   const lastRemoteFetchSignatureRef = React.useRef<string | null>(null);
   const activeRemoteFetchSignatureRef = React.useRef<string | null>(null);
 
@@ -277,11 +292,7 @@ const AIModelConfig: React.FC = () => {
   );
 
   
-  useEffect(() => {
-    loadConfig();
-  }, []);
-
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
       const models = await configManager.getConfig<AIModelConfigType[]>('ai.models') || [];
       const proxy = await configManager.getConfig<ProxyConfig>('ai.proxy');
@@ -292,10 +303,17 @@ const AIModelConfig: React.FC = () => {
     } catch (error) {
       log.error('Failed to load AI config', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
   
   // Provider options with translations (must be at top level, before any conditional returns)
-  const providerOrder = ['openbitfun', 'zhipu', 'qwen', 'deepseek', 'volcengine', 'minimax', 'moonshot', 'gemini', 'anthropic'];
+  const providerOrder = useMemo(
+    () => ['openbitfun', 'zhipu', 'qwen', 'deepseek', 'volcengine', 'minimax', 'moonshot', 'gemini', 'anthropic'],
+    []
+  );
   const providers = useMemo(() => {
     const sorted = Object.values(PROVIDER_TEMPLATES).sort((a, b) => {
       const indexA = providerOrder.indexOf(a.id);
@@ -309,7 +327,7 @@ const AIModelConfig: React.FC = () => {
       name: t(`providers.${provider.id}.name`),
       description: t(`providers.${provider.id}.description`)
     }));
-  }, [t]);
+  }, [providerOrder, t]);
 
   // Current template with translations (must be at top level, before any conditional returns)
   const currentTemplate = useMemo(() => {
@@ -431,7 +449,34 @@ const AIModelConfig: React.FC = () => {
     )));
   };
 
+  const toggleSelectedModelCardExpanded = useCallback((draftKey: string) => {
+    setExpandedModelCards(prev => {
+      const next = new Set(prev);
+      if (next.has(draftKey)) next.delete(draftKey);
+      else next.add(draftKey);
+      return next;
+    });
+  }, []);
+
+  const onSelectedModelHeadKeyDown = useCallback(
+    (e: React.KeyboardEvent, draftKey: string) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      toggleSelectedModelCardExpanded(draftKey);
+    },
+    [toggleSelectedModelCardExpanded]
+  );
+
   const removeSelectedModelDraft = (modelName: string) => {
+    const removed = selectedModelDrafts.find(d => d.modelName === modelName);
+    if (removed) {
+      setExpandedModelCards(prev => {
+        const next = new Set(prev);
+        next.delete(removed.key);
+        return next;
+      });
+    }
+
     const remainingModelNames = selectedModelDrafts
       .filter(draft => draft.modelName !== modelName)
       .map(draft => draft.modelName);
@@ -1230,81 +1275,134 @@ const AIModelConfig: React.FC = () => {
 
       return (
         <div className="bitfun-ai-model-config__selected-models-list">
-          {selectedModelDrafts.map(draft => (
-            <div key={draft.key} className="bitfun-ai-model-config__selected-model-row">
-              <div className="bitfun-ai-model-config__selected-model-head">
-                <div className="bitfun-ai-model-config__selected-model-name">{`${currentProviderLabel}/${draft.modelName}`}</div>
-                {!editingConfig.id && (
-                  <IconButton
-                    variant="ghost"
-                    size="small"
-                    onClick={() => removeSelectedModelDraft(draft.modelName)}
-                    tooltip={t('providerSelection.removeModel')}
-                  >
-                    <X size={14} />
-                  </IconButton>
+          {selectedModelDrafts.map(draft => {
+            const isExpanded = expandedModelCards.has(draft.key) || selectedModelDrafts.length === 1;
+            const categoryLabel = categoryCompactLabels[draft.category] ?? draft.category;
+            const canToggleExpand = selectedModelDrafts.length > 1;
+            const modelDisplayName = draft.modelName;
+
+            return (
+              <div key={draft.key} className="bitfun-ai-model-config__selected-model-row">
+                <div
+                  className={[
+                    'bitfun-ai-model-config__selected-model-head',
+                    canToggleExpand && 'bitfun-ai-model-config__selected-model-head--toggleable',
+                  ].filter(Boolean).join(' ')}
+                  onClick={canToggleExpand ? () => toggleSelectedModelCardExpanded(draft.key) : undefined}
+                  onKeyDown={canToggleExpand ? (e) => onSelectedModelHeadKeyDown(e, draft.key) : undefined}
+                  role={canToggleExpand ? 'button' : undefined}
+                  tabIndex={canToggleExpand ? 0 : undefined}
+                  aria-expanded={canToggleExpand ? isExpanded : undefined}
+                  aria-label={
+                    canToggleExpand
+                      ? t(
+                          isExpanded
+                            ? 'providerSelection.collapseModelSettings'
+                            : 'providerSelection.expandModelSettings',
+                          { name: modelDisplayName }
+                        )
+                      : undefined
+                  }
+                >
+                  <div className="bitfun-ai-model-config__selected-model-head-title">
+                    <div className="bitfun-ai-model-config__selected-model-head-top">
+                      <div className="bitfun-ai-model-config__selected-model-toggle">
+                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </div>
+                      <div className="bitfun-ai-model-config__selected-model-name">{modelDisplayName}</div>
+                    </div>
+                    {!editingConfig.id && (
+                      <IconButton
+                        variant="ghost"
+                        size="small"
+                        className="bitfun-ai-model-config__selected-model-remove"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeSelectedModelDraft(draft.modelName);
+                        }}
+                        tooltip={t('providerSelection.removeModel')}
+                      >
+                        <X size={14} />
+                      </IconButton>
+                    )}
+                  </div>
+                  {!isExpanded && (
+                    <div className="bitfun-ai-model-config__selected-model-head-bottom">
+                      <span className="bitfun-ai-model-config__selected-model-summary">
+                        {categoryLabel}
+                        {' · '}
+                        {formatTokenCountShort(draft.contextWindow)} ctx
+                        {' · '}
+                        {formatTokenCountShort(draft.maxTokens)} out
+                        {' · '}
+                        {draft.enableThinking ? t('thinking.summaryOn') : t('thinking.summaryOff')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {isExpanded && (
+                  <div className="bitfun-ai-model-config__selected-model-grid">
+                    <div className="bitfun-ai-model-config__selected-model-field">
+                      <span>{t('category.label')}</span>
+                      <Select
+                        value={draft.category}
+                        onChange={(value) => updateModelDraft(draft.modelName, { category: value as ModelCategory })}
+                        options={categoryOptions}
+                        size="small"
+                        className="bitfun-ai-model-config__selected-model-category-select"
+                        renderValue={(option) => {
+                          if (!option || Array.isArray(option)) {
+                            return null;
+                          }
+
+                          const compactLabel = categoryCompactLabels[option.value as ModelCategory] ?? option.label;
+
+                          return (
+                            <span className="select__value">
+                              <span className="select__value-label">{compactLabel}</span>
+                            </span>
+                          );
+                        }}
+                      />
+                    </div>
+                    <div className="bitfun-ai-model-config__selected-model-field">
+                      <span>{t('form.contextWindow')}</span>
+                      <NumberInput
+                        value={draft.contextWindow}
+                        onChange={(value) => updateModelDraft(draft.modelName, { contextWindow: value })}
+                        min={1000}
+                        max={2000000}
+                        step={1000}
+                        size="small"
+                        disableWheel
+                      />
+                    </div>
+                    <div className="bitfun-ai-model-config__selected-model-field">
+                      <span>{t('form.maxTokens')}</span>
+                      <NumberInput
+                        value={draft.maxTokens}
+                        onChange={(value) => updateModelDraft(draft.modelName, { maxTokens: value })}
+                        min={1000}
+                        max={1000000}
+                        step={1000}
+                        size="small"
+                        disableWheel
+                      />
+                    </div>
+                    <div className="bitfun-ai-model-config__selected-model-field">
+                      <span>{t('thinking.enable')}</span>
+                      <Select
+                        value={draft.enableThinking ? 'enabled' : 'disabled'}
+                        onChange={(value) => updateModelDraft(draft.modelName, { enableThinking: value === 'enabled' })}
+                        options={thinkingModeOptions}
+                        size="small"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
-              <div className="bitfun-ai-model-config__selected-model-grid">
-                <div className="bitfun-ai-model-config__selected-model-field">
-                  <span>{t('category.label')}</span>
-                  <Select
-                    value={draft.category}
-                    onChange={(value) => updateModelDraft(draft.modelName, { category: value as ModelCategory })}
-                    options={categoryOptions}
-                    size="small"
-                    className="bitfun-ai-model-config__selected-model-category-select"
-                    renderValue={(option) => {
-                      if (!option || Array.isArray(option)) {
-                        return null;
-                      }
-
-                      const compactLabel = categoryCompactLabels[option.value as ModelCategory] ?? option.label;
-
-                      return (
-                        <span className="select__value">
-                          <span className="select__value-label">{compactLabel}</span>
-                        </span>
-                      );
-                    }}
-                  />
-                </div>
-                <div className="bitfun-ai-model-config__selected-model-field">
-                  <span>{t('form.contextWindow')}</span>
-                  <NumberInput
-                    value={draft.contextWindow}
-                    onChange={(value) => updateModelDraft(draft.modelName, { contextWindow: value })}
-                    min={1000}
-                    max={2000000}
-                    step={1000}
-                    size="small"
-                    disableWheel
-                  />
-                </div>
-                <div className="bitfun-ai-model-config__selected-model-field">
-                  <span>{t('form.maxTokens')}</span>
-                  <NumberInput
-                    value={draft.maxTokens}
-                    onChange={(value) => updateModelDraft(draft.modelName, { maxTokens: value })}
-                    min={1000}
-                    max={1000000}
-                    step={1000}
-                    size="small"
-                    disableWheel
-                  />
-                </div>
-                <div className="bitfun-ai-model-config__selected-model-field">
-                  <span>{t('thinking.enable')}</span>
-                  <Select
-                    value={draft.enableThinking ? 'enabled' : 'disabled'}
-                    onChange={(value) => updateModelDraft(draft.modelName, { enableThinking: value === 'enabled' })}
-                    options={thinkingModeOptions}
-                    size="small"
-                  />
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     };
@@ -1312,10 +1410,11 @@ const AIModelConfig: React.FC = () => {
     return (
       <>
         <div className="bitfun-ai-model-config__form bitfun-ai-model-config__form--modal">
-          <ConfigPageSection
-            title={isProviderScopedEditing ? t('editProviderSubtitle') : t('editSubtitle')}
-            className="bitfun-ai-model-config__edit-section"
-          >
+          <div className="bitfun-ai-model-config__form-scrollable">
+            <ConfigPageSection
+              title={isProviderScopedEditing ? t('editProviderSubtitle') : t('editSubtitle')}
+              className="bitfun-ai-model-config__edit-section"
+            >
             {isFromTemplate ? (
               <>
                 <ConfigPageRow label={`${t('form.configName')} *`} align="center" wide>
@@ -1651,8 +1750,9 @@ const AIModelConfig: React.FC = () => {
               </>
             )}
           </ConfigPageSection>
+          </div>
 
-          <div className="bitfun-ai-model-config__form-actions">
+          <div className="bitfun-ai-model-config__form-actions bitfun-ai-model-config__form-actions--sticky">
             <Button variant="secondary" onClick={closeEditingModal}>{t('actions.cancel')}</Button>
             <Button variant="primary" onClick={handleSave}>{t('actions.save')}</Button>
           </div>
@@ -1754,42 +1854,31 @@ const AIModelConfig: React.FC = () => {
           }}
           size="small"
         />
-        <button
-          type="button"
-          className="bitfun-collection-btn"
+        <IconButton
+          variant="ghost"
+          size="small"
+          isLoading={isTesting}
           onClick={() => void handleTest(config)}
-          disabled={isTesting}
-          title={t('actions.test')}
+          tooltip={t('actions.test')}
         >
-          {isTesting ? <Loader size={14} className="spinning" /> : <Wifi size={14} />}
-        </button>
-        <button
-          type="button"
-          className="bitfun-collection-btn"
-          onClick={() => {
-            setSelectedModelForStats({ id: config.id!, name: modelLabel });
-            setShowTokenStats(true);
-          }}
-          title={t('actions.viewStats')}
-        >
-          <BarChart3 size={14} />
-        </button>
-        <button
-          type="button"
-          className="bitfun-collection-btn"
+          {isTesting ? <Loader size={14} /> : <Wifi size={14} />}
+        </IconButton>
+        <IconButton
+          variant="ghost"
+          size="small"
           onClick={() => handleEdit(config)}
-          title={t('actions.edit')}
+          tooltip={t('actions.edit')}
         >
-          <Edit2 size={14} />
-        </button>
-        <button
-          type="button"
-          className="bitfun-collection-btn bitfun-collection-btn--danger"
+          <SquarePen size={14} />
+        </IconButton>
+        <IconButton
+          variant="danger"
+          size="small"
           onClick={() => void handleDelete(config.id!)}
-          title={t('actions.delete')}
+          tooltip={t('actions.delete')}
         >
           <Trash2 size={14} />
-        </button>
+        </IconButton>
       </>
     );
 
@@ -1865,7 +1954,7 @@ const AIModelConfig: React.FC = () => {
                         onClick={() => handleEditProvider(group.models[0])}
                         tooltip={t('actions.edit')}
                       >
-                        <Edit2 size={14} />
+                        <SquarePen size={14} />
                       </IconButton>
                     </div>
                   </div>
@@ -1939,21 +2028,10 @@ const AIModelConfig: React.FC = () => {
             ? t('editProvider')
             : (currentTemplate ? `${t('newProvider')} - ${currentTemplate.name}` : t('newProvider')))}
         size="xlarge"
+        contentClassName="modal__content--fill-flex bitfun-ai-model-config__form--modal"
       >
         {renderEditingForm()}
       </Modal>
-
-      {selectedModelForStats && (
-        <TokenStatsModal
-          isOpen={showTokenStats}
-          onClose={() => {
-            setShowTokenStats(false);
-            setSelectedModelForStats(null);
-          }}
-          modelId={selectedModelForStats.id}
-          modelName={selectedModelForStats.name}
-        />
-      )}
     </ConfigPageLayout>
   );
 };

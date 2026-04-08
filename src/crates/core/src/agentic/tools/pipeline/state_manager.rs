@@ -4,7 +4,7 @@
 
 use super::types::ToolTask;
 use crate::agentic::core::ToolExecutionState;
-use crate::agentic::events::{AgenticEvent, EventPriority, EventQueue, ToolEventData};
+use crate::agentic::events::{AgenticEvent, EventQueue, ToolEventData};
 use dashmap::DashMap;
 use log::debug;
 use std::sync::Arc;
@@ -215,25 +215,6 @@ impl ToolStateManager {
             },
         };
 
-        // Determine priority based on tool event type
-        let priority = match &task.state {
-            // Critical state change: High priority (user needs to see immediately)
-            ToolExecutionState::Running { .. }                  // Start execution
-            | ToolExecutionState::AwaitingConfirmation { .. }   // Need confirmation
-            | ToolExecutionState::Completed { .. }              // Completed
-            | ToolExecutionState::Failed { .. }                 // Failed
-            => EventPriority::High,
-            
-            // Cancel event: Critical priority (need immediate feedback)
-            ToolExecutionState::Cancelled { .. } => EventPriority::Critical,
-            
-            // Progress state: Normal priority (avoid blocking critical events)
-            ToolExecutionState::Queued { .. }
-            | ToolExecutionState::Waiting { .. }
-            | ToolExecutionState::Streaming { .. }
-            => EventPriority::Normal,
-        };
-
         let event_subagent_parent_info = task.context.subagent_parent_info.map(|info| info.into());
         let event = AgenticEvent::ToolEvent {
             session_id: task.context.session_id,
@@ -242,15 +223,17 @@ impl ToolStateManager {
             subagent_parent_info: event_subagent_parent_info,
         };
 
-        let _ = self.event_queue.enqueue(event, Some(priority)).await;
+        let _ = self.event_queue.enqueue(event, None).await;
     }
 
     /// Get statistics
     pub fn get_stats(&self) -> ToolStats {
         let tasks: Vec<_> = self.tasks.iter().map(|e| e.value().clone()).collect();
 
-        let mut stats = ToolStats::default();
-        stats.total = tasks.len();
+        let mut stats = ToolStats {
+            total: tasks.len(),
+            ..ToolStats::default()
+        };
 
         for task in tasks {
             match task.state {

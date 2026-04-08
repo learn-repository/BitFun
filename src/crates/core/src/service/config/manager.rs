@@ -14,6 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 
+type ConfigMigrationFn = fn(Value) -> BitFunResult<Value>;
+type ConfigMigration = (&'static str, &'static str, ConfigMigrationFn);
+
 /// Configuration manager.
 pub struct ConfigManager {
     config_dir: PathBuf,
@@ -184,7 +187,7 @@ impl ConfigManager {
 
     /// Auto-completes missing fields in model configuration (backward compatible).
     /// Ensures older configurations won't panic.
-    fn ensure_models_config(models: &mut Vec<AIModelConfig>) {
+    fn ensure_models_config(models: &mut [AIModelConfig]) {
         for model in models.iter_mut() {
             model.ensure_category_and_capabilities();
         }
@@ -210,7 +213,12 @@ impl ConfigManager {
     fn add_default_func_agent_models_config(
         func_agent_models: &mut std::collections::HashMap<String, String>,
     ) {
-        let func_agents_using_fast = vec!["compression", "startchat-func-agent", "git-func-agent"];
+        let func_agents_using_fast = vec![
+            "compression",
+            "startchat-func-agent",
+            "session-title-func-agent",
+            "git-func-agent",
+        ];
         for key in func_agents_using_fast {
             if !func_agent_models.contains_key(key) {
                 func_agent_models.insert(key.to_string(), "fast".to_string());
@@ -224,7 +232,7 @@ impl ConfigManager {
         from_version: &str,
         mut config: Value,
     ) -> BitFunResult<Value> {
-        let migrations: Vec<(&str, &str, fn(Value) -> BitFunResult<Value>)> =
+        let migrations: Vec<ConfigMigration> =
             vec![("0.0.0", "1.0.0", migrate_0_0_0_to_1_0_0)];
 
         let mut current_version = from_version.to_string();
@@ -600,7 +608,7 @@ pub(crate) fn version_lt(v1: &str, v2: &str) -> bool {
 /// Parses a version string into a tuple `(major, minor, patch)`.
 pub(crate) fn parse_version(version: &str) -> (u32, u32, u32) {
     let parts: Vec<&str> = version.split('.').collect();
-    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
     let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
     (major, minor, patch)
@@ -635,7 +643,12 @@ pub(crate) fn migrate_0_0_0_to_1_0_0(mut config: Value) -> BitFunResult<Value> {
             ai.insert("sub_agent_models".to_string(), serde_json::json!({}));
         }
         if !ai.contains_key("func_agent_models") {
-            let func_keys = ["compression", "startchat-func-agent", "git-func-agent"];
+            let func_keys = [
+                "compression",
+                "startchat-func-agent",
+                "session-title-func-agent",
+                "git-func-agent",
+            ];
             let mut fa = serde_json::Map::new();
             if let Some(am) = ai.get("agent_models").and_then(|v| v.as_object()) {
                 for k in func_keys {

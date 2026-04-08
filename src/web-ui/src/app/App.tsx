@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { ChatProvider, useAIInitialization } from '../infrastructure';
-import { ViewModeProvider } from '../infrastructure/contexts/ViewModeContext';
+import { ViewModeProvider } from '../infrastructure/contexts/ViewModeProvider';
 import { SSHRemoteProvider } from '../features/ssh-remote';
 import AppLayout from './layout/AppLayout';
 import { useCurrentModelConfig } from '../hooks/useModelConfigs';
@@ -14,12 +14,7 @@ import SplashScreen from './components/SplashScreen/SplashScreen';
 // Toolbar Mode
 import { ToolbarModeProvider } from '../flow_chat';
 
-// Onboarding
-import { OnboardingWizard, useOnboardingStore, onboardingService } from '../features/onboarding';
-
-
 const log = createLogger('App');
-
 /**
  * BitFun main application component.
  *
@@ -32,7 +27,6 @@ const log = createLogger('App');
  */
 // Minimum time (ms) the splash is shown, so the animation is never a flash.
 const MIN_SPLASH_MS = 900;
-const ENABLE_MAIN_ONBOARDING = false;
 
 function App() {
   // AI initialization
@@ -62,45 +56,6 @@ function App() {
     setSplashVisible(false);
   }, []);
 
-  // Onboarding state
-  const { isOnboardingActive, forceShowOnboarding, completeOnboarding } = useOnboardingStore();
-  
-  // Handle onboarding completion
-  const handleOnboardingComplete = useCallback(() => {
-    completeOnboarding();
-  }, [completeOnboarding]);
-
-  // Initialize onboarding: check first launch on startup
-  useEffect(() => {
-    if (!ENABLE_MAIN_ONBOARDING) {
-      onboardingService.markCompleted().catch((error) => {
-        log.warn('Failed to persist onboarding completion while disabled', error);
-      });
-      return;
-    }
-
-    onboardingService.initialize().catch((error) => {
-      log.error('Failed to initialize onboarding service', error);
-    });
-  }, []);
-
-  // In development, trigger onboarding via window.showOnboarding()
-  useEffect(() => {
-    if (!ENABLE_MAIN_ONBOARDING) {
-      delete (window as any).showOnboarding;
-      return;
-    }
-
-    (window as any).showOnboarding = () => {
-      forceShowOnboarding();
-      log.debug('Onboarding activated via debug command');
-    };
-    
-    return () => {
-      delete (window as any).showOnboarding;
-    };
-  }, [forceShowOnboarding]);
-
   const showMainWindow = useCallback(async (reason: string) => {
     if (mainWindowShownRef.current) {
       return;
@@ -127,8 +82,14 @@ function App() {
     }
   }, []);
 
-  // Keep the native window hidden until the startup splash has fully exited.
-  // This avoids showing a blank/half-painted webview before the first stable frame.
+  // Reveal the native window as soon as React has painted a frame.
+  // The splash still covers the UI, so users see immediate feedback instead
+  // of waiting on a hidden window while startup continues in the background.
+  useEffect(() => {
+    void showMainWindow('startup-overlay');
+  }, [showMainWindow]);
+
+  // If the early reveal path fails, keep the old post-splash show as a retry.
   useEffect(() => {
     if (splashVisible) {
       return;
@@ -220,13 +181,6 @@ function App() {
       <ViewModeProvider defaultMode="coder">
         <SSHRemoteProvider>
           <ToolbarModeProvider>
-            {/* Onboarding overlay (first launch) */}
-            {ENABLE_MAIN_ONBOARDING && isOnboardingActive && (
-              <OnboardingWizard
-                onComplete={handleOnboardingComplete}
-              />
-            )}
-
             {/* Unified app layout with startup/workspace modes */}
             <AppLayout />
 

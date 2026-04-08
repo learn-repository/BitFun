@@ -31,6 +31,12 @@ struct ExaContent {
 
 pub struct WebSearchTool;
 
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSearchTool {
     pub fn new() -> Self {
         Self
@@ -344,6 +350,7 @@ Advanced features:
                 results.len(),
                 formatted_results
             )),
+            image_attachments: None,
         };
 
         Ok(vec![result])
@@ -352,6 +359,12 @@ Advanced features:
 
 /// WebFetch tool
 pub struct WebFetchTool;
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl WebFetchTool {
     pub fn new() -> Self {
@@ -530,6 +543,7 @@ Example usage:
                 "content_length": processed_content.len()
             }),
             result_for_assistant: Some(processed_content),
+            image_attachments: None,
         };
 
         Ok(vec![result])
@@ -560,6 +574,7 @@ mod tests {
             options: None,
             response_state: None,
             image_context_provider: None,
+            computer_use_host: None,
             subagent_parent_info: None,
             cancellation_token: None,
             workspace_services: None,
@@ -617,6 +632,7 @@ mod tests {
             ToolResult::Result {
                 data,
                 result_for_assistant,
+                ..
             } => {
                 assert_eq!(data["content"], "hello from webfetch");
                 assert_eq!(data["format"], "text");
@@ -649,6 +665,7 @@ mod tests {
             ToolResult::Result {
                 data,
                 result_for_assistant,
+                ..
             } => {
                 let content = data["content"].as_str().expect("content should be string");
                 assert!(content.contains("Example Domain"));

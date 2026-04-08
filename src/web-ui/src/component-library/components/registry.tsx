@@ -36,6 +36,7 @@ import { SkillDisplay } from '@/flow_chat/tool-cards/SkillDisplay';
 import { AskUserQuestionCard } from '@/flow_chat/tool-cards/AskUserQuestionCard';
 import { GitToolDisplay } from '@/flow_chat/tool-cards/GitToolDisplay';
 import { CreatePlanDisplay } from '@/flow_chat/tool-cards/CreatePlanDisplay';
+import { InitMiniAppDisplay } from '@/flow_chat/tool-cards/MiniAppToolDisplay';
 import type { FlowToolItem, FlowThinkingItem } from '@/flow_chat/types/flow-chat';
 import { TOOL_CARD_CONFIGS } from '@/flow_chat/tool-cards';
 import { ModelThinkingDisplay } from '@/flow_chat/tool-cards/ModelThinkingDisplay';
@@ -1456,7 +1457,7 @@ console.log(user.greet());`);
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px' }}>
             <h3 style={{ color: '#ffffff', marginBottom: '8px' }}>MCP工具 - 文件列表</h3>
             <MCPToolDisplay
-              toolItem={createMockToolItem('mcp_server_list_files',
+              toolItem={createMockToolItem('mcp__server__list_files',
                 { directory: '/project/src' },
                 {
                   content: [
@@ -1469,7 +1470,7 @@ console.log(user.greet());`);
                 'completed'
               )}
               config={{
-                toolName: 'mcp_server_list_files',
+                toolName: 'mcp__server__list_files',
                 displayName: 'list_files',
                 icon: '🔌',
                 requiresConfirmation: false,
@@ -1483,13 +1484,13 @@ console.log(user.greet());`);
 
             <h3 style={{ color: '#ffffff', marginTop: '16px', marginBottom: '8px' }}>MCP - 执行中</h3>
             <MCPToolDisplay
-              toolItem={createMockToolItem('mcp_server_fetch_data',
+              toolItem={createMockToolItem('mcp__server__fetch_data',
                 { url: 'https://api.example.com/data' },
                 undefined,
                 'running'
               )}
               config={{
-                toolName: 'mcp_server_fetch_data',
+                toolName: 'mcp__server__fetch_data',
                 displayName: 'fetch_data',
                 icon: '🔌',
                 requiresConfirmation: false,
@@ -1562,10 +1563,31 @@ console.log(user.greet());`);
                 {
                   compression_count: 3,
                   has_summary: true,
+                  summary_source: 'model',
                   tokens_before: 50000,
                   tokens_after: 15000,
                   compression_ratio: 0.7,
                   duration: 2500
+                },
+                'completed'
+              )}
+            />
+
+            <h3 style={{ color: '#ffffff', marginTop: '16px', marginBottom: '8px' }}>上下文压缩 - 本地 fallback</h3>
+            <ContextCompressionDisplay
+              toolItem={createMockToolItem('ContextCompression',
+                {
+                  trigger: 'manual',
+                  tokens_before: 42000
+                },
+                {
+                  compression_count: 4,
+                  has_summary: false,
+                  summary_source: 'local_fallback',
+                  tokens_before: 42000,
+                  tokens_after: 18000,
+                  compression_ratio: 0.43,
+                  duration: 1800
                 },
                 'completed'
               )}
@@ -1953,6 +1975,55 @@ Aborting`,
                 'error'
               )}
               config={TOOL_CARD_CONFIGS['Git']}
+              sessionId="preview-session"
+            />
+          </div>
+        ),
+      },
+      {
+        id: 'init-miniapp-card',
+        name: 'InitMiniApp - 小应用创建',
+        description: '创建 Mini App 骨架后的工具卡片（InitMiniApp）',
+        category: 'flowchat-cards',
+        component: () => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px' }}>
+            <h3 style={{ color: '#ffffff', marginBottom: '8px' }}>InitMiniApp - 执行中</h3>
+            <InitMiniAppDisplay
+              toolItem={createMockToolItem(
+                'InitMiniApp',
+                { name: 'Weather Dashboard', description: 'A small weather widget' },
+                undefined,
+                'running'
+              )}
+              config={TOOL_CARD_CONFIGS['InitMiniApp']}
+              sessionId="preview-session"
+            />
+
+            <h3 style={{ color: '#ffffff', marginTop: '16px', marginBottom: '8px' }}>InitMiniApp - 参数流式</h3>
+            <InitMiniAppDisplay
+              toolItem={
+                {
+                  ...createMockToolItem('InitMiniApp', {}, undefined, 'streaming'),
+                  isParamsStreaming: true,
+                  partialParams: { name: 'My Mini App' },
+                } as FlowToolItem
+              }
+              config={TOOL_CARD_CONFIGS['InitMiniApp']}
+              sessionId="preview-session"
+            />
+
+            <h3 style={{ color: '#ffffff', marginTop: '16px', marginBottom: '8px' }}>InitMiniApp - 创建成功</h3>
+            <InitMiniAppDisplay
+              toolItem={createMockToolItem(
+                'InitMiniApp',
+                { name: 'Weather Dashboard' },
+                {
+                  app_id: 'ma-preview-001',
+                  path: '.bitfun/miniapps/ma-preview-001',
+                },
+                'completed'
+              )}
+              config={TOOL_CARD_CONFIGS['InitMiniApp']}
               sessionId="preview-session"
             />
           </div>

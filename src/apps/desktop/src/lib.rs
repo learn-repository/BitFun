@@ -2,14 +2,18 @@
 //! BitFun Desktop - Tauri-based desktop application with TransportAdapter architecture
 
 pub mod api;
+pub mod computer_use;
 pub mod logging;
 pub mod macos_menubar;
 pub mod theme;
 
+use bitfun_core::agentic::tools::computer_use_capability::set_computer_use_desktop_available;
+use bitfun_core::agentic::tools::computer_use_host::ComputerUseHostRef;
 use bitfun_core::infrastructure::ai::AIClientFactory;
 use bitfun_core::infrastructure::{get_path_manager_arc, try_get_path_manager_arc};
 use bitfun_core::service::workspace::get_global_workspace_service;
 use bitfun_transport::{TauriTransportAdapter, TransportAdapter};
+use serde::Deserialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -25,6 +29,7 @@ pub use api::*;
 use api::ai_rules_api::*;
 use api::clipboard_file_api::*;
 use api::commands::*;
+use api::computer_use_api::*;
 use api::config_api::*;
 use api::cron_api::*;
 use api::diff_api::*;
@@ -42,7 +47,6 @@ use api::startchat_agent_api::*;
 use api::storage_commands::*;
 use api::subagent_api::*;
 use api::system_api::*;
-use api::token_usage_api::*;
 use api::tool_api::*;
 
 /// Agentic Coordinator state
@@ -55,6 +59,18 @@ pub struct CoordinatorState {
 #[derive(Clone)]
 pub struct SchedulerState {
     pub scheduler: Arc<bitfun_core::agentic::coordination::DialogScheduler>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebdriverBridgeResultRequest {
+    payload: serde_json::Value,
+}
+
+#[tauri::command]
+async fn webdriver_bridge_result(request: WebdriverBridgeResultRequest) -> Result<(), String> {
+    log::debug!("webdriver_bridge_result command invoked");
+    bitfun_webdriver::handle_bridge_result(request.payload)
 }
 
 /// Tauri application entry point
@@ -122,12 +138,16 @@ pub async fn run() {
                 .level_for("ignore", log::LevelFilter::Off)
                 .level_for("ignore::walk", log::LevelFilter::Off)
                 .level_for("globset", log::LevelFilter::Off)
+                .level_for("tracing", log::LevelFilter::Off)
+                .level_for("opentelemetry_sdk", log::LevelFilter::Off)
+                .level_for("opentelemetry-otlp", log::LevelFilter::Off)
+                .level_for("notify", log::LevelFilter::Off)
                 .level_for("hyper_util", log::LevelFilter::Info)
                 .level_for("h2", log::LevelFilter::Info)
                 .level_for("portable_pty", log::LevelFilter::Info)
                 .level_for("russh", log::LevelFilter::Info)
                 .targets(log_targets)
-                .rotation_strategy(RotationStrategy::KeepSome(30))
+                .rotation_strategy(RotationStrategy::KeepSome(3))
                 .max_file_size(10 * 1024 * 1024)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
                 .clear_format()
@@ -141,6 +161,7 @@ pub async fn run() {
                 .app_name("BitFun")
                 .build(),
         )
+        .plugin(tauri_plugin_notification::init())
         .manage(app_state)
         .manage(coordinator_state)
         .manage(scheduler_state)
@@ -207,6 +228,7 @@ pub async fn run() {
 
             let app_handle = app.handle().clone();
             theme::create_main_window(&app_handle);
+            bitfun_webdriver::maybe_start(app_handle.clone());
 
             #[cfg(target_os = "macos")]
             {
@@ -295,14 +317,16 @@ pub async fn run() {
             theme::show_main_window,
             api::agentic_api::create_session,
             api::agentic_api::update_session_model,
+            api::agentic_api::update_session_title,
             api::agentic_api::ensure_coordinator_session,
             api::agentic_api::start_dialog_turn,
+            api::agentic_api::compact_session,
             api::agentic_api::ensure_assistant_bootstrap,
             api::agentic_api::cancel_dialog_turn,
             api::agentic_api::delete_session,
             api::agentic_api::restore_session,
+            webdriver_bridge_result,
             api::agentic_api::list_sessions,
-            api::agentic_api::get_session_messages,
             api::agentic_api::confirm_tool_execution,
             api::agentic_api::reject_tool_execution,
             api::agentic_api::cancel_tool,
@@ -360,6 +384,9 @@ pub async fn run() {
             get_clipboard_files,
             paste_files,
             get_config,
+            computer_use_get_status,
+            computer_use_request_permissions,
+            computer_use_open_system_settings,
             set_config,
             reset_config,
             export_config,
@@ -377,16 +404,19 @@ pub async fn run() {
             get_subagent_configs,
             set_subagent_config,
             list_subagents,
+            get_subagent_detail,
             delete_subagent,
             create_subagent,
+            update_subagent,
             reload_subagents,
             list_agent_tool_names,
             update_subagent_config,
             get_skill_configs,
+            get_mode_skill_configs,
             list_skill_market,
             search_skill_market,
             download_skill_market,
-            set_skill_enabled,
+            set_mode_skill_disabled,
             validate_skill_path,
             add_skill,
             delete_skill,
@@ -497,6 +527,10 @@ pub async fn run() {
             initialize_mcp_servers,
             api::mcp_api::initialize_mcp_servers_non_destructive,
             get_mcp_servers,
+            api::mcp_api::list_mcp_resources,
+            api::mcp_api::read_mcp_resource,
+            api::mcp_api::list_mcp_prompts,
+            api::mcp_api::get_mcp_prompt,
             start_mcp_server,
             stop_mcp_server,
             restart_mcp_server,
@@ -506,6 +540,13 @@ pub async fn run() {
             get_mcp_tool_ui_uri,
             fetch_mcp_app_resource,
             send_mcp_app_message,
+            submit_mcp_interaction_response,
+            update_mcp_remote_auth,
+            clear_mcp_remote_auth,
+            api::mcp_api::delete_mcp_server,
+            api::mcp_api::start_mcp_remote_oauth,
+            api::mcp_api::get_mcp_remote_oauth_session,
+            api::mcp_api::cancel_mcp_remote_oauth,
             lsp_initialize,
             lsp_start_server_for_file,
             lsp_stop_server,
@@ -554,6 +595,7 @@ pub async fn run() {
             subscribe_config_updates,
             get_model_configs,
             get_recent_workspaces,
+            remove_recent_workspace,
             cleanup_invalid_workspaces,
             get_opened_workspaces,
             open_workspace,
@@ -570,7 +612,7 @@ pub async fn run() {
             create_cron_job,
             update_cron_job,
             delete_cron_job,
-            api::config_api::sync_tool_configs,
+            api::config_api::canonicalize_mode_configs,
             api::terminal_api::terminal_get_shells,
             api::terminal_api::terminal_create,
             api::terminal_api::terminal_get,
@@ -586,6 +628,7 @@ pub async fn run() {
             api::terminal_api::terminal_shutdown_all,
             api::terminal_api::terminal_get_history,
             get_system_info,
+            send_system_notification,
             check_command_exists,
             check_commands_exist,
             run_system_command,
@@ -595,14 +638,6 @@ pub async fn run() {
             i18n_get_supported_languages,
             i18n_get_config,
             i18n_set_config,
-            // Token Usage
-            record_token_usage,
-            get_model_token_stats,
-            get_all_model_token_stats,
-            get_session_token_stats,
-            query_token_usage,
-            clear_model_token_stats,
-            clear_all_token_stats,
             // Remote Connect
             api::remote_connect_api::remote_connect_get_device_info,
             api::remote_connect_api::remote_connect_get_lan_ip,
@@ -654,10 +689,12 @@ pub async fn run() {
             api::ssh_api::ssh_list_saved_connections,
             api::ssh_api::ssh_save_connection,
             api::ssh_api::ssh_delete_connection,
+            api::ssh_api::ssh_has_stored_password,
             api::ssh_api::ssh_connect,
             api::ssh_api::ssh_disconnect,
             api::ssh_api::ssh_disconnect_all,
             api::ssh_api::ssh_is_connected,
+            api::ssh_api::ssh_get_server_info,
             api::ssh_api::ssh_get_config,
             api::ssh_api::ssh_list_config_hosts,
             api::ssh_api::remote_read_file,
@@ -699,25 +736,11 @@ async fn init_agentic_system() -> anyhow::Result<(
     let path_manager = try_get_path_manager_arc()?;
     let persistence_manager = Arc::new(persistence::PersistenceManager::new(path_manager.clone())?);
 
-    let history_manager = Arc::new(session::MessageHistoryManager::new(
-        persistence_manager.clone(),
-        session::HistoryConfig {
-            enable_persistence: false,
-            ..Default::default()
-        },
-    ));
-
-    let compression_manager = Arc::new(session::CompressionManager::new(
-        persistence_manager.clone(),
-        session::CompressionConfig {
-            enable_persistence: false,
-            ..Default::default()
-        },
-    ));
+    let context_store = Arc::new(session::SessionContextStore::new());
+    let context_compressor = Arc::new(session::ContextCompressor::new(Default::default()));
 
     let session_manager = Arc::new(session::SessionManager::new(
-        history_manager,
-        compression_manager,
+        context_store,
         persistence_manager,
         Default::default(),
     ));
@@ -726,10 +749,15 @@ async fn init_agentic_system() -> anyhow::Result<(
     let tool_state_manager = Arc::new(tools::pipeline::ToolStateManager::new(event_queue.clone()));
     let image_context_provider = Arc::new(api::context_upload_api::create_image_context_provider());
 
+    let computer_use_host: ComputerUseHostRef =
+        Arc::new(computer_use::DesktopComputerUseHost::new());
+    set_computer_use_desktop_available(true);
+
     let tool_pipeline = Arc::new(tools::pipeline::ToolPipeline::new(
         tool_registry,
         tool_state_manager,
         Some(image_context_provider),
+        Some(computer_use_host),
     ));
 
     let stream_processor = Arc::new(execution::StreamProcessor::new(event_queue.clone()));
@@ -742,6 +770,7 @@ async fn init_agentic_system() -> anyhow::Result<(
         round_executor,
         event_queue.clone(),
         session_manager.clone(),
+        context_compressor,
         Default::default(),
     ));
 
@@ -843,9 +872,7 @@ fn setup_panic_hook() {
         // continue instead of killing the process.
         // See: https://github.com/tauri-apps/wry/pull/1554
         if location.contains("wry") && location.contains("wkwebview") {
-            log::warn!(
-                "Suppressed non-fatal wry/wkwebview panic, application continues"
-            );
+            log::warn!("Suppressed non-fatal wry/wkwebview panic, application continues");
             return;
         }
 
@@ -869,9 +896,12 @@ fn start_event_loop_with_transport(
     tokio::spawn(async move {
         loop {
             event_queue.wait_for_events().await;
-            let batch = event_queue.dequeue_batch(10).await;
+            loop {
+                let batch = event_queue.dequeue_configured_batch().await;
+                if batch.is_empty() {
+                    break;
+                }
 
-            if !batch.is_empty() {
                 for envelope in batch {
                     // Route to internal subscribers (e.g. RemoteSessionStateTracker)
                     // sequentially so that text chunks are appended in order.

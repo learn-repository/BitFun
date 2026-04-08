@@ -1,8 +1,9 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Folder, FolderOpen, MoreHorizontal, GitBranch, FolderSearch, Plus, ChevronDown, Trash2, RotateCcw, Copy } from 'lucide-react';
+import { Folder, FolderOpen, MoreHorizontal, GitBranch, FolderSearch, Plus, ChevronDown, Trash2, RotateCcw, Copy, FileText } from 'lucide-react';
 import { ConfirmDialog, Tooltip } from '@/component-library';
 import { useI18n } from '@/infrastructure/i18n';
+import { i18nService } from '@/infrastructure/i18n';
 import { useWorkspaceContext } from '@/infrastructure/contexts/WorkspaceContext';
 import {
   createWorktreeWorkspace,
@@ -14,6 +15,8 @@ import { useGitBasicInfo } from '@/tools/git/hooks/useGitState';
 import { workspaceAPI } from '@/infrastructure/api';
 import { notificationService } from '@/shared/notification-system';
 import { flowChatManager } from '@/flow_chat/services/FlowChatManager';
+import { openMainSession } from '@/flow_chat/services/openBtwSession';
+import { findReusableEmptySessionId } from '@/app/utils/projectSessionWorkspace';
 import { BranchSelectModal, type BranchSelectResult } from '../../../panels/BranchSelectModal';
 import SessionsSection from '../sessions/SessionsSection';
 import {
@@ -22,7 +25,7 @@ import {
   isRemoteWorkspace,
   type WorkspaceInfo,
 } from '@/shared/types';
-import { SSHContext } from '@/features/ssh-remote/SSHRemoteProvider';
+import { SSHContext } from '@/features/ssh-remote/SSHRemoteContext';
 
 interface WorkspaceItemProps {
   workspace: WorkspaceInfo;
@@ -196,7 +199,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
     setIsResettingWorkspace(true);
     try {
       await resetAssistantWorkspace(workspace.id);
-      await flowChatManager.resetWorkspaceSessions(workspace.rootPath, {
+      await flowChatManager.resetWorkspaceSessions(workspace, {
         reinitialize: isActive,
         preferredMode: 'Claw',
         ensureAssistantBootstrap:
@@ -211,7 +214,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
     } finally {
       setIsResettingWorkspace(false);
     }
-  }, [isActive, isDefaultAssistantWorkspace, isResettingWorkspace, resetAssistantWorkspace, t, workspace.id, workspace.rootPath]);
+  }, [isActive, isDefaultAssistantWorkspace, isResettingWorkspace, resetAssistantWorkspace, t, workspace]);
 
   const handleReveal = useCallback(async () => {
     setMenuOpen(false);
@@ -243,7 +246,16 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
 
   const handleCreateSession = useCallback(async (mode?: 'agentic' | 'Cowork' | 'Claw') => {
     setMenuOpen(false);
+    const resolvedMode = mode ?? (workspace.workspaceKind === WorkspaceKind.Assistant ? 'Claw' : undefined);
     try {
+      const reusableId = findReusableEmptySessionId(workspace, resolvedMode);
+      if (reusableId) {
+        await openMainSession(reusableId, {
+          workspaceId: workspace.id,
+          activateWorkspace: setActiveWorkspace,
+        });
+        return;
+      }
       await flowChatManager.createChatSession(
         {
           workspacePath: workspace.rootPath,
@@ -251,7 +263,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
             ? { remoteConnectionId: workspace.connectionId }
             : {}),
         },
-        mode ?? (workspace.workspaceKind === WorkspaceKind.Assistant ? 'Claw' : undefined)
+        resolvedMode
       );
       await setActiveWorkspace(workspace.id);
     } catch (error) {
@@ -263,10 +275,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
   }, [
     setActiveWorkspace,
     t,
-    workspace.id,
-    workspace.rootPath,
-    workspace.workspaceKind,
-    workspace.connectionId,
+    workspace,
   ]);
 
   const handleCreateCodeSession = useCallback(() => {
@@ -276,6 +285,41 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
   const handleCreateCoworkSession = useCallback(() => {
     void handleCreateSession('Cowork');
   }, [handleCreateSession]);
+
+  const handleCreateInitSession = useCallback(async () => {
+    setMenuOpen(false);
+
+    try {
+      const sessionId = await flowChatManager.createChatSession(
+        {
+          workspacePath: workspace.rootPath,
+          ...(isRemoteWorkspace(workspace) && workspace.connectionId
+            ? { remoteConnectionId: workspace.connectionId }
+            : {}),
+          ...(isRemoteWorkspace(workspace) && workspace.sshHost
+            ? { remoteSshHost: workspace.sshHost }
+            : {}),
+        },
+        'Init'
+      );
+
+      await openMainSession(sessionId, {
+        workspaceId: workspace.id,
+        activateWorkspace: setActiveWorkspace,
+      });
+
+      const initPrompt = i18nService.t('flow-chat:chatInput.initPrompt', {
+        defaultValue: 'Please generate or update AGENTS.md so it matches the current project. Write it in English and keep the English version complete.',
+      });
+
+      await flowChatManager.sendMessage(initPrompt, sessionId, initPrompt, 'Init');
+    } catch (error) {
+      notificationService.error(
+        error instanceof Error ? error.message : t('nav.workspaces.initSessionFailed'),
+        { duration: 4000 }
+      );
+    }
+  }, [setActiveWorkspace, t, workspace]);
 
   const handleCreateWorktree = useCallback(async (result: BranchSelectResult) => {
     try {
@@ -427,28 +471,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
                   <Plus size={13} />
                   <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newSession')}</span>
                 </button>
-                {isDefaultAssistantWorkspace && (
-                  <button
-                    type="button"
-                    className="bitfun-nav-panel__workspace-item-menu-item is-danger"
-                    onClick={handleRequestResetWorkspace}
-                    disabled={isResettingWorkspace}
-                  >
-                    <RotateCcw size={13} />
-                    <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.resetWorkspace')}</span>
-                  </button>
-                )}
-                {isNamedAssistantWorkspace && (
-                  <button
-                    type="button"
-                    className="bitfun-nav-panel__workspace-item-menu-item is-danger"
-                    onClick={handleRequestDeleteAssistant}
-                    disabled={isDeletingAssistant}
-                  >
-                    <Trash2 size={13} />
-                    <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.deleteAssistant')}</span>
-                  </button>
-                )}
+                <div className="bitfun-nav-panel__workspace-item-menu-divider" />
                 <button
                   type="button"
                   className="bitfun-nav-panel__workspace-item-menu-item"
@@ -467,6 +490,33 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
                   <FolderSearch size={13} />
                   <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.reveal')}</span>
                 </button>
+                {(isDefaultAssistantWorkspace || isNamedAssistantWorkspace) ? (
+                  <>
+                    <div className="bitfun-nav-panel__workspace-item-menu-divider" />
+                    {isDefaultAssistantWorkspace ? (
+                      <button
+                        type="button"
+                        className="bitfun-nav-panel__workspace-item-menu-item is-danger"
+                        onClick={handleRequestResetWorkspace}
+                        disabled={isResettingWorkspace}
+                      >
+                        <RotateCcw size={13} />
+                        <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.resetWorkspace')}</span>
+                      </button>
+                    ) : null}
+                    {isNamedAssistantWorkspace ? (
+                      <button
+                        type="button"
+                        className="bitfun-nav-panel__workspace-item-menu-item is-danger"
+                        onClick={handleRequestDeleteAssistant}
+                        disabled={isDeletingAssistant}
+                      >
+                        <Trash2 size={13} />
+                        <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.deleteAssistant')}</span>
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
               </div>,
               document.body
             )}
@@ -478,7 +528,9 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
             workspaceId={workspace.id}
             workspacePath={workspace.rootPath}
             remoteConnectionId={isRemoteWorkspace(workspace) ? workspace.connectionId : null}
+            remoteSshHost={isRemoteWorkspace(workspace) ? workspace.sshHost : null}
             isActiveWorkspace={isActive}
+            assistantLabel={workspaceDisplayName}
           />
         </div>
 
@@ -593,12 +645,17 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
             >
               <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={handleCreateCodeSession}>
                 <Plus size={13} />
-                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newCodeSession')}</span>
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.sessions.newCodeSessionShort')}</span>
               </button>
               <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={handleCreateCoworkSession}>
                 <Plus size={13} />
-                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.newCoworkSession')}</span>
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.sessions.newCoworkSessionShort')}</span>
               </button>
+              <button type="button" className="bitfun-nav-panel__workspace-item-menu-item" onClick={() => { void handleCreateInitSession(); }}>
+                <FileText size={13} />
+                <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.initAgents')}</span>
+              </button>
+              <div className="bitfun-nav-panel__workspace-item-menu-divider" />
               {isLinkedWorktree ? (
                 <button
                   type="button"
@@ -641,6 +698,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
                 <FolderSearch size={13} />
                 <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.reveal')}</span>
               </button>
+              <div className="bitfun-nav-panel__workspace-item-menu-divider" />
               <button type="button" className="bitfun-nav-panel__workspace-item-menu-item is-danger" onClick={() => { void handleCloseWorkspace(); }}>
                 <FolderOpen size={13} />
                 <span className="bitfun-nav-panel__workspace-item-menu-label">{t('nav.workspaces.actions.close')}</span>
@@ -656,6 +714,7 @@ const WorkspaceItem: React.FC<WorkspaceItemProps> = ({
           workspaceId={workspace.id}
           workspacePath={workspace.rootPath}
           remoteConnectionId={isRemoteWorkspace(workspace) ? workspace.connectionId : null}
+          remoteSshHost={isRemoteWorkspace(workspace) ? workspace.sshHost : null}
           isActiveWorkspace={isActive}
         />
       </div>

@@ -5,7 +5,6 @@
 
 import { agentAPI } from '@/infrastructure/api/service-api/AgentAPI';
 import { configManager } from '@/infrastructure/config/services/ConfigManager';
-import { aiExperienceConfigService } from '@/infrastructure/config/services';
 import type { AIModelConfig, DefaultModelsConfig } from '@/infrastructure/config/types';
 import { notificationService } from '../../../shared/notification-system';
 import { stateMachineManager } from '../../state-machine';
@@ -150,11 +149,20 @@ export async function sendMessage(
       pinMode: 'sticky-latest',
     };
     globalEventBus.emit(FLOWCHAT_PIN_TURN_TO_TOP_EVENT, pinRequest, 'MessageModule');
-    
-    await stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
+
+    const startOk = await stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
       taskId: sessionId,
       dialogTurnId,
     });
+    // START is only valid from IDLE/ERROR (see STATE_TRANSITIONS). If the previous turn left the
+    // machine in PROCESSING/FINISHING, transition fails — but the backend still runs this turnId.
+    // Sync context so TextChunk/ModelRound events are not dropped (turn_id_mismatch).
+    if (!startOk) {
+      const machine = stateMachineManager.get(sessionId);
+      if (machine) {
+        machine.getContext().currentDialogTurnId = dialogTurnId;
+      }
+    }
 
     if (isFirstMessage) {
       handleTitleGeneration(context, sessionId, message);
@@ -259,14 +267,9 @@ function handleTitleGeneration(
   message: string
 ): void {
   const tempTitle = generateTempTitle(message, 20);
-
-  if (aiExperienceConfigService.isSessionTitleGenerationEnabled()) {
-    // Set temp title while waiting for coordinator's auto-generated AI title
-    // (delivered via SessionTitleGenerated event).
-    context.flowChatStore.updateSessionTitle(sessionId, tempTitle, 'generating');
-  } else {
-    context.flowChatStore.updateSessionTitle(sessionId, tempTitle, 'generated');
-  }
+  // Show a readable placeholder immediately; backend later confirms the
+  // authoritative title via AI or local fallback generation.
+  context.flowChatStore.updateSessionTitle(sessionId, tempTitle, 'generating');
 }
 
 export async function cancelCurrentTask(context: FlowChatContext): Promise<boolean> {

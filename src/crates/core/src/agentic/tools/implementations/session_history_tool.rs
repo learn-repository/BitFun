@@ -15,6 +15,12 @@ use std::sync::Arc;
 /// SessionHistory tool - export a grep-friendly transcript file for a session.
 pub struct SessionHistoryTool;
 
+impl Default for SessionHistoryTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionHistoryTool {
     pub fn new() -> Self {
         Self
@@ -313,6 +319,7 @@ Examples:
                 transcript.index_range.start_line,
                 transcript.index_range.end_line
             )),
+            image_attachments: None,
         }])
     }
 }

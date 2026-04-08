@@ -20,6 +20,8 @@ import {
 import { notificationService } from '../../../shared/notification-system';
 import { createLogger } from '@/shared/utils/logger';
 import type { ImageAnalysisEvent } from '@/infrastructure/api/service-api/AgentAPI';
+import { MCPAPI } from '@/infrastructure/api/service-api/MCPAPI';
+import { globalEventBus } from '@/infrastructure/event-bus';
 import type { FlowChatContext, DialogTurn, ModelRound, FlowToolItem } from './types';
 
 const pendingImageAnalysisTurns = new Map<string, string>();
@@ -40,7 +42,8 @@ import {
   processToolEvent, 
   processToolParamsPartialInternal,
   processToolProgressInternal,
-  handleToolExecutionProgress 
+  handleToolExecutionProgress,
+  handleToolTerminalReady,
 } from './ToolEventModule';
 import {
   routeTextChunkToToolCardInternal,
@@ -48,6 +51,33 @@ import {
 } from './SubagentModule';
 
 const log = createLogger('EventHandlerModule');
+const TURN_COMPLETION_QUIET_WINDOW_MS = 500;
+
+interface MCPInteractionRequestEvent {
+  interactionId: string;
+  serverId: string;
+  serverName: string;
+  method: string;
+  params?: unknown;
+}
+
+function isStreamingExecutionState(state: SessionExecutionState): boolean {
+  return state === SessionExecutionState.PROCESSING || state === SessionExecutionState.FINISHING;
+}
+
+function logDroppedDataEvent(
+  eventName: string,
+  sessionId: string,
+  turnId: string | null,
+  details: Record<string, unknown>
+): void {
+  log.debug('Dropped agentic data event', {
+    eventName,
+    sessionId,
+    turnId,
+    ...details,
+  });
+}
 
 /**
  * Event filtering mechanism: determines if an event should be processed
@@ -55,10 +85,14 @@ const log = createLogger('EventHandlerModule');
 export function shouldProcessEvent(
   sessionId: string,
   turnId: string | null,
-  eventType: 'data' | 'control' | 'state_sync'
+  eventType: 'data' | 'control' | 'state_sync',
+  eventName = 'unknown'
 ): boolean {
   const machine = stateMachineManager.get(sessionId);
   if (!machine) {
+    if (eventType === 'data') {
+      logDroppedDataEvent(eventName, sessionId, turnId, { reason: 'missing_state_machine' });
+    }
     return false;
   }
 
@@ -76,16 +110,21 @@ export function shouldProcessEvent(
     return false;
   }
 
-  if (currentState !== SessionExecutionState.PROCESSING) {
+  if (!isStreamingExecutionState(currentState)) {
+    logDroppedDataEvent(eventName, sessionId, turnId, {
+      reason: 'state_not_accepting_data',
+      currentState,
+      currentDialogTurnId: context.currentDialogTurnId,
+    });
     return false;
   }
 
   if (turnId && context.currentDialogTurnId !== turnId) {
-    log.debug('Event filtered: turnId mismatch', {
+    logDroppedDataEvent(eventName, sessionId, turnId, {
+      reason: 'turn_id_mismatch',
       sessionId,
-      eventTurnId: turnId,
-      currentTurnId: context.currentDialogTurnId,
-      currentState
+      currentState,
+      currentDialogTurnId: context.currentDialogTurnId,
     });
     return false;
   }
@@ -136,14 +175,22 @@ export function mapBackendStateToFrontend(backendState: any): SessionExecutionSt
 
 /**
  * Initialize global event listeners
+ * Returns a cleanup function that removes all registered listeners
  */
 export async function initializeEventListeners(
   context: FlowChatContext,
   onTodoWriteResult: (sessionId: string, turnId: string, result: any) => void
-): Promise<void> {
+): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
-  await listen('backend-event-toolexecutionprogress', (event: any) => {
+  const unlistenProgress = await listen('backend-event-toolexecutionprogress', (event: any) => {
     handleToolExecutionProgress(event.payload);
+  });
+  const unlistenTerminalReady = await listen('backend-event-toolterminalready', (event: any) => {
+    const eventData = (event.payload as any)?.value || event.payload;
+    handleToolTerminalReady(eventData);
+  });
+  const unlistenMcpInteractionRequest = await listen('backend-event-mcpinteractionrequest', (event: any) => {
+    void handleMcpInteractionRequest((event.payload as any)?.value || event.payload);
   });
 
   const callbacks: AgenticEventCallbacks = {
@@ -201,6 +248,48 @@ export async function initializeEventListeners(
   };
 
   await agenticEventListener.startListening(callbacks);
+
+  return () => {
+    unlistenProgress();
+    unlistenTerminalReady();
+    unlistenMcpInteractionRequest();
+    agenticEventListener.stopListening();
+  };
+}
+
+async function handleMcpInteractionRequest(rawEvent: unknown): Promise<void> {
+  const event = rawEvent as MCPInteractionRequestEvent | undefined;
+  const interactionId = event?.interactionId;
+  const method = event?.method;
+
+  if (!interactionId || !method) {
+    log.warn('Received invalid MCP interaction request event', { rawEvent });
+    return;
+  }
+
+  const emitted = globalEventBus.emit('mcp:interaction:request', event);
+  if (!emitted) {
+    log.warn('No MCP interaction UI handler registered, rejecting request', {
+      interactionId,
+      method,
+    });
+    try {
+      await MCPAPI.submitMCPInteractionResponse({
+        interactionId,
+        approve: false,
+        error: {
+          message: 'No MCP interaction UI handler registered',
+        },
+      });
+    } catch (submitError) {
+      log.error('Failed to submit MCP interaction auto-rejection', {
+        interactionId,
+        method,
+        submitError,
+      });
+      notificationService.error(`MCP interaction failed: ${method}`);
+    }
+  }
 }
 
 /**
@@ -217,7 +306,10 @@ function handleSessionCreated(context: FlowChatContext, event: any): void {
     sessionId,
     sessionName || 'Remote Session',
     agentType || 'agentic',
-    resolveExternalSessionWorkspacePath(context, event)
+    resolveExternalSessionWorkspacePath(context, event),
+    undefined,
+    extractEventRemoteConnectionId(event),
+    extractEventRemoteSshHost(event)
   );
 }
 
@@ -234,8 +326,195 @@ function resolveExternalSessionWorkspacePath(
   return candidate || undefined;
 }
 
+function extractEventRemoteConnectionId(event?: Record<string, unknown> | null): string | undefined {
+  if (!event) return undefined;
+  const id =
+    (typeof event.remoteConnectionId === 'string' && event.remoteConnectionId) ||
+    (typeof event.remote_connection_id === 'string' && event.remote_connection_id) ||
+    undefined;
+  return id?.trim() || undefined;
+}
+
+function extractEventRemoteSshHost(event?: Record<string, unknown> | null): string | undefined {
+  if (!event) return undefined;
+  const h =
+    (typeof event.remoteSshHost === 'string' && event.remoteSshHost) ||
+    (typeof event.remote_ssh_host === 'string' && event.remote_ssh_host) ||
+    undefined;
+  return h?.trim() || undefined;
+}
+
+function clearPendingTurnCompletion(
+  context: FlowChatContext,
+  sessionId: string,
+  turnId?: string
+): void {
+  const pending = context.pendingTurnCompletions.get(sessionId);
+  if (!pending) {
+    return;
+  }
+
+  if (turnId && pending.turnId !== turnId) {
+    return;
+  }
+
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+  }
+
+  context.pendingTurnCompletions.delete(sessionId);
+}
+
+function touchPendingTurnCompletion(
+  context: FlowChatContext,
+  sessionId: string,
+  turnId: string
+): void {
+  const pending = context.pendingTurnCompletions.get(sessionId);
+  if (!pending || pending.turnId !== turnId) {
+    return;
+  }
+
+  pending.lastActivityAt = Date.now();
+  schedulePendingTurnCompletion(context, sessionId, turnId);
+}
+
+function schedulePendingTurnCompletion(
+  context: FlowChatContext,
+  sessionId: string,
+  turnId: string
+): void {
+  const pending = context.pendingTurnCompletions.get(sessionId);
+  if (!pending || pending.turnId !== turnId) {
+    return;
+  }
+
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+  }
+
+  pending.timer = setTimeout(() => {
+    finalizePendingTurnCompletion(context, sessionId, turnId);
+  }, TURN_COMPLETION_QUIET_WINDOW_MS);
+}
+
+function beginTurnCompletion(context: FlowChatContext, sessionId: string, turnId: string): void {
+  clearPendingTurnCompletion(context, sessionId);
+
+  context.pendingTurnCompletions.set(sessionId, {
+    turnId,
+    lastActivityAt: Date.now(),
+    timer: null,
+  });
+
+  schedulePendingTurnCompletion(context, sessionId, turnId);
+}
+
+function flushPendingBatchedEvents(context: FlowChatContext): void {
+  if (context.eventBatcher.getBufferSize() > 0) {
+    context.eventBatcher.flushNow();
+  }
+}
+
+function finalizeTurnCompletionState(
+  context: FlowChatContext,
+  sessionId: string,
+  turnId: string
+): void {
+  const store = FlowChatStore.getInstance();
+  const session = store.getState().sessions.get(sessionId);
+
+  if (!session) {
+    clearPendingTurnCompletion(context, sessionId, turnId);
+    return;
+  }
+
+  completeActiveTextItems(context, sessionId, turnId);
+
+  const sessionContentBuffer = context.contentBuffers.get(sessionId);
+  if (sessionContentBuffer) {
+    sessionContentBuffer.clear();
+  }
+
+  context.flowChatStore.markSessionFinished(sessionId);
+
+  context.flowChatStore.updateDialogTurn(sessionId, turnId, turn => {
+    const updatedModelRounds = turn.modelRounds.map((round) => {
+      if (round.isStreaming) {
+        return {
+          ...round,
+          isStreaming: false,
+          isComplete: true,
+          status: 'completed' as const,
+          endTime: Date.now()
+        };
+      }
+      return round;
+    });
+
+    return {
+      ...turn,
+      modelRounds: updatedModelRounds,
+      status: 'completed' as const,
+      endTime: Date.now()
+    };
+  });
+
+  const currentState = stateMachineManager.getCurrentState(sessionId);
+  if (isStreamingExecutionState(currentState)) {
+    stateMachineManager.transition(sessionId, SessionExecutionEvent.FINISHING_SETTLED);
+  } else {
+    log.debug('Skipping FINISHING_SETTLED transition', { currentState, sessionId, turnId });
+  }
+
+  const dialogTurn = store.getState().sessions.get(sessionId)?.dialogTurns.find(t => t.id === turnId);
+  if (dialogTurn) {
+    appendPlanDisplayItemsIfNeeded(context, sessionId, turnId, dialogTurn);
+  }
+
+  saveDialogTurnToDisk(context, sessionId, turnId).catch(error => {
+    log.warn('Failed to save dialog turn (non-critical)', { sessionId, turnId, error });
+  });
+
+  clearPendingTurnCompletion(context, sessionId, turnId);
+}
+
+function finalizePendingTurnCompletion(
+  context: FlowChatContext,
+  sessionId: string,
+  turnId: string
+): void {
+  const pending = context.pendingTurnCompletions.get(sessionId);
+  if (!pending || pending.turnId !== turnId) {
+    return;
+  }
+
+  const elapsed = Date.now() - pending.lastActivityAt;
+  if (elapsed < TURN_COMPLETION_QUIET_WINDOW_MS) {
+    schedulePendingTurnCompletion(context, sessionId, turnId);
+    return;
+  }
+
+  flushPendingBatchedEvents(context);
+  finalizeTurnCompletionState(context, sessionId, turnId);
+}
+
+function finalizePendingTurnCompletionNow(context: FlowChatContext, sessionId: string): void {
+  const pending = context.pendingTurnCompletions.get(sessionId);
+  if (!pending) {
+    return;
+  }
+
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+  }
+
+  flushPendingBatchedEvents(context);
+  finalizeTurnCompletionState(context, sessionId, pending.turnId);
+}
+
 /**
- * Handle session title generated event (from AI auto-generation)
+ * Handle session title generated event (AI or fallback auto-generation)
  */
 function handleSessionTitleGenerated(event: any): void {
   const { sessionId, title } = event;
@@ -257,6 +536,7 @@ function handleSessionDeleted(context: FlowChatContext, event: any): void {
 
   log.info('Remote session deleted', { sessionId });
   removedSessionIds.forEach(id => {
+    clearPendingTurnCompletion(context, id);
     pendingImageAnalysisTurns.delete(id);
     stateMachineManager.delete(id);
     context.processingManager.clearSessionStatus(id);
@@ -280,11 +560,14 @@ function handleSessionStateChanged(event: any): void {
   
   const frontendState = mapBackendStateToFrontend(newState);
   const currentFrontendState = machine.getCurrentState();
+  const isExpectedFinishingDrift =
+    currentFrontendState === SessionExecutionState.FINISHING &&
+    frontendState === SessionExecutionState.IDLE;
   
   const context = machine.getContext();
   (context as any).backendSyncedAt = Date.now();
   
-  if (currentFrontendState !== frontendState) {
+  if (currentFrontendState !== frontendState && !isExpectedFinishingDrift) {
     log.warn('Frontend and backend state mismatch', {
       sessionId,
       frontend: currentFrontendState,
@@ -312,7 +595,10 @@ function handleImageAnalysisStarted(context: FlowChatContext, event: ImageAnalys
       sessionId,
       'Remote Session',
       'agentic',
-      resolveExternalSessionWorkspacePath(context, event as any)
+      resolveExternalSessionWorkspacePath(context, event as any),
+      undefined,
+      extractEventRemoteConnectionId(event as any),
+      extractEventRemoteSshHost(event as any)
     );
     session = store.getState().sessions.get(sessionId);
   }
@@ -378,6 +664,8 @@ function handleImageAnalysisStarted(context: FlowChatContext, event: ImageAnalys
   stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
     taskId: sessionId,
     dialogTurnId: tempTurnId,
+  }).catch(error => {
+    log.error('State machine transition failed on image analysis start', { sessionId, error });
   });
 
   log.info('Image analysis started: created temp turn for remote', {
@@ -433,6 +721,9 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
     return;
   }
 
+  finalizePendingTurnCompletionNow(context, sessionId);
+  clearPendingTurnCompletion(context, sessionId, turnId);
+
   const store = FlowChatStore.getInstance();
 
   // Clean up temp image analysis turn if one exists for this session
@@ -466,7 +757,10 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
       sessionId,
       'Remote Session',
       'agentic',
-      resolveExternalSessionWorkspacePath(context, event)
+      resolveExternalSessionWorkspacePath(context, event),
+      undefined,
+      extractEventRemoteConnectionId(event),
+      extractEventRemoteSshHost(event)
     );
   }
 
@@ -485,6 +779,8 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
   const displayContent = originalUserInput
     ? cleanRemoteUserInput(originalUserInput)
     : cleanRemoteUserInput(userInput || '');
+  const turnKind =
+    userMessageMetadata?.kind === 'manual_compaction' ? 'manual_compaction' : 'user_dialog';
 
   const freshSession = store.getState().sessions.get(sessionId);
   const dialogTurn = freshSession?.dialogTurns.find((turn: DialogTurn) => turn.id === turnId);
@@ -492,11 +788,13 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
     const newTurn: DialogTurn = {
       id: turnId,
       sessionId,
+      kind: turnKind,
       userMessage: {
         id: `user_remote_${Date.now()}`,
         content: displayContent,
         timestamp: Date.now(),
         hasImages,
+        metadata: userMessageMetadata,
         images,
       },
       modelRounds: [],
@@ -513,6 +811,8 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
       stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
         taskId: sessionId,
         dialogTurnId: turnId,
+      }).catch(error => {
+        log.error('State machine transition failed on dialog turn start', { sessionId, error });
       });
     }
     return;
@@ -521,18 +821,30 @@ function handleDialogTurnStarted(context: FlowChatContext, event: any): void {
   if (typeof turnIndex === 'number' && dialogTurn.backendTurnIndex === undefined) {
     store.updateDialogTurn(sessionId, turnId, turn => ({
       ...turn,
+      kind: turn.kind || turnKind,
+      userMessage: {
+        ...turn.userMessage,
+        metadata: turn.userMessage.metadata || userMessageMetadata,
+      },
       backendTurnIndex: turnIndex,
     }));
   }
 
   // User may have pre-added this turn from the composer while the previous turn was still running;
-  // START was skipped then. When the backend dispatches this turn, move the state machine to PROCESSING.
+  // START failed then (PROCESSING/FINISHING cannot take START). When the backend dispatches this
+  // turn, align currentDialogTurnId so streaming events are not dropped.
   const machine = stateMachineManager.get(sessionId);
-  if (machine && machine.getCurrentState() === SessionExecutionState.IDLE) {
-    void stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
-      taskId: sessionId,
-      dialogTurnId: turnId,
-    });
+  if (machine) {
+    const ctx = machine.getContext();
+    if (ctx.currentDialogTurnId !== turnId) {
+      ctx.currentDialogTurnId = turnId;
+    }
+    if (machine.getCurrentState() === SessionExecutionState.IDLE) {
+      void stateMachineManager.transition(sessionId, SessionExecutionEvent.START, {
+        taskId: sessionId,
+        dialogTurnId: turnId,
+      });
+    }
   }
 }
 
@@ -548,7 +860,7 @@ function handleTextChunk(context: FlowChatContext, event: any): void {
   const targetSessionId = parentSessionId || sessionId;
   const targetTurnId = parentTurnId || turnId;
   
-  if (!shouldProcessEvent(targetSessionId, targetTurnId, 'data')) {
+  if (!shouldProcessEvent(targetSessionId, targetTurnId, 'data', 'TextChunk')) {
     return;
   }
   
@@ -569,10 +881,13 @@ function handleTextChunk(context: FlowChatContext, event: any): void {
   }
 
   if (!subagentParentInfo) {
+    touchPendingTurnCompletion(context, sessionId, turnId);
     const currentState = stateMachineManager.getCurrentState(sessionId);
-    if (currentState === SessionExecutionState.PROCESSING) {
+    if (isStreamingExecutionState(currentState)) {
       stateMachineManager.transition(sessionId, SessionExecutionEvent.TEXT_CHUNK_RECEIVED, {
         content: text,
+      }).catch(error => {
+        log.error('State machine transition failed on text chunk', { sessionId, error });
       });
     }
   }
@@ -705,8 +1020,12 @@ function handleToolEvent(
   const targetSessionId = parentSessionId || sessionId;
   const targetTurnId = parentTurnId || turnId;
   
-  if (!shouldProcessEvent(targetSessionId, targetTurnId, 'data')) {
+  if (!shouldProcessEvent(targetSessionId, targetTurnId, 'data', 'ToolEvent')) {
     return;
+  }
+
+  if (!subagentParentInfo) {
+    touchPendingTurnCompletion(context, sessionId, turnId);
   }
   
   const eventData: ToolEventData = {
@@ -749,6 +1068,8 @@ function handleToolEvent(
         turnId,
         toolEvent
       }, onTodoWriteResult);
+    }).catch(error => {
+      log.error('Failed to load SubagentModule or route tool event', { sessionId, turnId, error });
     });
   } else {
     processToolEvent(context, sessionId, turnId, toolEvent, undefined, onTodoWriteResult);
@@ -765,7 +1086,7 @@ function handleModelRoundStart(context: FlowChatContext, event: any): void {
     return;
   }
   
-  if (!shouldProcessEvent(sessionId, turnId, 'data')) {
+  if (!shouldProcessEvent(sessionId, turnId, 'data', 'ModelRoundStarted')) {
     return;
   }
   
@@ -783,10 +1104,14 @@ function handleModelRoundStart(context: FlowChatContext, event: any): void {
     return;
   }
 
+  touchPendingTurnCompletion(context, sessionId, turnId);
+
   const currentState = stateMachineManager.getCurrentState(sessionId);
-  if (currentState === SessionExecutionState.PROCESSING) {
+  if (isStreamingExecutionState(currentState)) {
     stateMachineManager.transition(sessionId, SessionExecutionEvent.MODEL_ROUND_START, {
       modelRoundId: roundId,
+    }).catch(error => {
+      log.error('State machine transition failed on model round start', { sessionId, error });
     });
   }
 
@@ -855,6 +1180,15 @@ function handleCompressionStarted(_context: FlowChatContext, event: any): void {
     log.debug('Dialog turn not found (compression started)', { turnId });
     return;
   }
+
+  const currentState = stateMachineManager.getCurrentState(sessionId);
+  if (isStreamingExecutionState(currentState)) {
+    void stateMachineManager
+      .transition(sessionId, SessionExecutionEvent.COMPACTION_STARTED)
+      .catch(error => {
+        log.error('State machine transition failed on compression start', { sessionId, error });
+      });
+  }
   
   const compressionItem: FlowToolItem = {
     id: compressionId,
@@ -899,7 +1233,7 @@ function handleCompressionStarted(_context: FlowChatContext, event: any): void {
 function handleCompressionCompleted(context: FlowChatContext, event: any): void {
   const { 
     sessionId, turnId, compressionId, compressionCount, 
-    tokensBefore, tokensAfter, compressionRatio, durationMs
+    tokensBefore, tokensAfter, compressionRatio, durationMs, hasSummary, summarySource
   } = event;
   
   log.info('Context compression completed', {
@@ -917,6 +1251,8 @@ function handleCompressionCompleted(context: FlowChatContext, event: any): void 
         tokens_after: tokensAfter,
         compression_ratio: compressionRatio,
         duration: durationMs,
+        has_summary: hasSummary,
+        summary_source: summarySource,
       },
       success: true,
       duration_ms: durationMs || 0
@@ -960,10 +1296,25 @@ function handleDialogTurnComplete(
   event: any,
   _onTodoWriteResult: (sessionId: string, turnId: string, result: any) => void
 ): void {
-  const { sessionId, turnId, subagentParentInfo } = event;
+  const sessionId = event?.sessionId ?? event?.session_id;
+  const turnId = event?.turnId ?? event?.turn_id;
+  const subagentParentInfo = event?.subagentParentInfo ?? event?.subagent_parent_info;
 
   if (subagentParentInfo) {
     return;
+  }
+
+  if (!sessionId || !turnId) {
+    log.warn('DialogTurnCompleted missing sessionId or turnId', { event });
+    return;
+  }
+
+  const machine = stateMachineManager.get(sessionId);
+  if (machine) {
+    const ctx = machine.getContext();
+    if (ctx.currentDialogTurnId !== turnId) {
+      ctx.currentDialogTurnId = turnId;
+    }
   }
 
   const store = FlowChatStore.getInstance();
@@ -974,56 +1325,25 @@ function handleDialogTurnComplete(
     return;
   }
 
-  if (context.eventBatcher.getBufferSize() > 0) {
-    context.eventBatcher.flushNow();
-  }
-
-  completeActiveTextItems(context, sessionId, turnId);
-  
-  const sessionContentBuffer = context.contentBuffers.get(sessionId);
-  if (sessionContentBuffer) {
-    sessionContentBuffer.clear();
-  }
-
-  context.flowChatStore.markSessionFinished(sessionId);
-
   context.flowChatStore.updateDialogTurn(sessionId, turnId, turn => {
-    const updatedModelRounds = turn.modelRounds.map((round) => {
-      if (round.isStreaming) {
-        return {
-          ...round,
-          isStreaming: false,
-          isComplete: true,
-          status: 'completed' as const,
-          endTime: Date.now()
-        };
-      }
-      return round;
-    });
-    
     return {
       ...turn,
-      modelRounds: updatedModelRounds,
-      status: 'completed' as const,
-      endTime: Date.now()
+      status: 'finishing' as const,
     };
   });
 
   const currentState = stateMachineManager.getCurrentState(sessionId);
   if (currentState === SessionExecutionState.PROCESSING) {
-    stateMachineManager.transition(sessionId, SessionExecutionEvent.STREAM_COMPLETE);
+    void stateMachineManager
+      .transition(sessionId, SessionExecutionEvent.BACKEND_STREAM_COMPLETED)
+      .catch(error => {
+        log.error('State machine transition failed on backend stream completed', { sessionId, error });
+      });
   } else {
-    log.debug('Skipping STREAM_COMPLETE transition', { currentState, sessionId });
+    log.debug('Skipping BACKEND_STREAM_COMPLETED transition', { currentState, sessionId, turnId });
   }
-  
-  const dialogTurn = session.dialogTurns.find(t => t.id === turnId);
-  if (dialogTurn) {
-    appendPlanDisplayItemsIfNeeded(context, sessionId, turnId, dialogTurn);
-  }
-  
-  saveDialogTurnToDisk(context, sessionId, turnId).catch(error => {
-    log.warn('Failed to save dialog turn (non-critical)', { sessionId, turnId, error });
-  });
+
+  beginTurnCompletion(context, sessionId, turnId);
 }
 
 /**
@@ -1037,6 +1357,7 @@ function handleDialogTurnFailed(context: FlowChatContext, event: any): void {
   }
   
   log.error('Dialog turn failed', { sessionId, turnId, error });
+  clearPendingTurnCompletion(context, sessionId, turnId);
   
   const store = FlowChatStore.getInstance();
   const session = store.getState().sessions.get(sessionId);
@@ -1103,11 +1424,15 @@ function handleDialogTurnFailed(context: FlowChatContext, event: any): void {
   }
   
   const currentState = stateMachineManager.getCurrentState(sessionId);
-  if (currentState === SessionExecutionState.PROCESSING) {
+  if (isStreamingExecutionState(currentState)) {
     stateMachineManager.transition(sessionId, SessionExecutionEvent.ERROR_OCCURRED, {
       error: error || 'Execution failed'
+    }).catch(err => {
+      log.error('State machine transition failed on error occurred', { sessionId, error: err });
     });
-    stateMachineManager.transition(sessionId, SessionExecutionEvent.RESET);
+    stateMachineManager.transition(sessionId, SessionExecutionEvent.RESET).catch(err => {
+      log.error('State machine transition failed on reset', { sessionId, error: err });
+    });
   }
   
   notificationService.error(error || 'Execution failed', {
@@ -1131,6 +1456,7 @@ function handleDialogTurnCancelled(
   }
   
   log.info('Dialog turn cancelled', { sessionId, turnId });
+  clearPendingTurnCompletion(context, sessionId, turnId);
   
   const store = FlowChatStore.getInstance();
   const session = store.getState().sessions.get(sessionId);
@@ -1188,8 +1514,12 @@ function handleDialogTurnCancelled(
   // so the machine is already IDLE.  When cancellation comes from an
   // external source (mobile remote), the machine is still PROCESSING.
   const currentState = stateMachineManager.getCurrentState(sessionId);
-  if (currentState === SessionExecutionState.PROCESSING) {
-    stateMachineManager.transition(sessionId, SessionExecutionEvent.STREAM_COMPLETE);
+  if (isStreamingExecutionState(currentState)) {
+    void stateMachineManager
+      .transition(sessionId, SessionExecutionEvent.FINISHING_SETTLED)
+      .catch(error => {
+        log.error('State machine transition failed on cancelled finishing settled', { sessionId, error });
+      });
   }
 }
 

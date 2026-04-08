@@ -13,6 +13,7 @@ import { createLogger } from '@/shared/utils/logger';
 import { MCPAPI, MCP_APPS_PROTOCOL_VERSION, type McpUiResourceCsp, type McpUiResourcePermissions, type McpUiMessageParams, type McpUiMessageResult, type McpAppMessageEvent, type McpAppMessageResponseEvent } from '@/infrastructure/api/service-api/MCPAPI';
 import { systemAPI } from '@/infrastructure/api/service-api/SystemAPI';
 import { globalEventBus } from '@/infrastructure/event-bus';
+import { isMcpToolName, parseMcpToolName } from '@/infrastructure/mcp/toolName';
 import { useToolCardHeightContract } from './useToolCardHeightContract';
 import './MCPToolDisplay.scss';
 
@@ -175,15 +176,14 @@ export const MCPToolDisplay: React.FC<ToolCardProps> = ({
 
   const getToolInfo = () => {
     const fullToolName = config.toolName;
-    const parts = fullToolName.split('_');
-    const actualToolName = parts.slice(2).join('_') || fullToolName;
-    const serverName = parts[1] || 'unknown';
-    
-    return { toolName: actualToolName, serverName };
+    const parsed = parseMcpToolName(fullToolName);
+    return {
+      toolName: parsed?.toolName ?? fullToolName,
+      serverId: parsed?.serverId ?? 'unknown',
+    };
   };
 
-  const { toolName, serverName } = getToolInfo();
-  const serverId = serverName;
+  const { toolName, serverId } = getToolInfo();
   const isFailed = status === 'error';
 
   const mcpAppIframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -217,7 +217,7 @@ export const MCPToolDisplay: React.FC<ToolCardProps> = ({
   useEffect(() => {
     if (
       uiResourceUriFromResult ||
-      !config.toolName.startsWith('mcp_') ||
+      !isMcpToolName(config.toolName) ||
       status !== 'completed' ||
       isFailed
     ) {
@@ -399,15 +399,20 @@ export const MCPToolDisplay: React.FC<ToolCardProps> = ({
 
             // Set up response listener before emitting
             const responsePromise = new Promise<McpUiMessageResult>((resolve) => {
+              let handleResponse: ((response: McpAppMessageResponseEvent) => void) | null = null;
               const timeout = setTimeout(() => {
-                globalEventBus.off('mcp-app:message-response', handleResponse);
+                if (handleResponse) {
+                  globalEventBus.off('mcp-app:message-response', handleResponse);
+                }
                 resolve({ isError: true });
               }, 5000); // 5 second timeout
 
-              const handleResponse = (response: McpAppMessageResponseEvent) => {
+              handleResponse = (response: McpAppMessageResponseEvent) => {
                 if (response.requestId === requestId) {
                   clearTimeout(timeout);
-                  globalEventBus.off('mcp-app:message-response', handleResponse);
+                  if (handleResponse) {
+                    globalEventBus.off('mcp-app:message-response', handleResponse);
+                  }
                   resolve(response.result);
                 }
               };
@@ -557,7 +562,7 @@ export const MCPToolDisplay: React.FC<ToolCardProps> = ({
     if (toolResult && 'error' in toolResult) {
       return toolResult.error;
     }
-    return 'MCP tool execution failed';
+    return t('toolCards.mcp.executionFailed', 'MCP execution failed');
   };
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
@@ -590,11 +595,10 @@ export const MCPToolDisplay: React.FC<ToolCardProps> = ({
     <ToolCardHeader
       icon={renderToolIcon()}
       iconClassName="mcp-icon"
-      action={isFailed ? 'MCP tool failed' : 'MCP tool:'}
+      action={isFailed ? t('toolCards.mcp.failedLabel', 'MCP failed') : t('toolCards.mcp.actionLabel', 'MCP:')}
       content={
         <span className="mcp-tool-info">
           <span className="tool-name">{toolName}</span>
-          <span className="server-tag">from {serverName}</span>
         </span>
       }
       extra={
@@ -733,11 +737,6 @@ export const MCPToolDisplay: React.FC<ToolCardProps> = ({
   const renderErrorContent = () => (
     <div className="error-content">
       <div className="error-message">{getErrorMessage()}</div>
-      <div className="error-meta">
-        <span className="error-tool">Tool: {toolName}</span>
-        <span className="error-separator">|</span>
-        <span className="error-server">Server: {serverName}</span>
-      </div>
     </div>
   );
 

@@ -24,6 +24,7 @@ import { EditorConfig as EditorConfigType } from '@/infrastructure/config/types'
 import { CubeLoading } from '@/component-library';
 import { getMonacoLanguage } from '@/infrastructure/language-detection';
 import { createLogger } from '@/shared/utils/logger';
+import { sendDebugProbe } from '@/shared/utils/debugProbe';
 import { isSamePath } from '@/shared/utils/pathUtils';
 import {
   diskContentMatchesEditorForExternalSync,
@@ -82,6 +83,8 @@ export interface CodeEditorProps {
   jumpToColumn?: number;
   /** Jump to line range (preferred, supports single or multi-line selection) */
   jumpToRange?: import('@/component-library/components/Markdown').LineRange;
+  /** Unique token for repeated jump requests to the same location. */
+  navigationToken?: number;
   /** When false, disk sync polling is paused (e.g. background editor tab). */
   isActiveTab?: boolean;
   /** File path is not an existing file on disk (drives tab "deleted" label). */
@@ -96,6 +99,14 @@ const LARGE_FILE_EXPANSION_LABELS = ['show more', '显示更多', '展开更多'
 
 /** Poll disk metadata for open file; only while tab is active (see isActiveTab). */
 const FILE_SYNC_POLL_INTERVAL_MS = 1000;
+
+function getPollOffsetMs(filePath: string): number {
+  let hash = 0;
+  for (let i = 0; i < filePath.length; i++) {
+    hash = ((hash << 5) - hash + filePath.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % 400;
+}
 
 function hasVeryLongLine(content: string, maxLineLength: number): boolean {
   let currentLineLength = 0;
@@ -137,6 +148,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   jumpToLine,
   jumpToColumn,
   jumpToRange,
+  navigationToken,
   isActiveTab = true,
   onFileMissingFromDiskChange,
 }) => {
@@ -252,6 +264,25 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   const largeFileExpansionBlockedLogRef = useRef(false);
   const pendingModelContentRef = useRef<string | null>(null);
   const macosEditorBindingCleanupRef = useRef<(() => void) | null>(null);
+  const workspacePathRuntimeRef = useRef(workspacePath);
+  const readOnlyRuntimeRef = useRef(readOnly);
+  const showLineNumbersRuntimeRef = useRef(showLineNumbers);
+  const showMinimapRuntimeRef = useRef(showMinimap);
+  const onContentChangeRef = useRef(onContentChange);
+  const tRef = useRef(t);
+  const contentRef = useRef(content);
+  const loadingRef = useRef(loading);
+  const editorConfigRuntimeRef = useRef(editorConfig);
+
+  workspacePathRuntimeRef.current = workspacePath;
+  readOnlyRuntimeRef.current = readOnly;
+  showLineNumbersRuntimeRef.current = showLineNumbers;
+  showMinimapRuntimeRef.current = showMinimap;
+  onContentChangeRef.current = onContentChange;
+  tRef.current = t;
+  contentRef.current = content;
+  loadingRef.current = loading;
+  editorConfigRuntimeRef.current = editorConfig;
 
   const detectLargeFileMode = useCallback((nextContent: string, fileSizeBytes?: number): boolean => {
     const size = typeof fileSizeBytes === 'number' && fileSizeBytes >= 0
@@ -517,6 +548,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
       return;
     }
 
+    const container = containerRef.current;
     let editor: monaco.editor.IStandaloneCodeEditor | null = null;
     let model: monaco.editor.ITextModel | null = null;
 
@@ -528,8 +560,8 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         }
         
         let createFontSize = 14;
-        let createFontFamily = editorConfig.font_family || "'Fira Code', 'Noto Sans SC', Consolas, 'Courier New', monospace";
-        let createFontWeight = editorConfig.font_weight || 'normal';
+        let createFontFamily = editorConfigRuntimeRef.current.font_family || "'Fira Code', 'Noto Sans SC', Consolas, 'Courier New', monospace";
+        let createFontWeight = editorConfigRuntimeRef.current.font_weight || 'normal';
         let createLineHeight = 0;
         const applyFontConfig = (c: Partial<EditorConfigType>) => {
           createFontSize = c.font_size ?? 14;
@@ -548,8 +580,8 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         model = monacoModelManager.getOrCreateModel(
           filePath,
           detectedLanguage,
-          content || '',
-          workspacePath
+          contentRef.current || '',
+          workspacePathRuntimeRef.current
         );
         
         modelRef.current = model;
@@ -567,14 +599,14 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           savedVersionIdRef.current = modelMetadata.savedVersionId;
           originalContentRef.current = modelMetadata.originalContent;
           
-          if (isDirty && onContentChange) {
-            onContentChange(modelContent, true);
+          if (isDirty && onContentChangeRef.current) {
+            onContentChangeRef.current(modelContent, true);
           }
         } else {
           savedVersionIdRef.current = model.getAlternativeVersionId();
         }
         
-        if (modelContent && modelContent !== content) {
+        if (modelContent && modelContent !== contentRef.current) {
           setContent(modelContent);
           if (!modelMetadata) {
             originalContentRef.current = modelContent;
@@ -599,21 +631,21 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           model: model,
           theme: themeId,
           automaticLayout: true,
-          readOnly: readOnly,
-          lineNumbers: showLineNumbers ? 'on' : (editorConfig.line_numbers as any) || 'on',
+          readOnly: readOnlyRuntimeRef.current,
+          lineNumbers: showLineNumbersRuntimeRef.current ? 'on' : (editorConfigRuntimeRef.current.line_numbers as any) || 'on',
           minimap: { 
-            enabled: showMinimap && !initialLargeFileMode,
-            side: (editorConfig.minimap?.side as any) || 'right',
-            size: (editorConfig.minimap?.size as any) || 'proportional'
+            enabled: showMinimapRuntimeRef.current && !initialLargeFileMode,
+            side: (editorConfigRuntimeRef.current.minimap?.side as any) || 'right',
+            size: (editorConfigRuntimeRef.current.minimap?.size as any) || 'proportional'
           },
           fontSize: createFontSize,
           fontFamily: createFontFamily,
           fontWeight: createFontWeight,
-          lineHeight: createLineHeight || (editorConfig.line_height ? Math.round(createFontSize * editorConfig.line_height) : 0),
+          lineHeight: createLineHeight || (editorConfigRuntimeRef.current.line_height ? Math.round(createFontSize * editorConfigRuntimeRef.current.line_height) : 0),
           scrollBeyondLastLine: false,
-          wordWrap: (editorConfig.word_wrap as any) || 'off',
-          tabSize: editorConfig.tab_size || 2,
-          insertSpaces: editorConfig.insert_spaces !== undefined ? editorConfig.insert_spaces : true,
+          wordWrap: (editorConfigRuntimeRef.current.word_wrap as any) || 'off',
+          tabSize: editorConfigRuntimeRef.current.tab_size || 2,
+          insertSpaces: editorConfigRuntimeRef.current.insert_spaces !== undefined ? editorConfigRuntimeRef.current.insert_spaces : true,
           contextmenu: false,
           links: true,
           gotoLocation: {
@@ -688,7 +720,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           }
         };
 
-        editor = monaco.editor.create(containerRef.current, editorOptions);
+        editor = monaco.editor.create(container, editorOptions);
         editorRef.current = editor;
         setEditorInstance(editor);
         const editTarget = createMonacoEditTarget(editor);
@@ -712,7 +744,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         };
         // #endregion
         
-        (containerRef.current as any).__monacoEditor = editor;
+        (container as any).__monacoEditor = editor;
         
         if (model) {
           const { lspDocumentService } = await import('@/tools/lsp/services/LspDocumentService');
@@ -783,7 +815,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
                   normalizedPath,
                   targetLine,
                   targetColumn,
-                  { workspacePath }
+                  { workspacePath: workspacePathRuntimeRef.current }
                 );
               } catch (error) {
                 log.error('Cross-file jump failed', error);
@@ -806,7 +838,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           setHasChanges(changed);
           hasChangesRef.current = changed;
           
-          onContentChange?.(newContent, changed);
+          onContentChangeRef.current?.(newContent, changed);
         });
 
         editor.onDidChangeCursorPosition((e) => {
@@ -831,16 +863,16 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         });
 
         const updateCursorPosition = (e: monaco.editor.IEditorMouseEvent) => {
-          if (e.target.position && containerRef.current?.parentElement?.parentElement) {
+          if (e.target.position && container.parentElement?.parentElement) {
             // containerRef -> .code-editor-tool__content -> .code-editor-tool (has data-monaco-editor)
-            const container = containerRef.current.parentElement.parentElement;
+            const editorContainer = container.parentElement.parentElement;
             const newLine = String(e.target.position.lineNumber);
             const newColumn = String(e.target.position.column);
             
-            if (container.getAttribute('data-cursor-line') !== newLine || 
-                container.getAttribute('data-cursor-column') !== newColumn) {
-              container.setAttribute('data-cursor-line', newLine);
-              container.setAttribute('data-cursor-column', newColumn);
+            if (editorContainer.getAttribute('data-cursor-line') !== newLine || 
+                editorContainer.getAttribute('data-cursor-column') !== newColumn) {
+              editorContainer.setAttribute('data-cursor-line', newLine);
+              editorContainer.setAttribute('data-cursor-column', newColumn);
             }
           }
         };
@@ -868,7 +900,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
             if (ctrlDecorationsRef.current.length > 0) {
               try {
                 ctrlDecorationsRef.current = editor!.deltaDecorations(ctrlDecorationsRef.current, []);
-              } catch (err) {
+              } catch (_err) {
                 ctrlDecorationsRef.current = [];
               }
               lastHoverWordRef.current = null;
@@ -910,13 +942,13 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           log.error('Failed to load EditorReadyManager', err);
         });
         
-        if (!loading && content) {
+        if (!loadingRef.current && contentRef.current) {
           setLspReady(true);
         }
 
       } catch (error) {
         log.error('Failed to initialize editor', error);
-        setError(t('editor.codeEditor.initFailedWithMessage', { message: String(error) }));
+        setError(tRef.current('editor.codeEditor.initFailedWithMessage', { message: String(error) }));
       }
     };
 
@@ -948,9 +980,9 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         editorRef.current = null;
         setEditorInstance(null);
       }
-      
-      if (containerRef.current) {
-        delete (containerRef.current as any).__monacoEditor;
+
+      if (container) {
+        delete (container as any).__monacoEditor;
       }
 
       monacoModelManager.releaseModel(filePath);
@@ -1043,6 +1075,61 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     });
   }, []);
 
+  const isJumpStillApplied = useCallback((
+    editor: any,
+    model: any,
+    line: number,
+    column: number,
+    endLine?: number
+  ): boolean => {
+    const lineCount = model.getLineCount();
+    const targetLine = Math.min(line, Math.max(1, lineCount));
+    const targetEndLine = endLine ? Math.min(endLine, Math.max(1, lineCount)) : undefined;
+    const maxColumnForLine = model.getLineMaxColumn(targetLine);
+    const targetColumn = Math.min(Math.max(1, column), maxColumnForLine);
+    const requiredEndLine = targetEndLine ?? targetLine;
+    const visibleRanges = typeof editor.getVisibleRanges === 'function'
+      ? editor.getVisibleRanges()
+      : [];
+    const isTargetVisible = visibleRanges.some((range: monaco.Range) =>
+      range.startLineNumber <= targetLine && range.endLineNumber >= requiredEndLine
+    );
+
+    if (!isTargetVisible) {
+      return false;
+    }
+
+    const selection = typeof editor.getSelection === 'function' ? editor.getSelection() : null;
+
+    if (targetEndLine && targetEndLine > targetLine) {
+      if (!selection) {
+        return false;
+      }
+
+      const endLineMaxColumn = model.getLineMaxColumn(targetEndLine);
+      return (
+        selection.startLineNumber === targetLine &&
+        selection.startColumn === 1 &&
+        selection.endLineNumber === targetEndLine &&
+        selection.endColumn === endLineMaxColumn
+      );
+    }
+
+    const position = typeof editor.getPosition === 'function' ? editor.getPosition() : null;
+    if (!position || !selection) {
+      return false;
+    }
+
+    return (
+      position.lineNumber === targetLine &&
+      position.column === targetColumn &&
+      selection.startLineNumber === targetLine &&
+      selection.startColumn === targetColumn &&
+      selection.endLineNumber === targetLine &&
+      selection.endColumn === targetColumn
+    );
+  }, []);
+
   // Handle initial jump (after content load). If the model has fewer lines than requested,
   // wait for content to sync into the model; otherwise we clamp to line 1, set lastJump,
   // and dedupe blocks a correct jump after the real text arrives.
@@ -1064,7 +1151,8 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
       lastJump &&
       lastJump.filePath === filePath &&
       lastJump.line === finalRange.start &&
-      lastJump.endLine === finalRange.end
+      lastJump.endLine === finalRange.end &&
+      isJumpStillApplied(editor, model, finalRange.start, targetColumn, finalRange.end)
     ) {
       return;
     }
@@ -1136,7 +1224,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         timeoutId = null;
       }
     };
-  }, [jumpToRange, jumpToLine, jumpToColumn, monacoReady, loading, content, filePath, performJump]);
+  }, [jumpToRange, jumpToLine, jumpToColumn, navigationToken, monacoReady, loading, content, filePath, performJump, isJumpStillApplied]);
 
   // Status bar popover: open and confirm
   const openStatusBarPopover = useCallback((type: 'position' | 'indent' | 'encoding' | 'language', e: React.MouseEvent) => {
@@ -1344,7 +1432,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         isLoadingContentRef.current = false;
       });
     }
-  }, [applyExternalContentToModel, filePath, detectedLanguage, reportFileMissingFromDisk, t, updateLargeFileMode]);
+  }, [applyExternalContentToModel, filePath, reportFileMissingFromDisk, t, updateLargeFileMode]);
 
   // Save file content
   const saveFileContent = useCallback(async () => {
@@ -1486,9 +1574,14 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     }
 
     isCheckingFileRef.current = true;
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let outcome = 'started';
+    let usedHashFallback = false;
+    let probeError: string | null = null;
 
     try {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        outcome = 'skipped-hidden';
         return;
       }
 
@@ -1497,22 +1590,26 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         request: { path: filePath }
       });
       if (isFileMissingFromMetadata(fileInfo)) {
+        outcome = 'missing-on-disk';
         reportFileMissingFromDisk(true);
         return;
       }
       reportFileMissingFromDisk(false);
       const currentVersion = diskVersionFromMetadata(fileInfo);
       if (!currentVersion) {
+        outcome = 'missing-version';
         return;
       }
 
       const baseline = diskVersionRef.current;
       if (!baseline) {
         diskVersionRef.current = currentVersion;
+        outcome = 'initialized-baseline';
         return;
       }
 
       if (!diskVersionsDiffer(currentVersion, baseline)) {
+        outcome = 'no-change';
         return;
       }
 
@@ -1529,16 +1626,19 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           editorMid !== undefined &&
           bufferBeforeRead !== editorMid
         ) {
+          outcome = 'editor-changed-before-hash';
           return;
         }
         if (diskHash && editorMid !== undefined) {
           const editorHash = await editorSyncContentSha256Hex(editorMid);
           if (editorHash === diskHash) {
             diskVersionRef.current = currentVersion;
+            outcome = 'hash-match';
             return;
           }
         }
       } catch (hashErr) {
+        usedHashFallback = true;
         log.warn('get_file_editor_sync_hash failed, falling back to full read', {
           filePath,
           error: hashErr,
@@ -1552,15 +1652,18 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         editorBuffer !== undefined &&
         bufferBeforeRead !== editorBuffer
       ) {
+        outcome = 'editor-changed-before-read';
         return;
       }
       if (editorBuffer === undefined) {
+        outcome = 'missing-editor-buffer';
         return;
       }
 
       const fileContent = await workspaceAPI.readFileContent(filePath);
       if (diskContentMatchesEditorForExternalSync(fileContent, editorBuffer)) {
         diskVersionRef.current = currentVersion;
+        outcome = 'content-match';
         return;
       }
 
@@ -1577,17 +1680,38 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         });
         if (!shouldReload) {
           diskVersionRef.current = currentVersion;
+          outcome = 'kept-local-changes';
           return;
         }
       }
 
       applyDiskSnapshotToEditor(fileContent, currentVersion);
+      outcome = 'reloaded-from-disk';
     } catch (err) {
+      outcome = 'error';
+      probeError = err instanceof Error ? err.message : String(err);
       if (isLikelyFileNotFoundError(err)) {
         reportFileMissingFromDisk(true);
       }
       log.error('Failed to check file modification', err);
     } finally {
+      const durationMs =
+        Math.round(
+          ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt) * 10
+        ) / 10;
+      if (probeError || outcome !== 'no-change' || durationMs >= 80) {
+        sendDebugProbe(
+          'CodeEditor.tsx:checkFileModification',
+          'Code editor disk sync completed',
+          {
+            filePath,
+            outcome,
+            durationMs,
+            usedHashFallback,
+            error: probeError,
+          }
+        );
+      }
       isCheckingFileRef.current = false;
     }
   }, [applyDiskSnapshotToEditor, filePath, isActiveTab, reportFileMissingFromDisk, t]);
@@ -1615,13 +1739,18 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     const tick = () => {
       void checkFileModification();
     };
-
-    const intervalId = window.setInterval(tick, FILE_SYNC_POLL_INTERVAL_MS);
-    document.addEventListener('visibilitychange', tick);
+    const pollOffsetMs = getPollOffsetMs(filePath);
+    let intervalId: number | null = null;
+    const timeoutId = window.setTimeout(() => {
+      tick();
+      intervalId = window.setInterval(tick, FILE_SYNC_POLL_INTERVAL_MS + pollOffsetMs);
+    }, 250 + pollOffsetMs);
 
     return () => {
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', tick);
+      window.clearTimeout(timeoutId);
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
     };
   }, [checkFileModification, filePath, isActiveTab]);
 
@@ -1913,7 +2042,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     return () => {
       unsubscribers.forEach(unsub => unsub());
     };
-  }, [applyDiskSnapshotToEditor, applyExternalContentToModel, monacoReady, filePath, t]);
+  }, [applyDiskSnapshotToEditor, monacoReady, filePath, t, workspacePath]);
 
   useEffect(() => {
     userLanguageOverrideRef.current = false;

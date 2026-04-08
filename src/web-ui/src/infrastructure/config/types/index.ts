@@ -34,9 +34,8 @@ export interface AppLoggingConfig {
   level: BackendLogLevel;
 }
 
-export interface AppSessionConfig {
-  // Reserved; legacy `default_mode` in saved JSON is ignored by the app.
-}
+// Reserved; legacy `default_mode` in saved JSON is ignored by the app.
+export type AppSessionConfig = Record<string, never>;
 
 export interface SidebarConfig {
   width: number;
@@ -52,6 +51,8 @@ export interface NotificationConfig {
   enabled: boolean;
   position: string;
   duration: number;
+  /** Whether to show a toast when a dialog turn completes while the window is not focused. */
+  dialog_completion_notify: boolean;
 }
 
 export interface AIExperienceConfig {
@@ -59,6 +60,9 @@ export interface AIExperienceConfig {
 
   /** Whether to enable visual mode (use Mermaid diagrams to illustrate complex logic and flows). */
   enable_visual_mode: boolean;
+
+  /** Whether to show the pixel Agent companion in the collapsed chat input. */
+  enable_agent_companion: boolean;
 }
 
 
@@ -157,7 +161,7 @@ export interface AIConfig {
   default_models: DefaultModelsConfig;  
   agent_models: Record<string, string>;  
   func_agent_models: Record<string, string>;  
-  mode_configs: Record<string, ModeConfigItem>;  
+  mode_configs: Record<string, StoredModeConfigItem>;  
   subagent_configs: Record<string, SubAgentConfigItem>;  
   proxy: ProxyConfig;  
   debug_mode_config: DebugModeConfig;  
@@ -171,16 +175,26 @@ export interface AIConfig {
   tool_execution_timeout_secs?: number | null;
   tool_confirmation_timeout_secs?: number | null;
   skip_tool_confirmation?: boolean;
+  computer_use_enabled?: boolean;
 }
 
 
 
+
+export interface StoredModeConfigItem {
+  mode_id: string;
+  added_tools: string[];
+  removed_tools: string[];
+  enabled: boolean;
+  disabled_user_skills?: string[];
+}
+
 export interface ModeConfigItem {
   mode_id: string;  
-  available_tools: string[];  
+  enabled_tools: string[];  
   enabled: boolean;  
   default_tools: string[];  
-  available_skills?: string[];  
+  disabled_user_skills?: string[];
 }
 
 
@@ -194,11 +208,20 @@ export type SkillLevel = 'user' | 'project';
 
 
 export interface SkillInfo {
+  key: string;
   name: string;         
   description: string;  
   path: string;         
   level: SkillLevel;
-  enabled: boolean;
+  sourceSlot: string;
+  dirName: string;
+}
+
+export interface ModeSkillInfo extends SkillInfo {
+  /** True when this skill key is explicitly disabled in the current mode config. */
+  disabledByMode: boolean;
+  /** True when this skill is the one actually selected at runtime after disable + priority resolution. */
+  selectedForRuntime: boolean;
 }
 
 export interface SkillMarketItem {
@@ -558,5 +581,4 @@ export interface DefaultModels {
 }
 
  
-export interface OptionalCapabilityModels {
-}
+export type OptionalCapabilityModels = Record<string, never>;

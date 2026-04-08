@@ -44,6 +44,8 @@ export interface TabBarProps {
   onOpenMissionControl?: () => void;
   /** Close all tabs */
   onCloseAllTabs?: () => Promise<void> | void;
+  /** Pop out tab as independent scene */
+  onTabPopOut?: (tabId: string) => void;
 }
 
 /**
@@ -94,6 +96,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   onReorderTab,
   onOpenMissionControl,
   onCloseAllTabs,
+  onTabPopOut,
 }) => {
   const { t } = useTranslation('components');
   const [visibleTabsCount, setVisibleTabsCount] = useState(tabs.length);
@@ -191,7 +194,7 @@ export const TabBar: React.FC<TabBarProps> = ({
     const finalCount = Math.max(1, Math.min(count, visibleTabs.length));
     setVisibleTabsCount(finalCount);
     setLayoutReady(true);
-  }, [visibleTabs, getTabWidth, getTabCacheKey, onCloseAllTabs]);
+  }, [visibleTabs, getTabWidth, getTabCacheKey, onCloseAllTabs, onOpenMissionControl]);
 
   // Reset to render all tabs when list changes (re-measure)
   useEffect(() => {
@@ -317,6 +320,7 @@ export const TabBar: React.FC<TabBarProps> = ({
               onDragStart={handleTabDragStart(tab)}
               onDragEnd={onDragEnd}
               isDragging={draggingTabId === tab.id}
+              onPopOut={onTabPopOut ? () => onTabPopOut(tab.id) : undefined}
             />
           </div>
         ))}

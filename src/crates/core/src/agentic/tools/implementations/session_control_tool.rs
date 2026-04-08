@@ -14,6 +14,12 @@ use std::time::SystemTime;
 /// SessionControl tool - create, delete, or list persisted sessions
 pub struct SessionControlTool;
 
+impl Default for SessionControlTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionControlTool {
     pub fn new() -> Self {
         Self
@@ -27,7 +33,7 @@ impl SessionControlTool {
         let current_session_id = context.session_id.as_deref()?;
         let current_workspace = context.workspace_root()?;
         let normalized_current_workspace =
-            normalize_path(&current_workspace.to_string_lossy().to_string());
+            normalize_path(current_workspace.to_string_lossy().as_ref());
 
         if normalized_current_workspace == workspace {
             Some(current_session_id)
@@ -453,7 +459,8 @@ Optional inputs:
                         }
                     }),
                     result_for_assistant: Some(result_for_assistant),
-                }])
+            image_attachments: None,
+        }])
             }
             SessionControlAction::Delete => {
                 let session_id = params.session_id.as_deref().ok_or_else(|| {
@@ -492,7 +499,8 @@ Optional inputs:
                         "Deleted session '{}' from workspace '{}'.",
                         session_id, workspace
                     )),
-                }])
+            image_attachments: None,
+        }])
             }
             SessionControlAction::List => {
                 let sessions = coordinator.list_sessions(workspace_path).await?;
@@ -510,7 +518,8 @@ Optional inputs:
                         "sessions": sessions,
                     }),
                     result_for_assistant: Some(result_for_assistant),
-                }])
+            image_attachments: None,
+        }])
             }
         }
     }

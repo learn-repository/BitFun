@@ -2,10 +2,12 @@ use crate::agentic::tools::framework::{
     Tool, ToolRenderOptions, ToolResult, ToolUseContext, ValidationResult,
 };
 use crate::infrastructure::events::event_system::get_global_event_system;
-use crate::infrastructure::events::event_system::BackendEvent::ToolExecutionProgress;
+use crate::infrastructure::events::event_system::BackendEvent::{
+    ToolExecutionProgress, ToolTerminalReady,
+};
 use crate::service::config::global::get_global_config_service;
 use crate::util::errors::{BitFunError, BitFunResult};
-use crate::util::types::event::ToolExecutionProgressInfo;
+use crate::util::types::event::{ToolExecutionProgressInfo, ToolTerminalReadyInfo};
 use async_trait::async_trait;
 use futures::StreamExt;
 use log::{debug, error, info};
@@ -43,9 +45,28 @@ const BANNED_COMMANDS: &[&str] = &[
     "safari",
 ];
 
-fn truncate_string_by_chars(s: &str, max_chars: usize) -> String {
+fn truncate_output_preserving_tail(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
-    chars[..max_chars].into_iter().collect()
+    if chars.len() <= max_chars {
+        return s.to_string();
+    }
+
+    let tail_bias = max_chars.saturating_mul(4) / 5;
+    let separator = "\n... [truncated, middle omitted, tail preserved] ...\n";
+    let separator_len = separator.chars().count();
+
+    if separator_len >= max_chars {
+        return chars[chars.len() - max_chars..].iter().collect();
+    }
+
+    let content_budget = max_chars - separator_len;
+    let tail_len = tail_bias.min(content_budget);
+    let head_len = content_budget.saturating_sub(tail_len);
+
+    let head: String = chars[..head_len].iter().collect();
+    let tail: String = chars[chars.len() - tail_len..].iter().collect();
+
+    format!("{head}{separator}{tail}")
 }
 
 /// Result of shell resolution for bash tool
@@ -58,6 +79,12 @@ struct ResolvedShell {
 
 /// Bash tool
 pub struct BashTool;
+
+impl Default for BashTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BashTool {
     pub fn new() -> Self {
@@ -140,7 +167,7 @@ impl BashTool {
             let cleaned_output = strip_ansi(output_text);
             let output_len = cleaned_output.chars().count();
             if output_len > MAX_OUTPUT_LENGTH {
-                let truncated = truncate_string_by_chars(&cleaned_output, MAX_OUTPUT_LENGTH);
+                let truncated = truncate_output_preserving_tail(&cleaned_output, MAX_OUTPUT_LENGTH);
                 result_string.push_str(&format!(
                     "<output truncated=\"true\">{}</output>",
                     truncated
@@ -168,6 +195,22 @@ impl BashTool {
         ));
 
         result_string
+    }
+
+    fn emit_terminal_ready_event(tool_use_id: &str, terminal_session_id: &str) {
+        let event = ToolTerminalReady(ToolTerminalReadyInfo {
+            tool_use_id: tool_use_id.to_string(),
+            terminal_session_id: terminal_session_id.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+
+        let event_system = get_global_event_system();
+        tokio::spawn(async move {
+            let _ = event_system.emit(event).await;
+        });
     }
 }
 
@@ -208,7 +251,7 @@ Usage notes:
   - DO NOT use multiline commands or HEREDOC syntax (e.g., <<EOF, heredoc with newlines). Only single-line commands are supported.
   - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 120000ms (2 minutes).
   - It is very helpful if you write a clear, concise description of what this command does. For simple commands, keep it brief (5-10 words). For complex commands (piped commands, obscure flags, or anything hard to understand at a glance), add enough context to clarify what it does.
-  - If the output exceeds {MAX_OUTPUT_LENGTH} characters, output will be truncated before being returned to you.
+  - If the output exceeds {MAX_OUTPUT_LENGTH} characters, output will be truncated before being returned to you, with the tail of the output preserved because the ending is usually more important.
   - You can use the `run_in_background` parameter to run the command in a new dedicated background terminal session. The tool returns the background session ID immediately without waiting for the command to finish. Only use this for long-running processes (e.g., dev servers, watchers) where you don't need the output right away. You do not need to append '&' to the command. NOTE: `timeout_ms` is ignored when `run_in_background` is true.
   - Each result includes a `<terminal_session_id>` tag identifying the terminal session. The persistent shell session ID remains constant throughout the entire conversation; background sessions each have their own unique ID.
   - The output may include the command echo and/or the shell prompt (e.g., `PS C:\path>`). Do not treat these as part of the command's actual result.
@@ -234,6 +277,27 @@ Usage notes:
     cd /foo/bar && pytest tests
     </bad-example>"#
         ))
+    }
+
+    async fn description_with_context(
+        &self,
+        context: Option<&ToolUseContext>,
+    ) -> BitFunResult<String> {
+        let mut base = self.description().await?;
+        if context.map(|c| c.is_remote()).unwrap_or(false) {
+            base = format!(
+                r#"**Remote workspace:** Commands run on the **SSH server** in a shell whose initial working directory is the **remote workspace root** (same as running a terminal on that machine). The shell name shown below may reflect your **local** BitFun settings; the actual interpreter on the server is typically `sh`/`bash`. Use **Unix** syntax and POSIX paths — not PowerShell or Windows paths.
+
+{base}"#,
+                base = base
+            );
+        }
+        if !context.map(|c| c.is_remote()).unwrap_or(false) {
+            base.push_str(
+                "\n\n**Desktop automation:** Prefer this tool for anything achievable from the **workspace shell** (build, test, git, scripts, CLIs). On **macOS**, `open -a \"AppName\"` launches or foregrounds an app with fewer steps than GUI workflows. When **Computer use** is enabled, use **`ComputerUse`** **`action: locate`** for **named** on-screen controls before guessing coordinates from **`action: screenshot`** alone.",
+            );
+        }
+        Ok(base)
     }
 
     fn input_schema(&self) -> Value {
@@ -399,7 +463,10 @@ Usage notes:
         // Remote workspace: execute via injected workspace shell
         if context.is_remote() {
             if let Some(ws_shell) = context.ws_shell() {
-                info!("Executing command on remote workspace via SSH: {}", command_str);
+                info!(
+                    "Executing command on remote workspace via SSH: {}",
+                    command_str
+                );
 
                 let timeout_ms = input
                     .get("timeout_ms")
@@ -409,7 +476,9 @@ Usage notes:
                 let (stdout, stderr, exit_code) = ws_shell
                     .exec(command_str, Some(timeout_ms))
                     .await
-                    .map_err(|e| BitFunError::tool(format!("Remote command execution failed: {}", e)))?;
+                    .map_err(|e| {
+                        BitFunError::tool(format!("Remote command execution failed: {}", e))
+                    })?;
 
                 let output = if stderr.is_empty() {
                     stdout.clone()
@@ -417,20 +486,32 @@ Usage notes:
                     format!("{}\n{}", stdout, stderr)
                 };
 
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let working_directory = context
+                    .workspace_root()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
                 let result = ToolResult::Result {
                     data: json!({
+                        "success": exit_code == 0,
                         "command": command_str,
                         "stdout": stdout,
                         "stderr": stderr,
+                        "output": output,
                         "exit_code": exit_code,
-                        "duration_ms": start_time.elapsed().as_millis() as u64,
+                        "interrupted": false,
+                        "timed_out": false,
+                        "working_directory": working_directory,
+                        "execution_time_ms": execution_time_ms,
+                        "duration_ms": execution_time_ms,
                         "is_remote": true
                     }),
                     result_for_assistant: Some(format!(
                         "[Remote SSH] Command executed on remote server:\n{}\n\nExit code: {}",
-                        output,
-                        exit_code
+                        output, exit_code
                     )),
+                    image_attachments: None,
                 };
                 return Ok(vec![result]);
             }
@@ -516,6 +597,8 @@ Usage notes:
             )
             .await
             .map_err(|e| BitFunError::tool(format!("Failed to create Terminal session: {}", e)))?;
+
+        Self::emit_terminal_ready_event(&tool_use_id, &primary_session_id);
 
         // Get actual working directory from primary session
         let primary_cwd = terminal_api
@@ -692,6 +775,7 @@ Usage notes:
         Ok(vec![ToolResult::Result {
             data: result_data,
             result_for_assistant: Some(result_for_assistant),
+            image_attachments: None,
         }])
     }
 }
@@ -699,6 +783,7 @@ Usage notes:
 impl BashTool {
     /// Execute a command in a new background terminal session.
     /// Returns immediately with the new session ID.
+    #[allow(clippy::too_many_arguments)]
     async fn call_background(
         &self,
         command_str: &str,
@@ -736,6 +821,12 @@ impl BashTool {
                     e
                 ))
             })?;
+
+        let tool_use_id = context
+            .tool_call_id
+            .clone()
+            .unwrap_or_else(|| format!("bash_{}", uuid::Uuid::new_v4()));
+        Self::emit_terminal_ready_event(&tool_use_id, &bg_session_id);
 
         // Subscribe to session output before sending the command so no data is missed
         let mut output_rx = terminal_api.subscribe_session_output(&bg_session_id);
@@ -847,6 +938,38 @@ impl BashTool {
         Ok(vec![ToolResult::Result {
             data: result_data,
             result_for_assistant: Some(result_for_assistant),
+            image_attachments: None,
         }])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_output_preserving_tail_keeps_end_of_output() {
+        let input = "BEGIN-".to_string() + &"x".repeat(120) + "-IMPORTANT-END";
+
+        let truncated = truncate_output_preserving_tail(&input, 80);
+
+        assert!(truncated.contains("tail preserved"));
+        assert!(truncated.ends_with("IMPORTANT-END"));
+        assert!(!truncated.contains("BEGIN-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
+        assert!(truncated.chars().count() <= 80);
+    }
+
+    #[test]
+    fn render_result_marks_truncated_output_and_keeps_tail() {
+        let tool = BashTool::new();
+        let long_output =
+            "prefix\n".to_string() + &"y".repeat(MAX_OUTPUT_LENGTH + 100) + "\nfinal-error";
+
+        let rendered = tool.render_result("session-1", &long_output, false, false, 1);
+
+        assert!(rendered.contains("<output truncated=\"true\">"));
+        assert!(rendered.contains("tail preserved"));
+        assert!(rendered.contains("final-error"));
+        assert!(rendered.contains("<exit_code>1</exit_code>"));
     }
 }

@@ -2,6 +2,7 @@
 
 use bitfun_core::infrastructure::try_get_path_manager_arc;
 use bitfun_core::service::config::types::GlobalConfig;
+use dark_light::Mode;
 use log::{debug, error, warn};
 use tauri::WebviewUrl;
 
@@ -21,13 +22,13 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self::get_builtin_theme("bitfun-light").unwrap_or_else(|| Self {
             id: "bitfun-light".to_string(),
-            bg_primary: "#f4f4f4".to_string(),
+            bg_primary: "#f3f3f5".to_string(),
             bg_secondary: "#ffffff".to_string(),
             bg_scene: "#ffffff".to_string(),
             is_light: true,
-            text_primary: "#111827".to_string(),
-            text_muted: "rgba(0, 0, 0, 0.5)".to_string(),
-            accent_color: "#3b82f6".to_string(),
+            text_primary: "#1e293b".to_string(),
+            text_muted: "#64748b".to_string(),
+            accent_color: "#64748b".to_string(),
         })
     }
 }
@@ -87,13 +88,13 @@ impl ThemeConfig {
             }),
             "bitfun-light" => Some(Self {
                 id: theme_id.to_string(),
-                bg_primary: "#f4f4f4".to_string(),
+                bg_primary: "#f3f3f5".to_string(),
                 bg_secondary: "#ffffff".to_string(),
                 bg_scene: "#ffffff".to_string(),
                 is_light: true,
-                text_primary: "#111827".to_string(),
-                text_muted: "rgba(0, 0, 0, 0.5)".to_string(),
-                accent_color: "#3b82f6".to_string(),
+                text_primary: "#1e293b".to_string(),
+                text_muted: "#64748b".to_string(),
+                accent_color: "#64748b".to_string(),
             }),
             "bitfun-china-style" => Some(Self {
                 id: theme_id.to_string(),
@@ -147,13 +148,27 @@ impl ThemeConfig {
             .map(|t| t.current.as_str())
             .unwrap_or("bitfun-light");
 
-        match Self::get_builtin_theme(theme_id) {
+        let resolved_id = Self::resolve_builtin_theme_id(theme_id);
+
+        match Self::get_builtin_theme(resolved_id) {
             Some(config) => config,
             None => {
                 warn!("Unknown theme ID: {}, using default theme", theme_id);
                 default
             }
         }
+    }
+
+    /// Maps config `themes.current` to a built-in id for splash / window chrome.
+    /// `system` follows OS light/dark (aligned with web-ui `getSystemPreferredDefaultThemeId`).
+    fn resolve_builtin_theme_id(theme_id: &str) -> &str {
+        if theme_id == "system" {
+            return match dark_light::detect() {
+                Mode::Dark => "bitfun-dark",
+                Mode::Light | Mode::Default => "bitfun-light",
+            };
+        }
+        theme_id
     }
 
     pub fn generate_init_script(&self) -> String {
@@ -243,6 +258,9 @@ pub fn create_main_window(app_handle: &tauri::AppHandle) {
         .background_color(bg_color)
         .accept_first_mouse(true)
         .initialization_script(&init_script);
+
+    // Keep HTML5 drag-and-drop working inside the webview for desktop UI drag targets.
+    builder = builder.disable_drag_drop_handler();
 
     #[cfg(target_os = "macos")]
     {

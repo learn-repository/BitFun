@@ -6,9 +6,13 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search as SearchIcon, CaseSensitive, Regex, WholeWord, List, Loader2 } from 'lucide-react';
-import { FileExplorer, useFileSystem } from '@/tools/file-system';
+import {
+  FileExplorer,
+  getNewItemParentPath,
+  useFileSystem,
+  type FileExplorerToolbarHandlers,
+} from '@/tools/file-system';
 import { Search, IconButton, Tooltip } from '@/component-library';
-import { useFileTreeGitSync } from '@/tools/file-system/hooks/useFileTreeGitSync';
 import { FileSearchResults } from '@/tools/file-system/components/FileSearchResults';
 import { useFileSearch } from '@/hooks';
 import { workspaceAPI } from '@/infrastructure/api';
@@ -19,6 +23,7 @@ import { InputDialog, CubeLoading } from '@/component-library';
 import { openFileInBestTarget } from '@/shared/utils/tabUtils';
 import { PanelHeader } from './base';
 import { createLogger } from '@/shared/utils/logger';
+import { basenamePath, dirnameAbsolutePath, normalizeLocalPathForRename, replaceBasename } from '@/shared/utils/pathUtils';
 import { workspaceManager } from '@/infrastructure/services/business/workspaceManager';
 import { isRemoteWorkspace } from '@/shared/types';
 import {
@@ -40,6 +45,9 @@ interface FilesPanelProps {
   hideHeader?: boolean;
   viewMode?: 'tree' | 'search';
   onViewModeChange?: (mode: 'tree' | 'search') => void;
+  /** Hide the in-explorer floating toolbar; parent can render equivalent actions (e.g. file viewer nav header). */
+  hideExplorerToolbar?: boolean;
+  onExplorerToolbarApi?: (api: FileExplorerToolbarHandlers | null) => void;
 }
 
 const FilesPanel: React.FC<FilesPanelProps> = ({
@@ -49,6 +57,8 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
   hideHeader = false,
   viewMode: externalViewMode,
   onViewModeChange,
+  hideExplorerToolbar = false,
+  onExplorerToolbarApi,
 }) => {
   const { t } = useTranslation('panels/files');
   
@@ -98,7 +108,6 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
     selectFile,
     expandFolder,
     expandFolderLazy,
-    setFileTree
   } = useFileSystem({
     rootPath: workspacePath,
     autoLoad: true,
@@ -107,21 +116,9 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
     enableAutoWatch: true,
     enableLazyLoad: true
   });
-  const handleTreeUpdate = useCallback((updatedTree: FileSystemNode[]) => {
-    log.debug('File tree updated', { nodeCount: updatedTree.length });
-    setFileTree(updatedTree);
-  }, [setFileTree]);
-
   const handleNodeExpandLazy = useCallback((path: string) => {
     expandFolderLazy(path);
   }, [expandFolderLazy]);
-
-  useFileTreeGitSync({
-    workspacePath,
-    fileTree,
-    onTreeUpdate: handleTreeUpdate,
-    autoRefresh: true
-  });
 
   const prevWorkspacePathRef = useRef<string | undefined>(workspacePath);
   useEffect(() => {
@@ -145,7 +142,7 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
       }
     }
     prevWorkspacePathRef.current = workspacePath;
-  }, [workspacePath, clearSearch]);
+  }, [workspacePath, clearSearch, onViewModeChange]);
 
   // ===== File Operation Handlers =====
   
@@ -225,22 +222,19 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
   }, []);
 
   const handleExecuteRename = useCallback(async (oldPath: string, newName: string) => {
-    const isWindows = oldPath.includes('\\');
-    const separator = isWindows ? '\\' : '/';
-    const pathParts = oldPath.split(separator);
-    const oldName = pathParts[pathParts.length - 1];
-    
-    if (newName === oldName) {
+    const normalizedOld = normalizeLocalPathForRename(oldPath);
+    const oldName = basenamePath(normalizedOld);
+
+    if (newName.trim() === oldName) {
       setRenamingPath(null);
       return;
     }
-    
-    pathParts[pathParts.length - 1] = newName;
-    const newPath = pathParts.join(separator);
-    
+
+    const newPath = replaceBasename(normalizedOld, newName.trim());
+
     try {
-      await workspaceAPI.renameFile(oldPath, newPath);
-      log.info('File renamed', { oldPath, newPath });
+      await workspaceAPI.renameFile(normalizedOld, newPath);
+      log.info('File renamed', { oldPath: normalizedOld, newPath });
       setRenamingPath(null);
       loadFileTree(workspacePath || '', true);
     } catch (error) {
@@ -357,11 +351,7 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
   }, [workspacePath, expandFolder, expandedFolders]);
 
   const getParentDirectory = useCallback((filePath: string): string => {
-    const isWindows = filePath.includes('\\');
-    const separator = isWindows ? '\\' : '/';
-    const parts = filePath.split(separator);
-    parts.pop();
-    return parts.join(separator);
+    return dirnameAbsolutePath(filePath);
   }, []);
 
   const findNode = useCallback((nodes: FileSystemNode[], path: string): FileSystemNode | null => {
@@ -600,6 +590,46 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
     }
   }, [viewMode, onViewModeChange]);
 
+  const handleExplorerToolbarNewFile = useCallback(() => {
+    const parentPath = getNewItemParentPath(workspacePath, selectedFile, fileTree);
+    if (parentPath) {
+      handleNewFile({ parentPath });
+    }
+  }, [workspacePath, selectedFile, fileTree, handleNewFile]);
+
+  const handleExplorerToolbarNewFolder = useCallback(() => {
+    const parentPath = getNewItemParentPath(workspacePath, selectedFile, fileTree);
+    if (parentPath) {
+      handleNewFolder({ parentPath });
+    }
+  }, [workspacePath, selectedFile, fileTree, handleNewFolder]);
+
+  const handleExplorerToolbarRefresh = useCallback(() => {
+    loadFileTree(workspacePath || '', false);
+  }, [loadFileTree, workspacePath]);
+
+  useEffect(() => {
+    if (!onExplorerToolbarApi) return;
+    if (!hideExplorerToolbar || !workspacePath || viewMode !== 'tree') {
+      onExplorerToolbarApi(null);
+      return;
+    }
+    onExplorerToolbarApi({
+      onNewFile: handleExplorerToolbarNewFile,
+      onNewFolder: handleExplorerToolbarNewFolder,
+      onRefresh: handleExplorerToolbarRefresh,
+    });
+    return () => onExplorerToolbarApi(null);
+  }, [
+    onExplorerToolbarApi,
+    hideExplorerToolbar,
+    workspacePath,
+    viewMode,
+    handleExplorerToolbarNewFile,
+    handleExplorerToolbarNewFolder,
+    handleExplorerToolbarRefresh,
+  ]);
+
   return (
     <div 
       ref={panelRef}
@@ -770,6 +800,7 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
               onNewFile={handleNewFile}
               onNewFolder={handleNewFolder}
               onRefresh={() => loadFileTree(workspacePath || '', false)}
+              hideToolbar={hideExplorerToolbar}
             />
           )
         )}
@@ -815,6 +846,7 @@ const FilesPanel: React.FC<FilesPanelProps> = ({
         confirmText={inputDialog.type === 'newFile' ? t('dialog.newFile.confirm') : t('dialog.newFolder.confirm')}
         cancelText={inputDialog.type === 'newFile' ? t('dialog.newFile.cancel') : t('dialog.newFolder.cancel')}
         validator={(value) => {
+          // eslint-disable-next-line no-control-regex -- Windows filename rules explicitly forbid ASCII control characters.
           if (!/^[^<>:"/\\|?*\x00-\x1F]+$/.test(value)) {
             return t('validation.invalidFilename');
           }

@@ -7,6 +7,30 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Web UI font preferences (settings → basics). Keys match `FontPreference` in the frontend (camelCase).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontPreferenceSnapshot {
+    pub ui_size: UiFontSizeSnapshot,
+    pub flow_chat: FlowChatFontSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiFontSizeSnapshot {
+    pub level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_px: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowChatFontSnapshot {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_px: Option<u32>,
+}
+
 /// Global configuration structure - matches the frontend `GlobalConfig` exactly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -23,6 +47,9 @@ pub struct GlobalConfig {
     /// Theme system configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub themes: Option<ThemesConfig>,
+    /// Web UI font size preferences (`get_config` / `set_config` path `font`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<FontPreferenceSnapshot>,
     pub version: String,
     #[serde(with = "chrono::serde::ts_milliseconds")]
     pub last_modified: chrono::DateTime<chrono::Utc>,
@@ -77,6 +104,8 @@ pub struct AIExperienceConfig {
     pub enable_welcome_panel_ai_analysis: bool,
     /// Whether to enable visual mode.
     pub enable_visual_mode: bool,
+    /// Whether to show the pixel Agent companion in the collapsed chat input.
+    pub enable_agent_companion: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +128,9 @@ pub struct NotificationConfig {
     pub enabled: bool,
     pub position: String,
     pub duration: u32,
+    /// Whether to show a toast notification when a dialog turn completes while the window is not focused.
+    #[serde(default = "default_true")]
+    pub dialog_completion_notify: bool,
 }
 
 /// Theme configuration.
@@ -307,8 +339,10 @@ pub enum ModelCapability {
 /// Model category (for UI display and filtering).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ModelCategory {
     /// General chat model.
+    #[default]
     GeneralChat,
     /// Multimodal model (text + image understanding).
     Multimodal,
@@ -324,15 +358,11 @@ pub enum ModelCategory {
     SpeechRecognition,
 }
 
-impl Default for ModelCategory {
-    fn default() -> Self {
-        Self::GeneralChat
-    }
-}
 
 /// Default model configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct DefaultModelsConfig {
     /// Primary model ID (for complex tasks).
     pub primary: Option<String>,
@@ -348,18 +378,6 @@ pub struct DefaultModelsConfig {
     pub speech_recognition: Option<String>,
 }
 
-impl Default for DefaultModelsConfig {
-    fn default() -> Self {
-        Self {
-            primary: None,
-            fast: None,
-            search: None,
-            image_understanding: None,
-            image_generation: None,
-            speech_recognition: None,
-        }
-    }
-}
 
 /// AI configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,7 +390,7 @@ pub struct AIConfig {
     /// agent_type -> model_id
     pub agent_models: HashMap<String, String>,
 
-    /// Model mapping for functional agents (e.g. startchat-func-agent, git-func-agent).
+    /// Model mapping for functional agents (e.g. startchat-func-agent, session-title-func-agent).
     /// func_agent_name -> model_id
     #[serde(default)]
     pub func_agent_models: HashMap<String, String>,
@@ -410,10 +428,9 @@ pub struct AIConfig {
     #[serde(default)]
     pub debug_mode_config: DebugModeConfig,
 
-    /// Known tools (all non-MCP tools from the registry at last startup).
-    /// Used to detect added and removed tools.
+    /// Allow Computer use (desktop automation) when the desktop host is available (all session modes).
     #[serde(default)]
-    pub known_tools: Vec<String>,
+    pub computer_use_enabled: bool,
 }
 
 impl AIConfig {
@@ -464,17 +481,33 @@ pub struct ModeConfig {
     /// Mode ID (e.g. agentic, debug, requirement, ui-design).
     pub mode_id: String,
 
-    /// Available tools.
-    pub available_tools: Vec<String>,
+    /// Tools explicitly enabled by the user that are not part of the mode defaults.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_tools: Vec<String>,
+
+    /// Default tools explicitly disabled by the user.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_tools: Vec<String>,
 
     /// Whether this mode is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
 
-    /// Default tools for this mode (from the mode registry; not read from config).
-    /// Used only for frontend display and reset; persisted but overwritten on load.
-    #[serde(skip_deserializing)]
+    /// User-level skills disabled for this mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_user_skills: Vec<String>,
+}
+
+/// API view of a mode configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModeConfigView {
+    pub mode_id: String,
+    pub enabled_tools: Vec<String>,
     pub default_tools: Vec<String>,
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_user_skills: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -499,9 +532,22 @@ impl Default for ModeConfig {
     fn default() -> Self {
         Self {
             mode_id: String::new(),
-            available_tools: Vec::new(),
+            added_tools: Vec::new(),
+            removed_tools: Vec::new(),
             enabled: true,
+            disabled_user_skills: Vec::new(),
+        }
+    }
+}
+
+impl Default for ModeConfigView {
+    fn default() -> Self {
+        Self {
+            mode_id: String::new(),
+            enabled_tools: Vec::new(),
             default_tools: Vec::new(),
+            enabled: true,
+            disabled_user_skills: Vec::new(),
         }
     }
 }
@@ -816,6 +862,7 @@ pub struct AIModelConfig {
 /// Proxy configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ProxyConfig {
     /// Whether the proxy is enabled.
     pub enabled: bool,
@@ -903,6 +950,7 @@ impl Default for GlobalConfig {
             ai: AIConfig::default(),
             mcp_servers: None,
             themes: Some(ThemesConfig::default()),
+            font: None,
             version: "1.0.0".to_string(),
             last_modified: chrono::Utc::now(),
         }
@@ -932,6 +980,7 @@ impl Default for AppConfig {
                 enabled: true,
                 position: "topRight".to_string(),
                 duration: 5000,
+                dialog_completion_notify: true,
             },
             session_config: AppSessionConfig::default(),
             ai_experience: AIExperienceConfig::default(),
@@ -962,6 +1011,7 @@ impl Default for AIExperienceConfig {
             enable_session_title_generation: true,
             enable_welcome_panel_ai_analysis: false,
             enable_visual_mode: false,
+            enable_agent_companion: false,
         }
     }
 }
@@ -1162,21 +1212,11 @@ impl Default for AIConfig {
             tool_confirmation_timeout_secs: default_tool_confirmation_timeout(),
             skip_tool_confirmation: true,
             debug_mode_config: DebugModeConfig::default(),
-            known_tools: Vec::new(),
+            computer_use_enabled: false,
         }
     }
 }
 
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            url: String::new(),
-            username: None,
-            password: None,
-        }
-    }
-}
 
 impl Default for AIModelConfig {
     fn default() -> Self {
@@ -1235,6 +1275,7 @@ impl Default for NotificationConfig {
             enabled: true,
             position: "topRight".to_string(),
             duration: 5000,
+            dialog_completion_notify: true,
         }
     }
 }
@@ -1345,7 +1386,10 @@ impl AIModelConfig {
         match self.category {
             ModelCategory::GeneralChat => vec![ModelCapability::TextChat],
             ModelCategory::Multimodal => {
-                vec![ModelCapability::TextChat, ModelCapability::ImageUnderstanding]
+                vec![
+                    ModelCapability::TextChat,
+                    ModelCapability::ImageUnderstanding,
+                ]
             }
             ModelCategory::ImageGeneration => vec![ModelCapability::ImageGeneration],
             ModelCategory::Embedding => vec![ModelCapability::Embedding],

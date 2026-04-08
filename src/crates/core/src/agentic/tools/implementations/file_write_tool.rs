@@ -1,7 +1,7 @@
-use super::util::resolve_path_with_workspace;
 use crate::agentic::tools::framework::{
     Tool, ToolRenderOptions, ToolResult, ToolUseContext, ValidationResult,
 };
+use crate::agentic::tools::workspace_paths::resolve_workspace_tool_path;
 use crate::util::errors::{BitFunError, BitFunResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -9,6 +9,12 @@ use std::path::Path;
 use tokio::fs;
 
 pub struct FileWriteTool;
+
+impl Default for FileWriteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FileWriteTool {
     pub fn new() -> Self {
@@ -89,9 +95,16 @@ Usage:
             };
         }
 
-        if let Err(err) =
-            resolve_path_with_workspace(file_path, context.and_then(|ctx| ctx.workspace_root()))
-        {
+        let root_owned = context.and_then(|ctx| {
+            ctx.workspace
+                .as_ref()
+                .map(|w| w.root_path_string())
+        });
+        if let Err(err) = resolve_workspace_tool_path(
+            file_path,
+            root_owned.as_deref(),
+            context.map(|c| c.is_remote()).unwrap_or(false),
+        ) {
             return ValidationResult {
                 result: false,
                 message: Some(err.to_string()),
@@ -130,7 +143,7 @@ Usage:
             .and_then(|v| v.as_str())
             .ok_or_else(|| BitFunError::tool("file_path is required".to_string()))?;
 
-        let resolved_path = resolve_path_with_workspace(file_path, context.workspace_root())?;
+        let resolved_path = context.resolve_workspace_tool_path(file_path)?;
 
         let content = input
             .get("content")
@@ -160,6 +173,7 @@ Usage:
                 "success": true
             }),
             result_for_assistant: Some(format!("Successfully wrote to {}", resolved_path)),
+            image_attachments: None,
         };
 
         Ok(vec![result])

@@ -11,18 +11,22 @@ import type {
 import './EditorArea.scss';
 export interface EditorAreaProps {
   workspacePath?: string;
+  isSceneActive?: boolean;
   onOpenMissionControl?: () => void;
   onInteraction?: (itemId: string, userInput: string) => Promise<void>;
   onTabCloseWithDirtyCheck?: (tabId: string, groupId: EditorGroupId) => Promise<boolean>;
   onTabCloseAllWithDirtyCheck?: (groupId: EditorGroupId) => Promise<boolean>;
+  disablePopOut?: boolean;
 }
 
 export const EditorArea: React.FC<EditorAreaProps> = ({
   workspacePath,
+  isSceneActive = true,
   onOpenMissionControl,
   onInteraction,
   onTabCloseWithDirtyCheck,
   onTabCloseAllWithDirtyCheck,
+  disablePopOut = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const topRowRef = useRef<HTMLDivElement>(null);
@@ -123,6 +127,7 @@ export const EditorArea: React.FC<EditorAreaProps> = ({
       groupId={groupId}
       group={group}
       isActive={activeGroupId === groupId}
+      isSceneActive={isSceneActive}
       draggingTabId={draggingTabId}
       draggingFromGroupId={draggingFromGroupId}
       splitMode={layout.splitMode}
@@ -142,6 +147,7 @@ export const EditorArea: React.FC<EditorAreaProps> = ({
       onOpenMissionControl={groupId === 'primary' ? onOpenMissionControl : undefined}
       onCloseAllTabs={handleCloseAllTabs(groupId)}
       onInteraction={onInteraction}
+      disablePopOut={disablePopOut}
     />
   );
 

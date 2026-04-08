@@ -13,7 +13,11 @@ import { AgentService } from '../../shared/services/agent-service';
 import { stateMachineManager } from '../state-machine';
 import { EventBatcher } from './EventBatcher';
 import { createLogger } from '@/shared/utils/logger';
-import { compareSessionsForDisplay } from '../utils/sessionOrdering';
+import type { WorkspaceInfo } from '@/shared/types';
+import {
+  compareSessionsForDisplay,
+  sessionBelongsToWorkspaceNavRow,
+} from '../utils/sessionOrdering';
 
 import type { FlowChatContext, SessionConfig, DialogTurn } from './flow-chat-manager/types';
 import type { FlowToolItem, FlowTextItem, ModelRound } from '../types/flow-chat';
@@ -23,6 +27,7 @@ import {
   createChatSession as createChatSessionModule,
   switchChatSession as switchChatSessionModule,
   deleteChatSession as deleteChatSessionModule,
+  renameChatSessionTitle as renameChatSessionTitleModule,
   cleanupSaveState,
   cleanupSessionBuffers,
   sendMessage as sendMessageModule,
@@ -42,6 +47,7 @@ export class FlowChatManager {
   private context: FlowChatContext;
   private agentService: AgentService;
   private eventListenerInitialized = false;
+  private eventListenerCleanup: (() => void) | null = null;
 
   private constructor() {
     this.context = {
@@ -50,6 +56,7 @@ export class FlowChatManager {
       eventBatcher: new EventBatcher({
         onFlush: (events) => this.processBatchedEvents(events)
       }),
+      pendingTurnCompletions: new Map(),
       contentBuffers: new Map(),
       activeTextItems: new Map(),
       saveDebouncers: new Map(),
@@ -73,20 +80,33 @@ export class FlowChatManager {
   async initialize(
     workspacePath: string,
     preferredMode?: string,
-    remoteConnectionId?: string
+    remoteConnectionId?: string,
+    remoteSshHost?: string
   ): Promise<boolean> {
     try {
       await this.initializeEventListeners();
-      await this.context.flowChatStore.initializeFromDisk(workspacePath, remoteConnectionId);
+      await this.context.flowChatStore.initializeFromDisk(
+        workspacePath,
+        remoteConnectionId,
+        remoteSshHost
+      );
 
-      const wsConn = remoteConnectionId?.trim() ?? '';
-      const sessionMatchesWorkspace = (session: { workspacePath?: string; remoteConnectionId?: string }) => {
-        if ((session.workspacePath || workspacePath) !== workspacePath) return false;
-        const sc = session.remoteConnectionId?.trim() ?? '';
-        if (wsConn.length > 0 || sc.length > 0) {
-          return sc === wsConn;
-        }
-        return true;
+      const sessionMatchesWorkspace = (session: {
+        workspacePath?: string;
+        remoteConnectionId?: string;
+        remoteSshHost?: string;
+      }) => {
+        const sp = session.workspacePath || workspacePath;
+        return sessionBelongsToWorkspaceNavRow(
+          {
+            workspacePath: sp,
+            remoteConnectionId: session.remoteConnectionId,
+            remoteSshHost: session.remoteSshHost,
+          },
+          workspacePath,
+          remoteConnectionId,
+          remoteSshHost
+        );
       };
 
       const state = this.context.flowChatStore.getState();
@@ -109,18 +129,13 @@ export class FlowChatManager {
           return hasHistoricalSessions;
         }
 
-        // If no session matches preferred mode, keep activeSessionId unset for caller to create one.
-        if (preferredMode && latestSession.mode !== preferredMode) {
-          this.context.currentWorkspacePath = workspacePath;
-          return hasHistoricalSessions;
-        }
-
         if (latestSession.isHistorical) {
           await this.context.flowChatStore.loadSessionHistory(
             latestSession.sessionId,
             workspacePath,
             undefined,
-            latestSession.remoteConnectionId
+            latestSession.remoteConnectionId,
+            latestSession.remoteSshHost
           );
         }
 
@@ -141,12 +156,20 @@ export class FlowChatManager {
       return;
     }
 
-    await initializeEventListeners(
+    this.eventListenerCleanup = await initializeEventListeners(
       this.context,
       (sessionId, turnId, result) => this.handleTodoWriteResult(sessionId, turnId, result)
     );
     
     this.eventListenerInitialized = true;
+  }
+
+  public cleanupEventListeners(): void {
+    if (this.eventListenerCleanup) {
+      this.eventListenerCleanup();
+      this.eventListenerCleanup = null;
+      this.eventListenerInitialized = false;
+    }
   }
 
   private processBatchedEvents(events: Array<{ key: string; payload: any }>): void {
@@ -169,22 +192,23 @@ export class FlowChatManager {
     return deleteChatSessionModule(this.context, sessionId);
   }
 
+  async renameChatSessionTitle(sessionId: string, title: string): Promise<string> {
+    return renameChatSessionTitleModule(this.context, sessionId, title);
+  }
+
   async resetWorkspaceSessions(
-    workspacePath: string,
+    workspace: Pick<WorkspaceInfo, 'id' | 'rootPath' | 'connectionId' | 'sshHost'>,
     options?: {
       reinitialize?: boolean;
       preferredMode?: string;
       /** After reinit, ask core to run assistant bootstrap if BOOTSTRAP.md is present (e.g. workspace reset). */
       ensureAssistantBootstrap?: boolean;
-      /** When set, only removes/reinits sessions for this SSH connection (same path, different hosts). */
-      remoteConnectionId?: string | null;
     }
   ): Promise<void> {
-    const remoteConnectionId = options?.remoteConnectionId;
-    const removedSessionIds = this.context.flowChatStore.removeSessionsByWorkspace(
-      workspacePath,
-      remoteConnectionId
-    );
+    const workspacePath = workspace.rootPath;
+    const remoteConnectionId = workspace.connectionId ?? null;
+    const remoteSshHost = workspace.sshHost ?? null;
+    const removedSessionIds = this.context.flowChatStore.removeSessionsForWorkspace(workspace);
 
     removedSessionIds.forEach(sessionId => {
       stateMachineManager.delete(sessionId);
@@ -200,29 +224,33 @@ export class FlowChatManager {
     const hasHistoricalSessions = await this.initialize(
       workspacePath,
       options.preferredMode,
-      remoteConnectionId ?? undefined
+      remoteConnectionId ?? undefined,
+      remoteSshHost ?? undefined
     );
     const state = this.context.flowChatStore.getState();
     const activeSession = state.activeSessionId
       ? state.sessions.get(state.activeSessionId) ?? null
       : null;
-    const wsConn = remoteConnectionId?.trim() ?? '';
     const hasActiveWorkspaceSession =
       !!activeSession &&
-      (activeSession.workspacePath || workspacePath) === workspacePath &&
-      (() => {
-        const sc = activeSession.remoteConnectionId?.trim() ?? '';
-        if (wsConn.length > 0 || sc.length > 0) {
-          return sc === wsConn;
-        }
-        return true;
-      })();
+      sessionBelongsToWorkspaceNavRow(
+        {
+          workspacePath: activeSession.workspacePath || workspacePath,
+          remoteConnectionId: activeSession.remoteConnectionId,
+          remoteSshHost: activeSession.remoteSshHost,
+        },
+        workspacePath,
+        remoteConnectionId,
+        remoteSshHost
+      );
 
     if (!hasHistoricalSessions || !hasActiveWorkspaceSession) {
       await this.createChatSession(
         {
           workspacePath,
+          workspaceId: workspace.id,
           ...(remoteConnectionId ? { remoteConnectionId } : {}),
+          ...(remoteSshHost ? { remoteSshHost } : {}),
         },
         options.preferredMode
       );
@@ -317,7 +345,11 @@ export class FlowChatManager {
     const session = this.context.flowChatStore.getState().sessions.get(parentSessionId);
     const turn = session?.dialogTurns.find(t => t.id === dialogTurnId);
     if (!turn) return;
-    if (turn.status !== 'processing' && turn.status !== 'image_analyzing') {
+    if (
+      turn.status !== 'processing' &&
+      turn.status !== 'finishing' &&
+      turn.status !== 'image_analyzing'
+    ) {
       // Only inject into an actively streaming turn; otherwise we'd create dangling streaming items.
       return;
     }

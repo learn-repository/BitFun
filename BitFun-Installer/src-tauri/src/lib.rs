@@ -1,3 +1,4 @@
+mod connection_test;
 mod installer;
 
 use installer::commands;
@@ -9,11 +10,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_launch_context,
             commands::get_default_install_path,
+            commands::get_initial_install_path,
             commands::get_disk_space,
             commands::validate_install_path,
             commands::start_installation,
             commands::set_model_config,
             commands::test_model_config_connection,
+            commands::list_model_config_models,
             commands::set_theme_preference,
             commands::uninstall,
             commands::launch_application,

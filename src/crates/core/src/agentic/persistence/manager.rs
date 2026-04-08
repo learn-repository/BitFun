@@ -1,19 +1,21 @@
 //! Persistence Manager
 //!
-//! Responsible for project-scoped session persistence and legacy
-//! message/compression persistence used by in-memory managers.
+//! Responsible for project-scoped session persistence.
 
 use crate::agentic::core::{
     strip_prompt_markup, CompressionState, Message, MessageContent, Session, SessionConfig,
     SessionState, SessionSummary,
 };
 use crate::infrastructure::PathManager;
+use crate::service::remote_ssh::workspace_state::{
+    resolve_workspace_session_identity, LOCAL_WORKSPACE_SSH_HOST,
+};
 use crate::service::session::{
     DialogTurnData, SessionMetadata, SessionStatus, SessionTranscriptExport,
     SessionTranscriptExportOptions, SessionTranscriptIndexEntry, ToolItemData, TranscriptLineRange,
 };
 use crate::util::errors::{BitFunError, BitFunResult};
-use log::{debug, info, warn};
+use log::{info, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -22,7 +24,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
 const SESSION_SCHEMA_VERSION: u32 = 2;
@@ -520,8 +521,15 @@ impl PersistenceManager {
                     }
                 }
             }
-            MessageContent::ToolResult { result, .. } => {
+            MessageContent::ToolResult {
+                result,
+                image_attachments,
+                ..
+            } => {
                 Self::redact_data_url_in_json(result);
+                if image_attachments.is_some() {
+                    *image_attachments = None;
+                }
             }
             _ => {}
         }
@@ -556,7 +564,7 @@ impl PersistenceManager {
         }
     }
 
-    fn build_session_metadata(
+    async fn build_session_metadata(
         &self,
         workspace_path: &Path,
         session: &Session,
@@ -573,6 +581,36 @@ impl PersistenceManager {
             .or_else(|| existing.map(|value| value.model_name.clone()))
             .unwrap_or_else(|| "default".to_string());
 
+        let resolved_identity =
+            if let Some(workspace_root) = session.config.workspace_path.as_deref() {
+                resolve_workspace_session_identity(
+                    workspace_root,
+                    session.config.remote_connection_id.as_deref(),
+                    session.config.remote_ssh_host.as_deref(),
+                )
+                .await
+            } else {
+                None
+            };
+
+        let workspace_root = resolved_identity
+            .as_ref()
+            .map(|identity| identity.workspace_path.clone())
+            .or_else(|| session.config.workspace_path.clone())
+            .or_else(|| existing.and_then(|value| value.workspace_path.clone()))
+            .unwrap_or_else(|| workspace_path.to_string_lossy().to_string());
+        let workspace_hostname = resolved_identity
+            .as_ref()
+            .map(|identity| identity.hostname.clone())
+            .or_else(|| existing.and_then(|value| value.workspace_hostname.clone()))
+            .or_else(|| {
+                if session.config.remote_connection_id.is_some() {
+                    session.config.remote_ssh_host.clone()
+                } else {
+                    Some(LOCAL_WORKSPACE_SSH_HOST.to_string())
+                }
+            });
+
         SessionMetadata {
             session_id: session.session_id.clone(),
             session_name: session.session_name.clone(),
@@ -581,6 +619,7 @@ impl PersistenceManager {
                 .created_by
                 .clone()
                 .or_else(|| existing.and_then(|value| value.created_by.clone())),
+            session_kind: session.kind,
             model_name,
             created_at,
             last_active_at,
@@ -600,7 +639,8 @@ impl PersistenceManager {
             tags: existing.map(|value| value.tags.clone()).unwrap_or_default(),
             custom_metadata: existing.and_then(|value| value.custom_metadata.clone()),
             todos: existing.and_then(|value| value.todos.clone()),
-            workspace_path: Some(workspace_path.to_string_lossy().to_string()),
+            workspace_path: Some(workspace_root),
+            workspace_hostname,
         }
     }
 
@@ -1121,7 +1161,7 @@ impl PersistenceManager {
         }
     }
 
-    async fn rebuild_index_locked(
+    async fn scan_session_metadata_dirs(
         &self,
         workspace_path: &Path,
     ) -> BitFunResult<Vec<SessionMetadata>> {
@@ -1160,15 +1200,28 @@ impl PersistenceManager {
 
         metadata_list.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
 
+        Ok(metadata_list)
+    }
+
+    async fn rebuild_index_locked(
+        &self,
+        workspace_path: &Path,
+    ) -> BitFunResult<Vec<SessionMetadata>> {
+        let metadata_list = self.scan_session_metadata_dirs(workspace_path).await?;
+        let visible_sessions = metadata_list
+            .into_iter()
+            .filter(|metadata| !metadata.should_hide_from_user_lists())
+            .collect::<Vec<_>>();
+
         let index = StoredSessionIndex {
             schema_version: SESSION_SCHEMA_VERSION,
             updated_at: Self::system_time_to_unix_ms(SystemTime::now()),
-            sessions: metadata_list.clone(),
+            sessions: visible_sessions.clone(),
         };
         self.write_json_atomic(&self.index_path(workspace_path), &index)
             .await?;
 
-        Ok(metadata_list)
+        Ok(visible_sessions)
     }
 
     async fn upsert_index_entry_locked(
@@ -1279,6 +1332,17 @@ impl PersistenceManager {
         self.rebuild_index_locked(workspace_path).await
     }
 
+    pub async fn list_session_metadata_including_internal(
+        &self,
+        workspace_path: &Path,
+    ) -> BitFunResult<Vec<SessionMetadata>> {
+        if !workspace_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        self.scan_session_metadata_dirs(workspace_path).await
+    }
+
     pub async fn save_session_metadata(
         &self,
         workspace_path: &Path,
@@ -1297,7 +1361,12 @@ impl PersistenceManager {
             &file,
         )
         .await?;
-        self.upsert_index_entry(workspace_path, metadata).await
+        if !metadata.should_hide_from_user_lists() {
+            self.upsert_index_entry(workspace_path, metadata).await
+        } else {
+            self.remove_index_entry(workspace_path, &metadata.session_id)
+                .await
+        }
     }
 
     pub async fn load_session_metadata(
@@ -1474,8 +1543,9 @@ impl PersistenceManager {
         let existing_metadata = self
             .load_session_metadata(workspace_path, &session.session_id)
             .await?;
-        let metadata =
-            self.build_session_metadata(workspace_path, session, existing_metadata.as_ref());
+        let metadata = self
+            .build_session_metadata(workspace_path, session, existing_metadata.as_ref())
+            .await;
         self.save_session_metadata(workspace_path, &metadata)
             .await?;
 
@@ -1512,7 +1582,13 @@ impl PersistenceManager {
             .map(|value| value.config.clone())
             .unwrap_or_default();
         if config.workspace_path.is_none() {
-            config.workspace_path = Some(workspace_path.to_string_lossy().to_string());
+            config.workspace_path = metadata.workspace_path.clone();
+        }
+        if config.remote_ssh_host.is_none() {
+            config.remote_ssh_host = metadata
+                .workspace_hostname
+                .clone()
+                .filter(|host| host != LOCAL_WORKSPACE_SSH_HOST && host != "_unresolved");
         }
         if config.model_id.is_none() && !metadata.model_name.is_empty() {
             config.model_id = Some(metadata.model_name.clone());
@@ -1534,6 +1610,7 @@ impl PersistenceManager {
             session_name: metadata.session_name.clone(),
             agent_type: metadata.agent_type.clone(),
             created_by: metadata.created_by.clone(),
+            kind: metadata.session_kind,
             snapshot_session_id: stored_state
                 .and_then(|value| value.snapshot_session_id)
                 .or(metadata.snapshot_session_id.clone()),
@@ -1560,7 +1637,7 @@ impl PersistenceManager {
             .unwrap_or(StoredSessionStateFile {
                 schema_version: SESSION_SCHEMA_VERSION,
                 config: SessionConfig {
-                    workspace_path: Some(workspace_path.to_string_lossy().to_string()),
+                    workspace_path: None,
                     ..Default::default()
                 },
                 snapshot_session_id: None,
@@ -1608,6 +1685,7 @@ impl PersistenceManager {
                 session_name: metadata.session_name,
                 agent_type: metadata.agent_type,
                 created_by: metadata.created_by,
+                kind: metadata.session_kind,
                 turn_count: metadata.turn_count,
                 created_at: Self::unix_ms_to_system_time(metadata.created_at),
                 last_activity_at: Self::unix_ms_to_system_time(metadata.last_active_at),
@@ -1662,7 +1740,12 @@ impl PersistenceManager {
         metadata.last_active_at = turn
             .end_time
             .unwrap_or_else(|| Self::system_time_to_unix_ms(SystemTime::now()));
-        metadata.workspace_path = Some(workspace_path.to_string_lossy().to_string());
+        metadata.workspace_path = metadata.workspace_path.clone().or_else(|| {
+            turns
+                .first()
+                .and(None::<String>)
+                .or_else(|| Some(workspace_path.to_string_lossy().to_string()))
+        });
         self.save_session_metadata(workspace_path, &metadata).await
     }
 
@@ -2035,233 +2118,12 @@ impl PersistenceManager {
         }
         Ok(())
     }
-
-    // ============ Legacy message persistence ============
-
-    fn legacy_sessions_dir(&self) -> PathBuf {
-        self.path_manager.user_data_dir().join("legacy-sessions")
-    }
-
-    fn legacy_session_dir(&self, session_id: &str) -> PathBuf {
-        self.legacy_sessions_dir().join(session_id)
-    }
-
-    async fn ensure_legacy_session_dir(&self, session_id: &str) -> BitFunResult<PathBuf> {
-        let dir = self.legacy_session_dir(session_id);
-        fs::create_dir_all(&dir).await.map_err(|e| {
-            BitFunError::io(format!("Failed to create legacy session directory: {}", e))
-        })?;
-        Ok(dir)
-    }
-
-    /// Append message (JSONL format)
-    pub async fn append_message(&self, session_id: &str, message: &Message) -> BitFunResult<()> {
-        let dir = self.ensure_legacy_session_dir(session_id).await?;
-        let messages_path = dir.join("messages.jsonl");
-
-        let sanitized_message = Self::sanitize_message_for_persistence(message);
-        let json = serde_json::to_string(&sanitized_message).map_err(|e| {
-            BitFunError::serialization(format!("Failed to serialize message: {}", e))
-        })?;
-
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&messages_path)
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to open message file: {}", e)))?;
-
-        file.write_all(json.as_bytes())
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to write message: {}", e)))?;
-        file.write_all(b"\n")
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to write newline: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Load all messages
-    pub async fn load_messages(&self, session_id: &str) -> BitFunResult<Vec<Message>> {
-        let messages_path = self.legacy_session_dir(session_id).join("messages.jsonl");
-        if !messages_path.exists() {
-            return Ok(vec![]);
-        }
-
-        let file = fs::File::open(&messages_path)
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to open message file: {}", e)))?;
-
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
-        let mut messages = Vec::new();
-
-        while let Some(line) = lines
-            .next_line()
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to read message line: {}", e)))?
-        {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            match serde_json::from_str::<Message>(&line) {
-                Ok(message) => messages.push(message),
-                Err(e) => warn!("Failed to deserialize message: {}", e),
-            }
-        }
-
-        Ok(messages)
-    }
-
-    /// Clear messages
-    pub async fn clear_messages(&self, session_id: &str) -> BitFunResult<()> {
-        let messages_path = self.legacy_session_dir(session_id).join("messages.jsonl");
-        if messages_path.exists() {
-            fs::remove_file(&messages_path)
-                .await
-                .map_err(|e| BitFunError::io(format!("Failed to delete message file: {}", e)))?;
-        }
-        Ok(())
-    }
-
-    /// Delete messages
-    pub async fn delete_messages(&self, session_id: &str) -> BitFunResult<()> {
-        self.clear_messages(session_id).await
-    }
-
-    // ============ Legacy compressed history persistence ============
-
-    pub async fn append_compressed_message(
-        &self,
-        session_id: &str,
-        message: &Message,
-    ) -> BitFunResult<()> {
-        let dir = self.ensure_legacy_session_dir(session_id).await?;
-        let compressed_path = dir.join("compressed_messages.jsonl");
-
-        let sanitized_message = Self::sanitize_message_for_persistence(message);
-        let json = serde_json::to_string(&sanitized_message).map_err(|e| {
-            BitFunError::serialization(format!("Failed to serialize compressed message: {}", e))
-        })?;
-
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&compressed_path)
-            .await
-            .map_err(|e| {
-                BitFunError::io(format!("Failed to open compressed message file: {}", e))
-            })?;
-
-        file.write_all(json.as_bytes())
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to write compressed message: {}", e)))?;
-        file.write_all(b"\n")
-            .await
-            .map_err(|e| BitFunError::io(format!("Failed to write newline: {}", e)))?;
-
-        Ok(())
-    }
-
-    pub async fn save_compressed_messages(
-        &self,
-        session_id: &str,
-        messages: &[Message],
-    ) -> BitFunResult<()> {
-        let dir = self.ensure_legacy_session_dir(session_id).await?;
-        let compressed_path = dir.join("compressed_messages.jsonl");
-
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&compressed_path)
-            .await
-            .map_err(|e| {
-                BitFunError::io(format!("Failed to open compressed message file: {}", e))
-            })?;
-
-        let sanitized_messages = Self::sanitize_messages_for_persistence(messages);
-        for message in &sanitized_messages {
-            let json = serde_json::to_string(message).map_err(|e| {
-                BitFunError::serialization(format!("Failed to serialize compressed message: {}", e))
-            })?;
-
-            file.write_all(json.as_bytes()).await.map_err(|e| {
-                BitFunError::io(format!("Failed to write compressed message: {}", e))
-            })?;
-            file.write_all(b"\n")
-                .await
-                .map_err(|e| BitFunError::io(format!("Failed to write newline: {}", e)))?;
-        }
-
-        debug!(
-            "Legacy compressed history persisted: session_id={}, message_count={}",
-            session_id,
-            messages.len()
-        );
-        Ok(())
-    }
-
-    pub async fn load_compressed_messages(
-        &self,
-        session_id: &str,
-    ) -> BitFunResult<Option<Vec<Message>>> {
-        let compressed_path = self
-            .legacy_session_dir(session_id)
-            .join("compressed_messages.jsonl");
-
-        if !compressed_path.exists() {
-            return Ok(None);
-        }
-
-        let file = fs::File::open(&compressed_path).await.map_err(|e| {
-            BitFunError::io(format!("Failed to open compressed message file: {}", e))
-        })?;
-
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
-        let mut messages = Vec::new();
-
-        while let Some(line) = lines.next_line().await.map_err(|e| {
-            BitFunError::io(format!("Failed to read compressed message line: {}", e))
-        })? {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            match serde_json::from_str::<Message>(&line) {
-                Ok(message) => messages.push(message),
-                Err(e) => warn!("Failed to deserialize compressed message: {}", e),
-            }
-        }
-
-        if messages.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(messages))
-    }
-
-    pub async fn delete_compressed_messages(&self, session_id: &str) -> BitFunResult<()> {
-        let compressed_path = self
-            .legacy_session_dir(session_id)
-            .join("compressed_messages.jsonl");
-
-        if compressed_path.exists() {
-            fs::remove_file(&compressed_path).await.map_err(|e| {
-                BitFunError::io(format!("Failed to delete compressed message file: {}", e))
-            })?;
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::PersistenceManager;
+    use crate::agentic::core::SessionKind;
     use crate::infrastructure::PathManager;
     use crate::service::session::{
         DialogTurnData, SessionMetadata, SessionTranscriptExportOptions, UserMessageData,
@@ -2380,5 +2242,71 @@ mod tests {
             .expect("transcript file should be readable");
         assert!(transcript.contains("## Turn 0"));
         assert!(transcript.contains("hello transcript"));
+    }
+
+    #[tokio::test]
+    async fn subagent_session_kind_is_hidden_from_visible_session_index() {
+        let workspace = TestWorkspace::new();
+        let manager = PersistenceManager::new(Arc::new(PathManager::new().expect("path manager")))
+            .expect("persistence manager");
+
+        let mut metadata = SessionMetadata::new(
+            Uuid::new_v4().to_string(),
+            "Subagent: repo sweep".to_string(),
+            "Explore".to_string(),
+            "model".to_string(),
+        );
+        metadata.session_kind = SessionKind::Subagent;
+
+        manager
+            .save_session_metadata(workspace.path(), &metadata)
+            .await
+            .expect("metadata should save");
+
+        let visible = manager
+            .list_session_metadata(workspace.path())
+            .await
+            .expect("visible metadata should load");
+        let raw = manager
+            .list_session_metadata_including_internal(workspace.path())
+            .await
+            .expect("raw metadata should load");
+
+        assert!(visible.is_empty());
+        assert_eq!(raw.len(), 1);
+        assert!(raw[0].is_subagent());
+    }
+
+    #[tokio::test]
+    async fn legacy_leaked_subagent_is_hidden_from_visible_session_index() {
+        let workspace = TestWorkspace::new();
+        let manager = PersistenceManager::new(Arc::new(PathManager::new().expect("path manager")))
+            .expect("persistence manager");
+
+        let mut metadata = SessionMetadata::new(
+            Uuid::new_v4().to_string(),
+            "Subagent: stale task".to_string(),
+            "Explore".to_string(),
+            "model".to_string(),
+        );
+        metadata.created_by = Some("session-parent".to_string());
+
+        manager
+            .save_session_metadata(workspace.path(), &metadata)
+            .await
+            .expect("metadata should save");
+
+        let visible = manager
+            .list_session_metadata(workspace.path())
+            .await
+            .expect("visible metadata should load");
+        let raw = manager
+            .list_session_metadata_including_internal(workspace.path())
+            .await
+            .expect("raw metadata should load");
+
+        assert!(visible.is_empty());
+        assert_eq!(raw.len(), 1);
+        assert!(raw[0].is_legacy_leaked_subagent_candidate());
     }
 }

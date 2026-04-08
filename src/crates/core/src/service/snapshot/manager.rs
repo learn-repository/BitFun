@@ -348,12 +348,25 @@ impl Tool for WrappedTool {
         self.original_tool.input_schema()
     }
 
+    async fn input_schema_for_model(&self) -> Value {
+        self.original_tool.input_schema_for_model().await
+    }
+
+    async fn input_schema_for_model_with_context(
+        &self,
+        context: Option<&crate::agentic::tools::framework::ToolUseContext>,
+    ) -> Value {
+        self.original_tool
+            .input_schema_for_model_with_context(context)
+            .await
+    }
+
     fn input_json_schema(&self) -> Option<Value> {
         self.original_tool.input_json_schema()
     }
 
     fn user_facing_name(&self) -> String {
-        format!("{}", self.original_tool.user_facing_name())
+        self.original_tool.user_facing_name().to_string()
     }
 
     async fn is_enabled(&self) -> bool {
@@ -400,11 +413,11 @@ impl Tool for WrappedTool {
         options: &crate::agentic::tools::framework::ToolRenderOptions,
     ) -> String {
         let original_message = self.original_tool.render_tool_use_message(input, options);
-        format!("{}", original_message)
+        original_message.to_string()
     }
 
     fn render_tool_use_rejected_message(&self) -> String {
-        format!("{}", self.original_tool.render_tool_use_rejected_message())
+        self.original_tool.render_tool_use_rejected_message().to_string()
     }
 
     fn render_tool_result_message(&self, output: &Value) -> String {
@@ -509,6 +522,8 @@ impl WrappedTool {
             debug!("Creating new file: file_path={}", file_path.display());
         }
 
+        let file_existed_before = file_path.exists();
+        let operation_type = self.get_operation_type_internal(file_existed_before);
         let turn_index = self.extract_turn_index(context);
 
         let snapshot_service = snapshot_manager.get_snapshot_service();
@@ -520,7 +535,7 @@ impl WrappedTool {
                 self.name(),
                 input.clone(),
                 &file_path,
-                self.get_operation_type_internal(),
+                operation_type,
                 context.tool_call_id.clone(),
             )
             .await
@@ -577,8 +592,15 @@ impl WrappedTool {
     }
 
     /// Returns the operation type.
-    fn get_operation_type_internal(&self) -> OperationType {
+    fn get_operation_type_internal(&self, file_existed_before: bool) -> OperationType {
         match self.name() {
+            "Write" | "write_file" => {
+                if file_existed_before {
+                    OperationType::Modify
+                } else {
+                    OperationType::Create
+                }
+            }
             "create_file" => OperationType::Create,
             "delete_file" | "Delete" => OperationType::Delete,
             "rename_file" | "move_file" => OperationType::Rename,

@@ -1,4 +1,5 @@
 //! Tool framework - Tool interface definition and execution context
+use crate::util::types::ToolImageAttachment;
 use super::image_context::ImageContextProviderRef;
 use super::pipeline::SubagentParentInfo;
 use crate::agentic::workspace::WorkspaceServices;
@@ -27,6 +28,8 @@ pub struct ToolUseContext {
     pub response_state: Option<ResponseState>,
     /// Image context provider (dependency injection)
     pub image_context_provider: Option<ImageContextProviderRef>,
+    /// Desktop automation (Computer use); only set in BitFun desktop.
+    pub computer_use_host: Option<crate::agentic::tools::computer_use_host::ComputerUseHostRef>,
     pub subagent_parent_info: Option<SubagentParentInfo>,
     // Cancel tool execution more timely, especially for tools like TaskTool that need to run for a long time
     pub cancellation_token: Option<CancellationToken>,
@@ -53,6 +56,40 @@ impl ToolUseContext {
 
     pub fn ws_shell(&self) -> Option<&dyn crate::agentic::workspace::WorkspaceShell> {
         self.workspace_services.as_ref().map(|s| s.shell.as_ref())
+    }
+
+    /// Whether the session primary model accepts image inputs (from tool-definition / pipeline context).
+    /// Defaults to **true** when unset (e.g. API listings without model metadata).
+    pub fn primary_model_supports_image_understanding(&self) -> bool {
+        self.options
+            .as_ref()
+            .and_then(|o| o.custom_data.as_ref())
+            .and_then(|m| m.get("primary_model_supports_image_understanding"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// Resolve a user or model-supplied path for file/shell tools. Uses POSIX semantics when the
+    /// workspace is remote SSH so Windows-hosted clients still resolve `/home/...` correctly.
+    pub fn resolve_workspace_tool_path(&self, path: &str) -> BitFunResult<String> {
+        let workspace_root_owned = self
+            .workspace
+            .as_ref()
+            .map(|w| w.root_path_string());
+        crate::agentic::tools::workspace_paths::resolve_workspace_tool_path(
+            path,
+            workspace_root_owned.as_deref(),
+            self.is_remote(),
+        )
+    }
+
+    /// Whether `path` is absolute for the active workspace (POSIX `/` for remote SSH).
+    pub fn workspace_path_is_effectively_absolute(&self, path: &str) -> bool {
+        if self.is_remote() {
+            crate::agentic::tools::workspace_paths::posix_style_path_is_absolute(path)
+        } else {
+            Path::new(path).is_absolute()
+        }
     }
 }
 
@@ -108,7 +145,10 @@ pub enum ToolResult {
     #[serde(rename = "result")]
     Result {
         data: Value,
+        #[serde(default)]
         result_for_assistant: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image_attachments: Option<Vec<ToolImageAttachment>>,
     },
     #[serde(rename = "progress")]
     Progress {
@@ -133,6 +173,28 @@ impl ToolResult {
             ToolResult::StreamChunk { data, .. } => data.clone(),
         }
     }
+
+    /// Standard tool success without images.
+    pub fn ok(data: Value, result_for_assistant: Option<String>) -> Self {
+        Self::Result {
+            data,
+            result_for_assistant,
+            image_attachments: None,
+        }
+    }
+
+    /// Tool success with optional images for multimodal tool results (Anthropic).
+    pub fn ok_with_images(
+        data: Value,
+        result_for_assistant: Option<String>,
+        image_attachments: Vec<ToolImageAttachment>,
+    ) -> Self {
+        Self::Result {
+            data,
+            result_for_assistant,
+            image_attachments: Some(image_attachments),
+        }
+    }
 }
 
 /// Tool trait
@@ -154,6 +216,22 @@ pub trait Tool: Send + Sync {
 
     /// Input mode definition - using JSON Schema
     fn input_schema(&self) -> Value;
+
+    /// JSON Schema sent to the model (may depend on app language or other runtime config).
+    /// Default: same as [`input_schema`].
+    async fn input_schema_for_model(&self) -> Value {
+        self.input_schema()
+    }
+
+    /// JSON Schema for the model when tool listing has a [`ToolUseContext`] (e.g. primary model vision capability).
+    /// Default: ignores context and delegates to [`input_schema_for_model`].
+    async fn input_schema_for_model_with_context(
+        &self,
+        context: Option<&ToolUseContext>,
+    ) -> Value {
+        let _ = context;
+        self.input_schema_for_model().await
+    }
 
     /// Input JSON Schema - optional extra schema
     fn input_json_schema(&self) -> Option<Value> {

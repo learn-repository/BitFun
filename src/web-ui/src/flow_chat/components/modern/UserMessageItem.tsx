@@ -13,7 +13,7 @@ import { flowChatStore } from '../../store/FlowChatStore';
 import { snapshotAPI } from '@/infrastructure/api';
 import { notificationService } from '@/shared/notification-system';
 import { globalEventBus } from '@/infrastructure/event-bus';
-import { ReproductionStepsBlock, Tooltip } from '@/component-library';
+import { ReproductionStepsBlock, Tooltip, confirmDanger } from '@/component-library';
 import { createLogger } from '@/shared/utils/logger';
 import './UserMessageItem.scss';
 
@@ -37,36 +37,30 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
     const [lightboxImage, setLightboxImage] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const messageContent = typeof message?.content === 'string' ? message.content : String(message?.content || '');
+    const messageImages = useMemo(() => message?.images ?? [], [message?.images]);
 
     const turnIndex = activeSession?.dialogTurns.findIndex(t => t.id === turnId) ?? -1;
     const dialogTurn = turnIndex >= 0 ? activeSession?.dialogTurns[turnIndex] : null;
     const isFailed = dialogTurn?.status === 'error';
     const canRollback = !!sessionId && turnIndex >= 0 && !isRollingBack;
 
-    
-    // Avoid zero-size errors by rendering a placeholder instead of null.
-    if (!message) {
-      return <div style={{ minHeight: '1px' }} />;
-    }
-
     const { displayText, reproductionSteps } = useMemo(() => {
-      const contentStr = typeof message.content === 'string' ? message.content : String(message.content || '');
-
       const reproductionRegex = /<reproduction_steps>([\s\S]*?)<\/reproduction_steps\s*>?/g;
-      const reproductionMatch = reproductionRegex.exec(contentStr);
+      const reproductionMatch = reproductionRegex.exec(messageContent);
       const reproduction = reproductionMatch ? reproductionMatch[1].trim() : null;
 
-      let cleaned = contentStr.replace(reproductionRegex, '').trim();
+      let cleaned = messageContent.replace(reproductionRegex, '').trim();
 
       // Strip [Image: ...] context lines when images are shown as thumbnails.
-      if (message.images && message.images.length > 0) {
+      if (messageImages.length > 0) {
         cleaned = cleaned
           .replace(/\[Image:.*?\]\n(?:Path:.*?\n|Image ID:.*?\n)?/g, '')
           .trim();
       }
 
       return { displayText: cleaned, reproductionSteps: reproduction };
-    }, [message.content, message.images]);
+    }, [messageContent, messageImages]);
     
     // Check whether content overflows.
     useEffect(() => {
@@ -95,19 +89,31 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
     const handleCopy = useCallback(async (e: React.MouseEvent) => {
       e.stopPropagation(); // Prevent toggle via bubbling.
       try {
-        await navigator.clipboard.writeText(message.content);
+        await navigator.clipboard.writeText(messageContent);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       } catch (error) {
         log.error('Failed to copy', error);
       }
-    }, [message.content]);
+    }, [messageContent]);
 
     const handleRollback = useCallback(async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!canRollback || !sessionId) return;
 
-      const confirmed = await window.confirm(t('message.rollbackConfirm', { index: turnIndex + 1 }));
+      const index = turnIndex + 1;
+      const confirmed = await confirmDanger(
+        t('message.rollbackDialogTitle', { index }),
+        (
+          <>
+            <p className="confirm-dialog__message-intro">{t('message.rollbackDialogIntro')}</p>
+            <ul className="confirm-dialog__bullet-list">
+              <li>{t('message.rollbackDialogBulletFiles')}</li>
+              <li>{t('message.rollbackDialogBulletHistory')}</li>
+            </ul>
+          </>
+        )
+      );
       if (!confirmed) return;
 
       setIsRollingBack(true);
@@ -146,9 +152,9 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
     const handleFillToInput = useCallback((e: React.MouseEvent) => {
       e.stopPropagation();
       globalEventBus.emit('fill-chat-input', {
-        content: message.content
+        content: messageContent
       });
-    }, [message.content]);
+    }, [messageContent]);
     
     // Collapse when clicking outside.
     useEffect(() => {
@@ -165,6 +171,11 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
         document.removeEventListener('mousedown', handleClickOutside);
       };
     }, [expanded]);
+
+    // Avoid zero-size errors by rendering a placeholder instead of null.
+    if (!message) {
+      return <div style={{ minHeight: '1px' }} />;
+    }
     
     return (
       <div 
@@ -182,7 +193,11 @@ export const UserMessageItem = React.memo<UserMessageItemProps>(
             className="user-message-item__content"
             onClick={handleToggleExpand}
             title={(hasOverflow || expanded) ? (expanded ? t('message.clickToCollapse') : t('message.clickToExpand')) : undefined}
-            style={{ cursor: (hasOverflow || expanded) ? 'pointer' : 'text' }}
+            style={{
+              cursor: (hasOverflow || expanded) ? 'pointer' : 'text',
+              // Inline so newline preservation wins over any global/cascade overrides.
+              ...(expanded ? { whiteSpace: 'pre-wrap' as const } : {}),
+            }}
           >
             {displayText}
           </div>

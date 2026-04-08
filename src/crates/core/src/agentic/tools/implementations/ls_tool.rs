@@ -23,6 +23,12 @@ pub struct LSTool {
     default_limit: usize,
 }
 
+impl Default for LSTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LSTool {
     pub fn new() -> Self {
         Self { default_limit: 200 }
@@ -104,9 +110,10 @@ Usage:
                 };
             }
 
-            let path_obj = Path::new(path);
-
-            if !path_obj.is_absolute() {
+            let is_abs = context
+                .map(|c| c.workspace_path_is_effectively_absolute(path))
+                .unwrap_or_else(|| Path::new(path).is_absolute());
+            if !is_abs {
                 return ValidationResult {
                     result: false,
                     message: Some(format!("path must be an absolute path, got: {}", path)),
@@ -117,7 +124,8 @@ Usage:
 
             let is_remote = context.map(|c| c.is_remote()).unwrap_or(false);
             if !is_remote {
-                if !path_obj.exists() {
+                let local_path = Path::new(path);
+                if !local_path.exists() {
                     return ValidationResult {
                         result: false,
                         message: Some(format!("Directory does not exist: {}", path)),
@@ -126,7 +134,7 @@ Usage:
                     };
                 }
 
-                if !path_obj.is_dir() {
+                if !local_path.is_dir() {
                     return ValidationResult {
                         result: false,
                         message: Some(format!("Path is not a directory: {}", path)),
@@ -257,7 +265,8 @@ Usage:
                     "is_remote": true
                 }),
                 result_for_assistant: Some(result_text),
-            };
+            image_attachments: None,
+        };
             return Ok(vec![result]);
         }
 
@@ -268,7 +277,7 @@ Usage:
                 .collect::<Vec<String>>()
         });
 
-        let entries = list_files(path, limit, ignore_patterns).map_err(|e| BitFunError::tool(e))?;
+        let entries = list_files(path, limit, ignore_patterns).map_err(BitFunError::tool)?;
 
         let entries_json = entries
             .iter()
@@ -299,6 +308,7 @@ Usage:
                 "limit": limit
             }),
             result_for_assistant: Some(result_text),
+            image_attachments: None,
         };
 
         Ok(vec![result])

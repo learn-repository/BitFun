@@ -62,13 +62,24 @@ const resolveSessionWorkspace = (
   context: FlowChatContext,
   config?: SessionConfig
 ): WorkspaceInfo | null => {
+  const state = workspaceManager.getState();
+  const configWorkspaceId = config?.workspaceId?.trim();
+  if (configWorkspaceId) {
+    const byId = state.openedWorkspaces.get(configWorkspaceId);
+    if (byId) return byId;
+  }
+
   const workspacePath = resolveSessionWorkspacePath(context, config);
   if (!workspacePath) return null;
-
-  const state = workspaceManager.getState();
-  const pathMatches = Array.from(state.openedWorkspaces.values()).filter(
-    workspace => workspace.rootPath === workspacePath
-  );
+  const pathMatches = Array.from(state.openedWorkspaces.values()).filter(workspace => {
+    if (workspace.rootPath !== workspacePath) return false;
+    if (workspace.workspaceKind !== WorkspaceKind.Remote) return true;
+    const cid = config?.remoteConnectionId?.trim();
+    const host = config?.remoteSshHost?.trim();
+    if (cid && workspace.connectionId !== cid) return false;
+    if (host && (workspace.sshHost?.trim() ?? '') !== host) return false;
+    return true;
+  });
   if (pathMatches.length === 0) {
     return state.currentWorkspace;
   }
@@ -79,6 +90,11 @@ const resolveSessionWorkspace = (
   if (configCid) {
     const byConn = pathMatches.find(w => w.connectionId === configCid);
     if (byConn) return byConn;
+  }
+  const configHost = config?.remoteSshHost?.trim();
+  if (configHost) {
+    const byHost = pathMatches.find(w => (w.sshHost?.trim() ?? '') === configHost);
+    if (byHost) return byHost;
   }
   const cur = state.currentWorkspace;
   if (cur && pathMatches.some(w => w.id === cur.id)) {
@@ -157,12 +173,18 @@ export async function createChatSession(
     }
     const remoteConnectionId =
       workspace?.workspaceKind === WorkspaceKind.Remote ? workspace.connectionId : undefined;
+    const remoteSshHost =
+      workspace?.workspaceKind === WorkspaceKind.Remote
+        ? workspace.sshHost?.trim() || undefined
+        : undefined;
     const agentType = resolveAgentType(mode, workspace);
     const sessionMode = normalizeSessionDisplayMode(agentType, workspace);
     const creationKey =
-      remoteConnectionId != null && remoteConnectionId !== ''
-        ? `${remoteConnectionId}\n${workspacePath}`
-        : workspacePath;
+      workspace?.id?.trim()
+        ? workspace.id
+        : remoteConnectionId != null && remoteConnectionId !== ''
+          ? `${remoteConnectionId}\n${workspacePath}`
+          : workspacePath;
 
     const pendingCreation = pendingSessionCreations.get(creationKey);
     if (pendingCreation) {
@@ -182,12 +204,18 @@ export async function createChatSession(
     
     const maxContextTokens = await getModelMaxTokens(config.modelName);
 
+    const mergedConfig: SessionConfig = {
+      ...config,
+      workspaceId: workspace?.id ?? config.workspaceId,
+    };
+
     const createPromise = (async () => {
       const response = await agentAPI.createSession({
         sessionName,
         agentType,
         workspacePath,
         remoteConnectionId,
+        remoteSshHost,
         config: {
           modelName: config.modelName || 'auto',
           enableTools: true,
@@ -195,18 +223,21 @@ export async function createChatSession(
           autoCompact: true,
           maxContextTokens: maxContextTokens,
           enableContextCompression: true,
+          remoteConnectionId,
+          remoteSshHost,
         }
       });
 
       context.flowChatStore.createSession(
         response.sessionId, 
-        config, 
+        mergedConfig, 
         undefined,
         sessionName,
         maxContextTokens,
         agentType,
         workspacePath,
-        remoteConnectionId
+        remoteConnectionId,
+        remoteSshHost
       );
 
       return response.sessionId;
@@ -239,73 +270,41 @@ export async function switchChatSession(
 ): Promise<void> {
   try {
     const session = context.flowChatStore.getState().sessions.get(sessionId);
-    
-    if (session?.isHistorical) {
-      try {
-        const workspacePath = requireSessionWorkspacePath(session.workspacePath, sessionId);
-        
-        await context.flowChatStore.loadSessionHistory(
-          sessionId,
-          workspacePath,
-          undefined,
-          session.remoteConnectionId
-        );
-        
-        try {
-          await agentAPI.restoreSession(sessionId, workspacePath, session.remoteConnectionId);
-          
-          context.flowChatStore.setState(prev => {
-            const newSessions = new Map(prev.sessions);
-            const sess = newSessions.get(sessionId);
-            if (sess) {
-              newSessions.set(sessionId, { ...sess, isHistorical: false });
-            }
-            return { ...prev, sessions: newSessions };
-          });
-        } catch (restoreError: any) {
-          log.warn('Historical session restore failed, creating new session', { sessionId, error: restoreError });
-          const currentSession = context.flowChatStore.getState().sessions.get(sessionId);
-          if (currentSession) {
-            await agentAPI.createSession({
-              sessionId: sessionId,
-              sessionName: currentSession.title || `Session ${sessionId.slice(0, 8)}`,
-              agentType: currentSession.mode || 'agentic',
-              workspacePath,
-              remoteConnectionId: currentSession.remoteConnectionId,
-              config: {
-                modelName: currentSession.config.modelName || 'auto',
-                enableTools: true,
-                safeMode: true
-              }
-            });
-            
-            context.flowChatStore.setState(prev => {
-              const newSessions = new Map(prev.sessions);
-              const sess = newSessions.get(sessionId);
-              if (sess) {
-                newSessions.set(sessionId, { ...sess, isHistorical: false });
-              }
-              return { ...prev, sessions: newSessions };
-            });
-          }
-        }
-      } catch (error) {
-        log.error('Failed to load session history', { sessionId, error });
-        notificationService.warning('Failed to load session history, showing empty session', {
-          duration: 3000
-        });
-      }
-    }
-    
+
+    // Switch UI immediately so the user sees the new session without waiting for history load.
     context.flowChatStore.switchSession(sessionId);
 
     touchSessionActivity(
       sessionId,
       session?.workspacePath,
-      session?.remoteConnectionId
+      session?.remoteConnectionId,
+      session?.remoteSshHost
     ).catch(error => {
       log.debug('Failed to touch session activity', { sessionId, error });
     });
+
+    if (session?.isHistorical) {
+      // Load history in the background — do not block the UI.
+      (async () => {
+        try {
+          const workspacePath = requireSessionWorkspacePath(session.workspacePath, sessionId);
+
+          // loadSessionHistory internally calls restoreSession + loadSessionTurns.
+          await context.flowChatStore.loadSessionHistory(
+            sessionId,
+            workspacePath,
+            undefined,
+            session.remoteConnectionId,
+            session.remoteSshHost
+          );
+        } catch (error) {
+          log.error('Failed to load session history', { sessionId, error });
+          notificationService.warning('Failed to load session history, showing empty session', {
+            duration: 3000
+          });
+        }
+      })();
+    }
   } catch (error) {
     log.error('Failed to switch chat session', { sessionId, error });
     notificationService.error('Failed to switch session', {
@@ -336,6 +335,33 @@ export async function deleteChatSession(
     });
     throw error;
   }
+}
+
+export async function renameChatSessionTitle(
+  context: FlowChatContext,
+  sessionId: string,
+  title: string
+): Promise<string> {
+  const session = context.flowChatStore.getState().sessions.get(sessionId);
+  if (!session) {
+    throw new Error(`Session does not exist: ${sessionId}`);
+  }
+
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) {
+    throw new Error('Session title must not be empty');
+  }
+
+  const updatedTitle = await agentAPI.updateSessionTitle({
+    sessionId,
+    title: trimmedTitle,
+    workspacePath: session.workspacePath,
+    remoteConnectionId: session.remoteConnectionId,
+    remoteSshHost: session.remoteSshHost,
+  });
+
+  await context.flowChatStore.updateSessionTitle(sessionId, updatedTitle, 'generated');
+  return updatedTitle;
 }
 
 /**
@@ -376,6 +402,7 @@ export async function ensureBackendSession(
       sessionId,
       workspacePath,
       remoteConnectionId: session.remoteConnectionId,
+      remoteSshHost: session.remoteSshHost,
     });
     clearHistoricalFlag();
   } catch (e: any) {
@@ -395,10 +422,13 @@ export async function ensureBackendSession(
       agentType: session.mode || 'agentic',
       workspacePath,
       remoteConnectionId: session.remoteConnectionId,
+      remoteSshHost: session.remoteSshHost,
       config: {
         modelName: session.config.modelName || 'auto',
         enableTools: true,
-        safeMode: true
+        safeMode: true,
+        remoteConnectionId: session.remoteConnectionId,
+        remoteSshHost: session.remoteSshHost,
       }
     });
     clearHistoricalFlag();
@@ -425,10 +455,13 @@ export async function retryCreateBackendSession(
     agentType: session.mode || 'agentic',
     workspacePath,
     remoteConnectionId: session.remoteConnectionId,
+    remoteSshHost: session.remoteSshHost,
     config: {
       modelName: session.config.modelName || 'auto',
       enableTools: true,
-      safeMode: true
+      safeMode: true,
+      remoteConnectionId: session.remoteConnectionId,
+      remoteSshHost: session.remoteSshHost,
     }
   });
 }

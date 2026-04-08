@@ -1,5 +1,6 @@
 //! Types for session persistence
 
+use crate::agentic::core::SessionKind;
 use serde::{Deserialize, Serialize};
 
 /// Session metadata
@@ -21,6 +22,8 @@ pub struct SessionMetadata {
     /// Creator identity for future permission checks
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "created_by")]
     pub created_by: Option<String>,
+    #[serde(default, alias = "session_kind", alias = "sessionKind")]
+    pub session_kind: SessionKind,
 
     /// Model name
     #[serde(alias = "model_name")]
@@ -73,9 +76,18 @@ pub struct SessionMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub todos: Option<serde_json::Value>,
 
-    /// Workspace path this session belongs to (set at creation time)
+    /// Workspace path this session belongs to (normalized source workspace root, not mirror dir)
     #[serde(skip_serializing_if = "Option::is_none", alias = "workspace_path")]
     pub workspace_path: Option<String>,
+
+    /// Unified hostname for workspace identity: `localhost` for local workspaces,
+    /// SSH host for remote workspaces.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "workspace_hostname"
+    )]
+    pub workspace_hostname: Option<String>,
 }
 
 /// Session status
@@ -129,6 +141,10 @@ pub struct DialogTurnData {
     /// Timestamp
     pub timestamp: u64,
 
+    /// Turn kind
+    #[serde(default, alias = "turn_kind")]
+    pub kind: DialogTurnKind,
+
     /// User message
     #[serde(alias = "user_message")]
     pub user_message: UserMessageData,
@@ -151,6 +167,23 @@ pub struct DialogTurnData {
 
     /// Turn status
     pub status: TurnStatus,
+}
+
+/// Persisted dialog turn kind.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum DialogTurnKind {
+    #[default]
+    UserDialog,
+    ManualCompaction,
+}
+
+
+impl DialogTurnKind {
+    pub fn is_model_visible(self) -> bool {
+        matches!(self, Self::UserDialog)
+    }
 }
 
 /// User message data
@@ -344,6 +377,7 @@ pub struct SessionTranscriptIndexEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct SessionTranscriptExportOptions {
     #[serde(default)]
     pub tools: bool,
@@ -355,16 +389,6 @@ pub struct SessionTranscriptExportOptions {
     pub turns: Option<Vec<String>>,
 }
 
-impl Default for SessionTranscriptExportOptions {
-    fn default() -> Self {
-        Self {
-            tools: false,
-            tool_inputs: false,
-            thinking: false,
-            turns: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -429,6 +453,7 @@ impl SessionMetadata {
             session_name,
             agent_type,
             created_by: None,
+            session_kind: SessionKind::Standard,
             model_name,
             created_at: now,
             last_active_at: now,
@@ -442,6 +467,7 @@ impl SessionMetadata {
             custom_metadata: None,
             todos: None,
             workspace_path: None,
+            workspace_hostname: None,
         }
     }
 
@@ -467,11 +493,51 @@ impl SessionMetadata {
     pub fn add_tool_calls(&mut self, count: usize) {
         self.tool_call_count += count;
     }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.session_kind, SessionKind::Subagent)
+    }
+
+    pub fn is_standard(&self) -> bool {
+        !self.is_subagent()
+    }
+
+    pub fn is_legacy_leaked_subagent_candidate(&self) -> bool {
+        let Some(created_by) = self.created_by.as_deref() else {
+            return false;
+        };
+        if !created_by.starts_with("session-") {
+            return false;
+        }
+
+        self.session_name.starts_with("Subagent: ")
+    }
+
+    pub fn should_hide_from_user_lists(&self) -> bool {
+        self.is_subagent() || self.is_legacy_leaked_subagent_candidate()
+    }
 }
 
 impl DialogTurnData {
     /// Creates a new dialog turn.
     pub fn new(
+        turn_id: String,
+        turn_index: usize,
+        session_id: String,
+        user_message: UserMessageData,
+    ) -> Self {
+        Self::new_with_kind(
+            DialogTurnKind::UserDialog,
+            turn_id,
+            turn_index,
+            session_id,
+            user_message,
+        )
+    }
+
+    /// Creates a new dialog turn with an explicit persisted kind.
+    pub fn new_with_kind(
+        kind: DialogTurnKind,
         turn_id: String,
         turn_index: usize,
         session_id: String,
@@ -487,6 +553,7 @@ impl DialogTurnData {
             turn_index,
             session_id,
             timestamp: now,
+            kind,
             user_message,
             model_rounds: Vec::new(),
             start_time: now,
@@ -514,5 +581,107 @@ impl DialogTurnData {
             .iter()
             .map(|round| round.tool_items.len())
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DialogTurnData, DialogTurnKind, SessionMetadata, UserMessageData};
+    use crate::agentic::core::SessionKind;
+
+    #[test]
+    fn dialog_turn_kind_defaults_to_user_dialog_for_legacy_payloads() {
+        let payload = serde_json::json!({
+            "turnId": "turn-1",
+            "turnIndex": 0,
+            "sessionId": "session-1",
+            "timestamp": 1,
+            "userMessage": {
+                "id": "user-1",
+                "content": "hello",
+                "timestamp": 1
+            },
+            "modelRounds": [],
+            "startTime": 1,
+            "status": "completed"
+        });
+
+        let turn: DialogTurnData =
+            serde_json::from_value(payload).expect("legacy payload should deserialize");
+
+        assert_eq!(turn.kind, DialogTurnKind::UserDialog);
+    }
+
+    #[test]
+    fn dialog_turn_data_new_defaults_to_user_dialog() {
+        let turn = DialogTurnData::new(
+            "turn-1".to_string(),
+            0,
+            "session-1".to_string(),
+            UserMessageData {
+                id: "user-1".to_string(),
+                content: "hello".to_string(),
+                timestamp: 1,
+                metadata: None,
+            },
+        );
+
+        assert_eq!(turn.kind, DialogTurnKind::UserDialog);
+    }
+
+    #[test]
+    fn session_metadata_marks_explicit_subagent_as_non_standard() {
+        let mut metadata = SessionMetadata::new(
+            "session-1".to_string(),
+            "Subagent: explore repo".to_string(),
+            "Explore".to_string(),
+            "model".to_string(),
+        );
+        metadata.session_kind = SessionKind::Subagent;
+
+        assert!(metadata.is_subagent());
+        assert!(!metadata.is_standard());
+    }
+
+    #[test]
+    fn session_metadata_does_not_treat_standard_session_as_subagent_from_name_or_creator() {
+        let mut metadata = SessionMetadata::new(
+            "session-1".to_string(),
+            "Subagent: repo sweep".to_string(),
+            "Explore".to_string(),
+            "model".to_string(),
+        );
+        metadata.created_by = Some("session-parent".to_string());
+
+        assert!(!metadata.is_subagent());
+        assert!(metadata.is_standard());
+    }
+
+    #[test]
+    fn session_metadata_detects_legacy_leaked_subagent_candidate() {
+        let mut metadata = SessionMetadata::new(
+            "session-1".to_string(),
+            "Subagent: repo sweep".to_string(),
+            "Explore".to_string(),
+            "model".to_string(),
+        );
+        metadata.created_by = Some("session-parent".to_string());
+
+        assert!(!metadata.is_subagent());
+        assert!(metadata.is_legacy_leaked_subagent_candidate());
+        assert!(metadata.should_hide_from_user_lists());
+    }
+
+    #[test]
+    fn session_metadata_keeps_normal_sessions_visible() {
+        let metadata = SessionMetadata::new(
+            "session-1".to_string(),
+            "Normal Session".to_string(),
+            "agentic".to_string(),
+            "model".to_string(),
+        );
+
+        assert!(!metadata.is_subagent());
+        assert!(metadata.is_standard());
     }
 }

@@ -10,7 +10,6 @@ import {
   ThemeEvent,
   ThemeEventListener,
   ThemeHooks,
-  ThemeAdapter,
   SYSTEM_THEME_ID,
   ThemeSelectionId,
 } from '../types';
@@ -20,6 +19,21 @@ import { monacoThemeSync } from '../integrations/MonacoThemeSync';
 import { createLogger } from '@/shared/utils/logger';
 
 const log = createLogger('ThemeService');
+
+/** Space-separated R G B for `rgba(var(--color-primary-rgb) / α)` in component styles. */
+function accentColorToRgbChannels(accent: string): string | null {
+  const trimmed = accent.trim();
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(trimmed);
+  if (hex6) {
+    const n = parseInt(hex6[1], 16);
+    return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+  }
+  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(trimmed);
+  if (rgb) {
+    return `${rgb[1]} ${rgb[2]} ${rgb[3]}`;
+  }
+  return null;
+}
 
  
 export class ThemeService {
@@ -31,7 +45,6 @@ export class ThemeService {
   private systemThemeCleanup: (() => void) | null = null;
   private listeners: Map<ThemeEventType, Set<ThemeEventListener>> = new Map();
   private hooks: ThemeHooks = {};
-  private adapters: ThemeAdapter[] = [];
   
   constructor() {
     this.initializeBuiltinThemes();
@@ -50,23 +63,21 @@ export class ThemeService {
    
   async initialize(): Promise<void> {
     try {
-      
-      const preInjectedThemeId = document.documentElement.getAttribute('data-theme');
-      
-      if (preInjectedThemeId && this.themes.has(preInjectedThemeId as ThemeId)) {
-        await this.applyTheme(preInjectedThemeId as ThemeId);
+      const saved = await this.loadThemeSelection();
+
+      if (saved === SYSTEM_THEME_ID) {
+        await this.applyTheme(SYSTEM_THEME_ID);
+      } else if (saved && this.themes.has(saved)) {
+        await this.applyTheme(saved);
       } else {
-        const saved = await this.loadThemeSelection();
-        if (saved === SYSTEM_THEME_ID) {
-          await this.applyTheme(SYSTEM_THEME_ID);
-        } else if (saved && this.themes.has(saved)) {
-          await this.applyTheme(saved);
+        const preInjectedThemeId = document.documentElement.getAttribute('data-theme');
+        if (preInjectedThemeId && this.themes.has(preInjectedThemeId as ThemeId)) {
+          await this.applyTheme(preInjectedThemeId as ThemeId);
         } else {
           await this.applyTheme(SYSTEM_THEME_ID);
         }
       }
-      
-      
+
       this.loadUserThemes().catch(() => {
         
       });
@@ -93,7 +104,7 @@ export class ThemeService {
         });
         log.info('Loaded user themes', { count: themes.length });
       }
-    } catch (error) {
+    } catch (_error) {
       
     }
   }
@@ -110,7 +121,7 @@ export class ThemeService {
         return SYSTEM_THEME_ID;
       }
       return raw || null;
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
@@ -316,6 +327,17 @@ export class ThemeService {
     Object.entries(colors.accent).forEach(([key, value]) => {
       root.style.setProperty(`--color-accent-${key}`, value);
     });
+
+    const primaryAccent = colors.accent[500];
+    const primaryHover = colors.accent[600];
+    root.style.setProperty('--color-primary', primaryAccent);
+    root.style.setProperty('--color-primary-hover', primaryHover);
+    root.style.setProperty('--color-accent', primaryAccent);
+    root.style.setProperty('--color-accent-primary', primaryAccent);
+    const primaryRgb = accentColorToRgbChannels(primaryAccent);
+    if (primaryRgb) {
+      root.style.setProperty('--color-primary-rgb', primaryRgb);
+    }
     
     
     if (colors.purple) {
@@ -346,8 +368,13 @@ export class ThemeService {
     root.style.setProperty('--border-medium', colors.border.medium);
     root.style.setProperty('--border-strong', colors.border.strong);
     root.style.setProperty('--border-prominent', colors.border.prominent);
-    
-    
+
+    const sceneViewportBorder = theme.layout?.sceneViewportBorder ?? true;
+    root.style.setProperty(
+      '--scene-viewport-border-width',
+      sceneViewportBorder ? '1px' : '0'
+    );
+
     root.style.setProperty('--element-bg-subtle', colors.element.subtle);
     root.style.setProperty('--element-bg-soft', colors.element.soft);
     root.style.setProperty('--element-bg-base', colors.element.base);
@@ -537,6 +564,22 @@ export class ThemeService {
       root.style.setProperty('--btn-default-hover-border', colors.border.medium);
       root.style.setProperty('--btn-default-hover-shadow', 'none');
       root.style.setProperty('--btn-default-hover-transform', 'none');
+
+      const a = colors.accent;
+      root.style.setProperty('--btn-primary-bg', a[200]);
+      root.style.setProperty('--btn-primary-color', a[600]);
+      root.style.setProperty('--btn-primary-border', 'transparent');
+      root.style.setProperty('--btn-primary-shadow', 'none');
+      root.style.setProperty('--btn-primary-hover-bg', a[300]);
+      root.style.setProperty('--btn-primary-hover-color', colors.text.primary);
+      root.style.setProperty('--btn-primary-hover-border', 'transparent');
+      root.style.setProperty('--btn-primary-hover-shadow', 'none');
+      root.style.setProperty('--btn-primary-hover-transform', 'none');
+      root.style.setProperty('--btn-primary-active-bg', a[200]);
+      root.style.setProperty('--btn-primary-active-color', colors.text.primary);
+      root.style.setProperty('--btn-primary-active-border', 'transparent');
+      root.style.setProperty('--btn-primary-active-shadow', 'none');
+      root.style.setProperty('--btn-primary-active-transform', 'none');
     }
     
     
@@ -631,8 +674,8 @@ export class ThemeService {
       root.style.setProperty('--card-bg-subtle', 'rgba(255, 255, 255, 0.015)');
       root.style.setProperty('--card-bg-hover', 'rgba(255, 255, 255, 0.04)');
       root.style.setProperty('--card-bg-active', 'rgba(255, 255, 255, 0.05)');
-      root.style.setProperty('--card-bg-accent', 'rgba(96, 165, 250, 0.08)');
-      root.style.setProperty('--card-bg-accent-hover', 'rgba(96, 165, 250, 0.12)');
+      root.style.setProperty('--card-bg-accent', 'rgba(255, 255, 255, 0.09)');
+      root.style.setProperty('--card-bg-accent-hover', 'rgba(255, 255, 255, 0.13)');
       root.style.setProperty('--card-bg-purple', 'rgba(139, 92, 246, 0.08)');
       root.style.setProperty('--card-bg-purple-hover', 'rgba(139, 92, 246, 0.12)');
     } else {
@@ -640,10 +683,10 @@ export class ThemeService {
       root.style.setProperty('--card-bg-default', 'rgba(0, 0, 0, 0.06)');
       root.style.setProperty('--card-bg-elevated', 'rgba(0, 0, 0, 0.08)');
       root.style.setProperty('--card-bg-subtle', 'rgba(0, 0, 0, 0.04)');
-      root.style.setProperty('--card-bg-hover', 'rgba(0, 0, 0, 0.09)');
-      root.style.setProperty('--card-bg-active', 'rgba(0, 0, 0, 0.12)');
-      root.style.setProperty('--card-bg-accent', 'rgba(59, 130, 246, 0.12)');
-      root.style.setProperty('--card-bg-accent-hover', 'rgba(59, 130, 246, 0.18)');
+      root.style.setProperty('--card-bg-hover', 'rgba(0, 0, 0, 0.065)');
+      root.style.setProperty('--card-bg-active', 'rgba(0, 0, 0, 0.09)');
+      root.style.setProperty('--card-bg-accent', 'rgba(15, 23, 42, 0.08)');
+      root.style.setProperty('--card-bg-accent-hover', 'rgba(15, 23, 42, 0.12)');
       root.style.setProperty('--card-bg-purple', 'rgba(124, 58, 237, 0.12)');
       root.style.setProperty('--card-bg-purple-hover', 'rgba(124, 58, 237, 0.18)');
     }
@@ -684,6 +727,12 @@ export class ThemeService {
     
     root.setAttribute('data-theme', theme.id);
     root.setAttribute('data-theme-type', theme.type);
+
+    const bgPrimary = colors.background.primary;
+    root.style.backgroundColor = bgPrimary;
+    if (document.body) {
+      document.body.style.backgroundColor = bgPrimary;
+    }
   }
   
    
@@ -733,36 +782,6 @@ export class ThemeService {
       metadata,
       exportedAt: new Date().toISOString(),
     };
-  }
-  
-   
-  async importTheme(themeExport: ThemeExport): Promise<void> {
-    const { theme } = themeExport;
-    
-    
-    const validation = this.validateTheme(theme);
-    if (!validation.valid) {
-      log.error('Theme validation failed', { errors: validation.errors });
-      throw new Error('Invalid theme configuration');
-    }
-    
-    
-    this.registerTheme(theme);
-    
-    
-    await this.saveUserThemes();
-  }
-  
-   
-  async importWithAdapter(data: any): Promise<void> {
-    const adapter = this.adapters.find(a => a.supports(data));
-    if (!adapter) {
-      throw new Error('No suitable adapter found for this theme format');
-    }
-    
-    const theme = adapter.convert(data);
-    this.registerTheme(theme);
-    await this.saveUserThemes();
   }
   
   
@@ -844,16 +863,8 @@ export class ThemeService {
   registerHooks(hooks: ThemeHooks): void {
     this.hooks = { ...this.hooks, ...hooks };
   }
-  
-  
-  
-   
-  registerAdapter(adapter: ThemeAdapter): void {
-    this.adapters.push(adapter);
-  }
 }
 
 
 export const themeService = new ThemeService();
-
 

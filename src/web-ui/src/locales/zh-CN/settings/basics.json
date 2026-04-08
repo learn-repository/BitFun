@@ -6,17 +6,13 @@
     "hint": "界面语言与视觉主题",
     "language": "语言",
     "themes": "主题",
-    "importTheme": "导入主题",
-    "importing": "导入中...",
     "builtIn": "内置",
     "custom": "自定义",
     "export": "导出",
     "delete": "删除",
     "confirmDelete": "确定删除主题 \"{{name}}\" 吗？",
-    "importSuccess": "主题导入成功！",
-    "importFailed": "主题导入失败，请检查文件格式。",
     "languageRowHint": "选择一个语言包作为当前界面语言。",
-    "themeRowHint": "选择已安装的主题或管理自定义主题。",
+    "themeRowHint": "选择界面配色主题。",
     "systemTheme": "跟随系统",
     "systemThemeDescription": "根据系统浅色/深色外观自动在亮暗主题间切换，并随系统切换而更新。",
     "presets": {
@@ -48,6 +44,29 @@
         "name": "石板灰",
         "description": "石板灰几何主题 - 极深沉浸，高对比度灰度美学"
       }
+    },
+    "fontSize": {
+      "title": "字体大小",
+      "hint": "调整界面与对话区域的字体大小（编辑器字号在编辑器设置中配置）。",
+      "uiSizeLabel": "界面字体",
+      "uiSizeHint": "调整导航、面板、设置等所有界面元素的字体大小。",
+      "levels": {
+        "compact": "紧凑",
+        "small": "小",
+        "default": "默认",
+        "medium": "中等",
+        "large": "大",
+        "custom": "自定义"
+      },
+      "customPxLabel": "自定义大小（12–20 px）",
+      "customPxPlaceholder": "14",
+      "customPxOutOfRange": "请输入 12–20 之间的整数",
+      "resetButton": "恢复默认",
+      "previewText": "BitFun 是一个由 AI 驱动的编程环境。The quick brown fox jumps over the lazy dog.",
+      "flowChatLabel": "对话区域",
+      "flowChatHint": "关闭时对话区域比界面大 1 px，并随界面档位变化。开启后在下方从列表中选择 12–20 px。",
+      "flowChatCustomToggle": "自定义对话字号",
+      "flowChatPxOption": "{{n}} px"
     }
   },
   "launchAtLogin": {
@@ -131,6 +150,18 @@
       "updated": "默认终端已更新",
       "saveFailed": "保存配置失败",
       "refreshed": "已刷新可用终端列表"
+    }
+  },
+  "notifications": {
+    "title": "通知",
+    "hint": "Toast 弹窗通知偏好设置",
+    "dialogCompletion": {
+      "label": "任务完成通知",
+      "description": "当 AI 任务完成且窗口不在焦点时，弹出 Toast 通知"
+    },
+    "messages": {
+      "saveSuccess": "通知设置已保存",
+      "saveFailed": "保存通知设置失败"
     }
   }
 }

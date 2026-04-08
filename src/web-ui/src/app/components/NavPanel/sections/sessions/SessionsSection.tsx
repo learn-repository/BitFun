@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, Trash2, Check, X, Bot, Code2, Users, MoreHorizontal, Loader2 } from 'lucide-react';
+import { Pencil, Trash2, Check, X, Bot, Code2, ClipboardList, Panda, MoreHorizontal, Loader2 } from 'lucide-react';
 import { IconButton, Input, Tooltip } from '@/component-library';
 import { useI18n } from '@/infrastructure/i18n';
 import { flowChatStore } from '../../../../../flow_chat/store/FlowChatStore';
@@ -24,7 +24,10 @@ import {
   selectActiveBtwSessionTab,
 } from '@/flow_chat/services/openBtwSession';
 import { resolveSessionRelationship } from '@/flow_chat/utils/sessionMetadata';
-import { compareSessionsForDisplay } from '@/flow_chat/utils/sessionOrdering';
+import {
+  compareSessionsForDisplay,
+  sessionBelongsToWorkspaceNavRow,
+} from '@/flow_chat/utils/sessionOrdering';
 import { stateMachineManager } from '@/flow_chat/state-machine';
 import { SessionExecutionState } from '@/flow_chat/state-machine/types';
 import './SessionsSection.scss';
@@ -52,18 +55,27 @@ interface SessionsSectionProps {
   workspacePath?: string;
   /** Remote SSH: same `workspacePath` on different hosts must filter by this (see Session.remoteConnectionId). */
   remoteConnectionId?: string | null;
+  /** Remote SSH: disambiguates same path on different hosts; when set with matching session host, connectionId may differ. */
+  remoteSshHost?: string | null;
   isActiveWorkspace?: boolean;
   showCreateActions?: boolean;
+  /** When set (e.g. assistant workspace), session row tooltip includes this assistant name. */
+  assistantLabel?: string;
+  /** When false, hide the leading mode / running icon on each row (e.g. assistant detail page). */
+  showSessionModeIcon?: boolean;
 }
 
 const SessionsSection: React.FC<SessionsSectionProps> = ({
   workspaceId,
   workspacePath,
   remoteConnectionId = null,
-  isActiveWorkspace = true,
+  remoteSshHost = null,
+  isActiveWorkspace: _isActiveWorkspace = true,
+  assistantLabel,
+  showSessionModeIcon = true,
 }) => {
   const { t } = useI18n('common');
-  const { setActiveWorkspace } = useWorkspaceContext();
+  const { setActiveWorkspace, currentWorkspace } = useWorkspaceContext();
   const activeTabId = useSceneStore(s => s.activeTabId);
   const activeBtwSessionTab = useAgentCanvasStore(state => selectActiveBtwSessionTab(state as any));
   const activeBtwSessionData = activeBtwSessionTab?.content.data as
@@ -87,7 +99,11 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
       const running = new Set<string>();
       for (const session of flowChatState.sessions.values()) {
         const machine = stateMachineManager.get(session.sessionId);
-        if (machine && machine.getCurrentState() === SessionExecutionState.PROCESSING) {
+        if (
+          machine &&
+          (machine.getCurrentState() === SessionExecutionState.PROCESSING ||
+            machine.getCurrentState() === SessionExecutionState.FINISHING)
+        ) {
           running.add(session.sessionId);
         }
       }
@@ -115,7 +131,7 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
 
   useEffect(() => {
     setExpandLevel(0);
-  }, [workspaceId, workspacePath, remoteConnectionId]);
+  }, [workspaceId, workspacePath, remoteConnectionId, remoteSshHost]);
 
   useEffect(() => {
     if (!openMenuSessionId) return;
@@ -134,18 +150,12 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
       Array.from(flowChatState.sessions.values())
         .filter((s: Session) => {
           if (workspacePath) {
-            if (s.workspacePath !== workspacePath) return false;
-            const wsConn = remoteConnectionId?.trim() ?? '';
-            const sessConn = s.remoteConnectionId?.trim() ?? '';
-            if (wsConn.length > 0 || sessConn.length > 0) {
-              return sessConn === wsConn;
-            }
-            return true;
+            return sessionBelongsToWorkspaceNavRow(s, workspacePath, remoteConnectionId, remoteSshHost);
           }
           return !s.workspacePath;
         })
         .sort(compareSessionsForDisplay),
-    [flowChatState.sessions, workspacePath, remoteConnectionId]
+    [flowChatState.sessions, workspacePath, remoteConnectionId, remoteSshHost]
   );
 
   const { topLevelSessions, childrenByParent } = useMemo(() => {
@@ -202,10 +212,12 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
         const session = flowChatStore.getState().sessions.get(sessionId);
         const relationship = resolveSessionRelationship(session);
         const parentSessionId = relationship.parentSessionId;
-        const activateWorkspace = workspaceId && !isActiveWorkspace
+        const mustActivateWorkspace =
+          Boolean(workspaceId) && workspaceId !== currentWorkspace?.id;
+        const activateWorkspace = mustActivateWorkspace
           ? async (targetWorkspaceId: string) => {
-            await setActiveWorkspace(targetWorkspaceId);
-          }
+              await setActiveWorkspace(targetWorkspaceId);
+            }
           : undefined;
 
         if (relationship.canOpenInAuxPane && parentSessionId && session) {
@@ -240,7 +252,13 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
         log.error('Failed to switch session', err);
       }
     },
-    [activeSessionId, editingSessionId, isActiveWorkspace, setActiveWorkspace, workspaceId]
+    [
+      activeSessionId,
+      editingSessionId,
+      setActiveWorkspace,
+      workspaceId,
+      currentWorkspace?.id,
+    ]
   );
 
   const resolveSessionTitle = useCallback(
@@ -309,7 +327,7 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
     const trimmed = editingTitle.trim();
     if (trimmed) {
       try {
-        await flowChatStore.updateSessionTitle(editingSessionId, trimmed, 'generated');
+        await flowChatManager.renameChatSessionTitle(editingSessionId, trimmed);
       } catch (err) {
         log.error('Failed to update session title', err);
       }
@@ -336,12 +354,13 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
     [handleConfirmEdit, handleCancelEdit]
   );
 
+  if (topLevelSessions.length === 0) {
+    return null;
+  }
+
   return (
     <div className="bitfun-nav-panel__inline-list">
-      {topLevelSessions.length === 0 ? (
-        <div className="bitfun-nav-panel__inline-empty">{t('nav.sessions.noSessions')}</div>
-      ) : (
-        visibleItems.map(({ session, level }) => {
+      {visibleItems.map(({ session, level }) => {
           const isEditing = editingSessionId === session.sessionId;
           const relationship = resolveSessionRelationship(session);
           const isBtwChild = level === 1 && relationship.isBtw;
@@ -351,19 +370,33 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
           const parentSession = parentSessionId ? flowChatState.sessions.get(parentSessionId) : undefined;
           const parentTitle = parentSession ? resolveSessionTitle(parentSession) : '';
           const parentTurnIndex = relationship.origin?.parentTurnIndex;
-          const tooltipContent = isBtwChild ? (
+          const trimmedAssistant = assistantLabel?.trim() ?? '';
+          const showAssistantInTooltip = trimmedAssistant.length > 0;
+          const showRichTooltip = showAssistantInTooltip || isBtwChild;
+          const tooltipContent = showRichTooltip ? (
             <div className="bitfun-nav-panel__inline-item-tooltip">
               <div className="bitfun-nav-panel__inline-item-tooltip-title">{sessionTitle}</div>
-              <div className="bitfun-nav-panel__inline-item-tooltip-meta">
-                {`来自 ${parentTitle || '父会话'}${parentTurnIndex ? ` · 第 ${parentTurnIndex} 轮` : ''}`}
-              </div>
+              {showAssistantInTooltip ? (
+                <div className="bitfun-nav-panel__inline-item-tooltip-meta">
+                  {t('nav.sessions.assistantOwner', { name: trimmedAssistant })}
+                </div>
+              ) : null}
+              {isBtwChild ? (
+                <div className="bitfun-nav-panel__inline-item-tooltip-meta">
+                  {`来自 ${parentTitle || '父会话'}${parentTurnIndex ? ` · 第 ${parentTurnIndex} 轮` : ''}`}
+                </div>
+              ) : null}
             </div>
-          ) : sessionTitle;
+          ) : (
+            sessionTitle
+          );
           const SessionIcon =
             sessionModeKey === 'cowork'
-              ? Users
+              ? ClipboardList
               : sessionModeKey === 'claw'
-                ? Bot
+                ? showAssistantInTooltip
+                  ? Panda
+                  : Bot
                 : Code2;
           const isRunning = runningSessionIds.has(session.sessionId);
           const isRowActive = activeBtwSessionData?.childSessionId
@@ -382,27 +415,29 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
                 .join(' ')}
               onClick={() => handleSwitch(session.sessionId)}
             >
-              {isRunning ? (
-                <Loader2
-                  size={12}
-                  className={[
-                    'bitfun-nav-panel__inline-item-icon',
-                    'is-running',
-                  ].join(' ')}
-                />
-              ) : (
-                <SessionIcon
-                  size={12}
-                  className={[
-                    'bitfun-nav-panel__inline-item-icon',
-                    sessionModeKey === 'cowork'
-                      ? 'is-cowork'
-                      : sessionModeKey === 'claw'
-                        ? 'is-claw'
-                        : 'is-code',
-                  ].join(' ')}
-                />
-              )}
+              {showSessionModeIcon && !isBtwChild ? (
+                isRunning ? (
+                  <Loader2
+                    size={14}
+                    className={[
+                      'bitfun-nav-panel__inline-item-icon',
+                      'is-running',
+                    ].join(' ')}
+                  />
+                ) : (
+                  <SessionIcon
+                    size={14}
+                    className={[
+                      'bitfun-nav-panel__inline-item-icon',
+                      sessionModeKey === 'cowork'
+                        ? 'is-cowork'
+                        : sessionModeKey === 'claw'
+                          ? 'is-claw'
+                          : 'is-code',
+                    ].join(' ')}
+                  />
+                )
+              ) : null}
 
               {isEditing ? (
                 <div className="bitfun-nav-panel__inline-item-edit" onClick={e => e.stopPropagation()}>
@@ -489,8 +524,7 @@ const SessionsSection: React.FC<SessionsSectionProps> = ({
               {row}
             </Tooltip>
           );
-        })
-      )}
+        })}
 
       {topLevelSessions.length > SESSIONS_LEVEL_0 && (
         <button

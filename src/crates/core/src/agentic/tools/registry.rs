@@ -12,6 +12,12 @@ pub struct ToolRegistry {
     tools: IndexMap<String, Arc<dyn Tool>>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     /// Create a new tool registry
     pub fn new() -> Self {
@@ -64,7 +70,7 @@ impl ToolRegistry {
 
     /// Remove all tools from the MCP server
     pub fn unregister_mcp_server_tools(&mut self, server_id: &str) {
-        let prefix = format!("mcp_{}_", server_id);
+        let prefix = format!("mcp__{}__", server_id);
         let to_remove: Vec<String> = self
             .tools
             .keys()
@@ -112,6 +118,10 @@ impl ToolRegistry {
         // Web tool
         self.register_tool(Arc::new(WebSearchTool::new()));
         self.register_tool(Arc::new(WebFetchTool::new()));
+        self.register_tool(Arc::new(ListMCPResourcesTool::new()));
+        self.register_tool(Arc::new(ReadMCPResourceTool::new()));
+        self.register_tool(Arc::new(ListMCPPromptsTool::new()));
+        self.register_tool(Arc::new(GetMCPPromptTool::new()));
 
         // Mermaid interactive chart tool
         self.register_tool(Arc::new(MermaidInteractiveTool::new()));
@@ -133,6 +143,11 @@ impl ToolRegistry {
 
         // MiniApp Agent tool (single InitMiniApp)
         self.register_tool(Arc::new(InitMiniAppTool::new()));
+
+        // All desktop automation consolidated into ComputerUse (click_element, click, mouse_move,
+        // scroll, drag, screenshot, locate, key_chord, type_text, pointer_move_rel, wait).
+        // The separate ComputerUseMousePrecise/Step/Click tools are no longer registered.
+        self.register_tool(Arc::new(ComputerUseTool::new()));
     }
 
     /// Register a single tool

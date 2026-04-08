@@ -6,6 +6,27 @@ use crate::service::remote_ssh::types::{RemoteDirEntry, RemoteFileEntry, RemoteT
 use anyhow::anyhow;
 use std::sync::Arc;
 
+/// Names skipped when listing workspace root for system-prompt preview (still lazy: no descent).
+fn should_skip_dir_in_prompt_preview(name: &str) -> bool {
+    matches!(
+        name,
+        "node_modules"
+            | ".git"
+            | "target"
+            | ".cargo"
+            | "__pycache__"
+            | "dist"
+            | "build"
+            | ".venv"
+            | "venv"
+            | "vendor"
+            | ".next"
+            | ".cache"
+            | ".nx"
+            | ".gradle"
+    )
+}
+
 /// Remote file service using SFTP protocol
 #[derive(Clone)]
 pub struct RemoteFileService {
@@ -64,6 +85,7 @@ impl RemoteFileService {
     /// Read directory contents via SFTP
     pub async fn read_dir(&self, connection_id: &str, path: &str) -> anyhow::Result<Vec<RemoteDirEntry>> {
         let manager = self.get_manager(connection_id).await?;
+        let path_resolved = manager.resolve_sftp_path(connection_id, path).await?;
         let mut entries = manager.sftp_read_dir(connection_id, path).await?;
 
         let mut result = Vec::new();
@@ -76,10 +98,10 @@ impl RemoteFileService {
                 continue;
             }
 
-            let full_path = if path.ends_with('/') {
-                format!("{}{}", path, name)
+            let full_path = if path_resolved.ends_with('/') {
+                format!("{}{}", path_resolved, name)
             } else {
-                format!("{}/{}", path, name)
+                format!("{}/{}", path_resolved, name)
             };
 
             let metadata = entry.metadata();
@@ -112,7 +134,7 @@ impl RemoteFileService {
         Ok(result)
     }
 
-    /// Build a tree of remote directory structure
+    /// Build a tree of remote directory structure (full walk; used by file explorer).
     pub async fn build_tree(
         &self,
         connection_id: &str,
@@ -121,6 +143,54 @@ impl RemoteFileService {
     ) -> anyhow::Result<RemoteTreeNode> {
         let max_depth = max_depth.unwrap_or(3);
         Box::pin(self.build_tree_impl(connection_id, path, 0, max_depth)).await
+    }
+
+    /// System prompt only: **one** SFTP `read_dir` at `path`, no recursion into subdirectories.
+    /// Deep structure is left to list/glob tools (lazy expansion).
+    pub async fn build_shallow_tree_for_layout_preview(
+        &self,
+        connection_id: &str,
+        path: &str,
+    ) -> anyhow::Result<RemoteTreeNode> {
+        const MAX_ENTRIES: usize = 80;
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string());
+
+        let mut entries = self.read_dir(connection_id, path).await?;
+        entries.retain(|e| {
+            if e.is_dir {
+                !should_skip_dir_in_prompt_preview(&e.name)
+            } else {
+                true
+            }
+        });
+        entries.sort_by(|a, b| {
+            match (a.is_dir, b.is_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
+        });
+        entries.truncate(MAX_ENTRIES);
+
+        let children: Vec<RemoteTreeNode> = entries
+            .into_iter()
+            .map(|e| RemoteTreeNode {
+                name: e.name,
+                path: e.path,
+                is_dir: e.is_dir,
+                children: None,
+            })
+            .collect();
+
+        Ok(RemoteTreeNode {
+            name,
+            path: path.to_string(),
+            is_dir: true,
+            children: Some(children),
+        })
     }
 
     async fn build_tree_impl(
@@ -136,10 +206,7 @@ impl RemoteFileService {
             .unwrap_or_else(|| path.to_string());
 
         // Check if this is a directory
-        let is_dir = match self.exists(connection_id, path).await {
-            Ok(exists) => exists,
-            Err(_) => false,
-        };
+        let is_dir: bool = self.exists(connection_id, path).await.unwrap_or_default();
 
         // Check if it's a directory by trying to read it
         let is_dir = if is_dir {
@@ -230,19 +297,16 @@ impl RemoteFileService {
     /// Remove a directory and its contents recursively via SFTP
     pub async fn remove_dir_all(&self, connection_id: &str, path: &str) -> anyhow::Result<()> {
         // First, delete all contents
-        match self.read_dir(connection_id, path).await {
-            Ok(entries) => {
-                for entry in entries {
-                    let entry_path = entry.path.clone();
-                    if entry.is_dir {
-                        Box::pin(self.remove_dir_all(connection_id, &entry_path)).await?;
-                    } else {
-                        let manager = self.get_manager(connection_id).await?;
-                        manager.sftp_remove(connection_id, &entry_path).await?;
-                    }
+        if let Ok(entries) = self.read_dir(connection_id, path).await {
+            for entry in entries {
+                let entry_path = entry.path.clone();
+                if entry.is_dir {
+                    Box::pin(self.remove_dir_all(connection_id, &entry_path)).await?;
+                } else {
+                    let manager = self.get_manager(connection_id).await?;
+                    manager.sftp_remove(connection_id, &entry_path).await?;
                 }
             }
-            Err(_) => {}
         }
 
         // Then remove the directory itself

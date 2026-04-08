@@ -102,7 +102,7 @@ pub async fn run_system_command(
         .env
         .map(|vars| vars.into_iter().map(|v| (v.key, v.value)).collect());
 
-    let env_ref: Option<&[(String, String)]> = env_vars.as_ref().map(|v| v.as_slice());
+    let env_ref: Option<&[(String, String)]> = env_vars.as_deref();
 
     let result = system::run_command(
         &request.command,
@@ -165,4 +165,26 @@ pub async fn set_macos_edit_menu_mode(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendNotificationRequest {
+    pub title: String,
+    pub body: Option<String>,
+}
+
+/// Send an OS-level desktop notification (Windows toast / macOS notification center).
+#[tauri::command]
+pub async fn send_system_notification(
+    app: tauri::AppHandle,
+    request: SendNotificationRequest,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    let mut builder = app.notification().builder().title(&request.title);
+    if let Some(body) = &request.body {
+        builder = builder.body(body);
+    }
+    builder.show().map_err(|e| e.to_string())
 }

@@ -14,14 +14,8 @@ export interface FileSystemNode {
   isSelected?: boolean;
   isExpanded?: boolean;
   
-  // Git status
   totalAnchors?: number;
   hasFixResult?: boolean;
-  
-  gitStatus?: 'untracked' | 'modified' | 'added' | 'deleted' | 'renamed' | 'conflicted' | 'staged';
-  gitStatusText?: string;
-  hasChildrenGitChanges?: boolean;
-  childrenGitStatuses?: Set<'untracked' | 'modified' | 'added' | 'deleted' | 'renamed' | 'conflicted' | 'staged'>;
 }
 
 
@@ -52,6 +46,16 @@ export interface FileExplorerProps {
   onNewFile?: (data: { parentPath: string }) => void;
   onNewFolder?: (data: { parentPath: string }) => void;
   onRefresh?: () => void;
+
+  /** When true, the floating toolbar is not rendered (e.g. actions live in a parent header). */
+  hideToolbar?: boolean;
+}
+
+/** Zero-arg handlers for toolbar buttons when the UI is rendered outside FileExplorer. */
+export interface FileExplorerToolbarHandlers {
+  onNewFile: () => void;
+  onNewFolder: () => void;
+  onRefresh: () => void;
 }
 
 
@@ -182,10 +186,6 @@ export interface FlatFileNode {
   size?: number;
   extension?: string;
   lastModified?: Date;
-  gitStatus?: FileSystemNode['gitStatus'];
-  gitStatusText?: string;
-  hasChildrenGitChanges?: boolean;
-  childrenGitStatuses?: Set<'untracked' | 'modified' | 'added' | 'deleted' | 'renamed' | 'conflicted' | 'staged'>;
   isCompressed?: boolean;
   originalNode?: FileSystemNode;
 }
