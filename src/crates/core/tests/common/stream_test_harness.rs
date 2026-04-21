@@ -1,11 +1,11 @@
 use super::fixture_loader::load_fixture_bytes;
 use super::sse_fixture_server::{FixtureSseServer, FixtureSseServerOptions};
-use bitfun_core::agentic::events::{AgenticEvent, EventQueue, EventQueueConfig};
-use bitfun_core::agentic::execution::{StreamProcessError, StreamResult};
-use bitfun_core::infrastructure::ai::ai_stream_handlers::{
+use bitfun_ai_adapters::stream::{
     handle_anthropic_stream, handle_gemini_stream, handle_openai_stream, handle_responses_stream,
     UnifiedResponse,
 };
+use bitfun_core::agentic::events::{AgenticEvent, EventQueue, EventQueueConfig};
+use bitfun_core::agentic::execution::{StreamProcessError, StreamResult};
 use bitfun_core::StreamProcessor;
 use futures::StreamExt;
 use std::sync::Arc;
@@ -32,6 +32,7 @@ pub struct StreamFixtureRunOutput {
 pub struct StreamFixtureRunOptions {
     pub server_options: FixtureSseServerOptions,
     pub openai_inline_think_in_text: bool,
+    pub anthropic_inline_think_in_text: bool,
 }
 
 impl Default for StreamFixtureRunOptions {
@@ -39,6 +40,7 @@ impl Default for StreamFixtureRunOptions {
         Self {
             server_options: FixtureSseServerOptions::default(),
             openai_inline_think_in_text: false,
+            anthropic_inline_think_in_text: false,
         }
     }
 }
@@ -88,13 +90,22 @@ pub async fn run_stream_fixture_with_options(
             ));
         }
         StreamFixtureProvider::Anthropic => {
-            tokio::spawn(handle_anthropic_stream(response, tx_event, Some(tx_raw_sse)));
+            tokio::spawn(handle_anthropic_stream(
+                response,
+                tx_event,
+                Some(tx_raw_sse),
+                options.anthropic_inline_think_in_text,
+            ));
         }
         StreamFixtureProvider::Gemini => {
             tokio::spawn(handle_gemini_stream(response, tx_event, Some(tx_raw_sse)));
         }
         StreamFixtureProvider::Responses => {
-            tokio::spawn(handle_responses_stream(response, tx_event, Some(tx_raw_sse)));
+            tokio::spawn(handle_responses_stream(
+                response,
+                tx_event,
+                Some(tx_raw_sse),
+            ));
         }
     }
 
