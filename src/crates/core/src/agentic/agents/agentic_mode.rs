@@ -26,13 +26,12 @@ impl AgenticMode {
                 "Glob".to_string(),
                 "WebSearch".to_string(),
                 "TodoWrite".to_string(),
-                "MermaidInteractive".to_string(),
                 "GenerativeUI".to_string(),
                 "Skill".to_string(),
                 "AskUserQuestion".to_string(),
                 "Git".to_string(),
                 "TerminalControl".to_string(),
-                "ComputerUse".to_string(),
+                "ControlHub".to_string(),
             ],
         }
     }

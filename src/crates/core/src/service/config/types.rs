@@ -420,6 +420,10 @@ pub struct AIConfig {
     /// Global proxy configuration.
     pub proxy: ProxyConfig,
 
+    /// Streaming idle timeout in seconds; `None` means wait indefinitely.
+    #[serde(default = "default_stream_idle_timeout")]
+    pub stream_idle_timeout_secs: Option<u64>,
+
     /// Tool execution timeout in seconds; `None` means wait indefinitely.
     #[serde(default = "default_tool_execution_timeout")]
     pub tool_execution_timeout_secs: Option<u64>,
@@ -443,20 +447,55 @@ pub struct AIConfig {
 
 impl AIConfig {
     /// Resolves a configured model reference by `id`, `name`, or `model_name`.
+    ///
+    /// Returns the model id only when the matched model is `enabled`. This is the
+    /// single source of truth for "is this model usable right now?" and is the
+    /// variant every runtime path (client factory, execution engine, etc.) should
+    /// use. UI / migration code that needs to look up disabled entries should call
+    /// [`Self::resolve_model_reference_any`] instead.
     pub fn resolve_model_reference(&self, model_ref: &str) -> Option<String> {
+        self.models
+            .iter()
+            .find(|m| {
+                m.enabled
+                    && (m.id == model_ref || m.name == model_ref || m.model_name == model_ref)
+            })
+            .map(|m| m.id.clone())
+    }
+
+    /// Resolves a model reference regardless of `enabled` state. UI / migration
+    /// only — never use this on the runtime model-selection path.
+    pub fn resolve_model_reference_any(&self, model_ref: &str) -> Option<String> {
         self.models
             .iter()
             .find(|m| m.id == model_ref || m.name == model_ref || m.model_name == model_ref)
             .map(|m| m.id.clone())
     }
 
+    /// Returns true if the given reference points to a model that exists and is
+    /// currently enabled.
+    pub fn is_model_reference_active(&self, model_ref: &str) -> bool {
+        self.resolve_model_reference(model_ref).is_some()
+    }
+
+    /// Returns the id of the first enabled model, if any. Used as a final
+    /// fallback when a configured default points to a disabled / missing model.
+    pub fn first_enabled_model_id(&self) -> Option<String> {
+        self.models
+            .iter()
+            .find(|m| m.enabled)
+            .map(|m| m.id.clone())
+    }
+
     /// Resolves a model selector value.
     ///
     /// Special values:
-    /// - `primary`: must resolve to a valid primary model
+    /// - `primary`: must resolve to a valid (enabled) primary model
     /// - `fast`: first tries the configured fast model, then falls back to primary
     ///
-    /// Regular values are resolved by `id`, `name`, or `model_name`.
+    /// Regular values are resolved by `id`, `name`, or `model_name`. All lookups
+    /// require the target model to be enabled — disabled models are treated as if
+    /// they did not exist.
     pub fn resolve_model_selection(&self, model_ref: &str) -> Option<String> {
         match model_ref {
             "primary" => self
@@ -526,6 +565,11 @@ pub struct ModeConfigView {
 
 fn default_true() -> bool {
     true
+}
+
+/// Default is no timeout (wait forever).
+fn default_stream_idle_timeout() -> Option<u64> {
+    None
 }
 
 /// Default is no timeout (wait forever).
@@ -883,6 +927,31 @@ pub struct AIModelConfig {
     /// fields, then apply custom JSON).
     #[serde(default)]
     pub custom_request_body_mode: Option<String>,
+
+    /// Authentication source for this model. Defaults to a static API key for
+    /// backward compatibility; selecting a CLI source causes the AI client
+    /// factory to look up `~/.codex/auth.json` or `~/.gemini/...` at request
+    /// time and inject the resolved Bearer token / extra headers.
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+/// Where to obtain the runtime auth material for an `AIModelConfig`.
+///
+/// Stored on disk as `{"type":"api_key"}` / `{"type":"codex_cli"}` /
+/// `{"type":"gemini_cli"}`; the concrete sub-mode (apikey vs OAuth) is
+/// auto-detected from the CLI's on-disk state at resolution time so the user
+/// only has to choose "use Codex CLI" once.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuthConfig {
+    /// Use the inline `api_key` string (default; legacy behavior).
+    #[default]
+    ApiKey,
+    /// Reuse `~/.codex/auth.json` (apikey or ChatGPT-login).
+    CodexCli,
+    /// Reuse `~/.gemini/.env` or `~/.gemini/oauth_creds.json`.
+    GeminiCli,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -915,6 +984,8 @@ struct AIModelConfigCompat {
     thinking_budget_tokens: Option<u32>,
     custom_request_body: Option<String>,
     custom_request_body_mode: Option<String>,
+    #[serde(default)]
+    auth: AuthConfig,
 }
 
 impl From<AIModelConfigCompat> for AIModelConfig {
@@ -956,6 +1027,7 @@ impl From<AIModelConfigCompat> for AIModelConfig {
             thinking_budget_tokens: value.thinking_budget_tokens,
             custom_request_body: value.custom_request_body,
             custom_request_body_mode: value.custom_request_body_mode,
+            auth: value.auth,
         }
     }
 }
@@ -1110,7 +1182,7 @@ impl Default for AIExperienceConfig {
             enable_session_title_generation: true,
             enable_welcome_panel_ai_analysis: false,
             enable_visual_mode: false,
-            enable_agent_companion: false,
+            enable_agent_companion: true,
         }
     }
 }
@@ -1307,6 +1379,7 @@ impl Default for AIConfig {
             mode_configs: std::collections::HashMap::new(),
             subagent_configs: std::collections::HashMap::new(),
             proxy: ProxyConfig::default(),
+            stream_idle_timeout_secs: default_stream_idle_timeout(),
             tool_execution_timeout_secs: default_tool_execution_timeout(),
             tool_confirmation_timeout_secs: default_tool_confirmation_timeout(),
             skip_tool_confirmation: true,
@@ -1345,6 +1418,7 @@ impl Default for AIModelConfig {
             thinking_budget_tokens: None,
             custom_request_body: None,
             custom_request_body_mode: None,
+            auth: AuthConfig::ApiKey,
         }
     }
 }
@@ -1515,7 +1589,7 @@ impl AIModelConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{AIModelConfig, ReasoningMode};
+    use super::{AIConfig, AIModelConfig, ReasoningMode};
 
     #[test]
     fn deserializes_compatibility_thinking_flag_into_reasoning_mode() {
@@ -1596,5 +1670,31 @@ mod tests {
         .expect("config without inline_think_in_text should deserialize");
 
         assert!(config.inline_think_in_text);
+    }
+
+    #[test]
+    fn default_ai_config_uses_no_stream_idle_timeout() {
+        let config = AIConfig::default();
+
+        assert_eq!(config.stream_idle_timeout_secs, None);
+    }
+
+    #[test]
+    fn deserializes_missing_stream_idle_timeout_as_none() {
+        let config: AIConfig = serde_json::from_value(serde_json::json!({
+            "models": [],
+            "agent_models": {},
+            "func_agent_models": {},
+            "default_models": {},
+            "mode_configs": {},
+            "subagent_configs": {},
+            "proxy": {
+                "enabled": false,
+                "url": ""
+            }
+        }))
+        .expect("config without stream_idle_timeout_secs should deserialize");
+
+        assert_eq!(config.stream_idle_timeout_secs, None);
     }
 }

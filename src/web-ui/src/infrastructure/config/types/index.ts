@@ -132,7 +132,15 @@ export interface AIModelConfig {
   reasoning_effort?: string;
   /** Optional Anthropic manual thinking token budget. */
   thinking_budget_tokens?: number;
+  /** Authentication source. Defaults to inline `api_key`. */
+  auth?: AuthConfig;
 }
+
+/** Authentication source persisted on each model entry. */
+export type AuthConfig =
+  | { type: 'api_key' }
+  | { type: 'codex_cli' }
+  | { type: 'gemini_cli' };
 
 export interface ProxyConfig {
   enabled: boolean;
@@ -162,6 +170,7 @@ export interface AIConfig {
   streaming: boolean;
   auto_save_conversations: boolean;
   conversation_history_limit: number;
+  stream_idle_timeout_secs?: number | null;
   tool_execution_timeout_secs?: number | null;
   tool_confirmation_timeout_secs?: number | null;
   skip_tool_confirmation?: boolean;

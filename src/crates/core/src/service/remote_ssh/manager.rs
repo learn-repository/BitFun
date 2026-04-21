@@ -4,12 +4,13 @@
 
 use crate::service::remote_ssh::password_vault::SSHPasswordVault;
 use crate::service::remote_ssh::types::{
-    SSHAuthMethod, SSHConfigEntry, SSHConfigLookupResult, SSHConnectionConfig, SSHConnectionResult,
-    SavedConnection, ServerInfo,
+    SSHAuthMethod, SSHCommandOptions, SSHCommandResult, SSHConfigEntry, SSHConfigLookupResult,
+    SSHConnectionConfig, SSHConnectionResult, SavedConnection, ServerInfo,
 };
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use russh::client::{DisconnectReason, Handle, Handler, Msg};
+use russh::Sig;
 use russh_keys::key::PublicKey;
 use russh_keys::PublicKeyBase64;
 use russh_sftp::client::fs::ReadDir;
@@ -17,8 +18,13 @@ use russh_sftp::client::SftpSession;
 #[cfg(feature = "ssh_config")]
 use ssh_config::SSHConfig;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::time::{Duration, Instant};
+
+const SSH_COMMAND_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SSH_COMMAND_INTERRUPT_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 /// OpenSSH keyword matching is case-insensitive, but `ssh_config` stores keys as written in the file
 /// (e.g. `HostName` vs `Hostname`). Resolve by ASCII case-insensitive compare.
@@ -58,6 +64,13 @@ struct ActiveConnection {
     sftp_session: Arc<tokio::sync::RwLock<Option<Arc<SftpSession>>>>,
     #[allow(dead_code)]
     server_key: Option<PublicKey>,
+    /// Liveness flag; flipped to false from `SSHHandler::disconnected`.
+    /// Allows `is_connected` and SFTP/exec entry points to detect a dead session
+    /// without waiting for the next failed I/O.
+    alive: Arc<AtomicBool>,
+    /// Per-connection lock to serialize transparent reconnect attempts and
+    /// avoid stampedes when multiple SFTP/exec calls hit a dead session at once.
+    reconnect_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// SSH client handler with host key verification
@@ -76,6 +89,9 @@ struct SSHHandler {
     /// surface them after connect_stream() returns.
     /// Uses std::sync::Mutex so it can be read from sync map_err closures.
     disconnect_reason: Arc<std::sync::Mutex<Option<String>>>,
+    /// Shared liveness flag, flipped to false on disconnect so the manager
+    /// can detect dead sessions and trigger transparent reconnect.
+    alive: Arc<AtomicBool>,
 }
 
 type HostKeyVerifyCallback = dyn Fn(String, u16, &PublicKey) -> bool + Send + Sync;
@@ -90,6 +106,7 @@ impl SSHHandler {
             host: None,
             port: None,
             disconnect_reason: Arc::new(std::sync::Mutex::new(None)),
+            alive: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -102,6 +119,7 @@ impl SSHHandler {
             host: None,
             port: None,
             disconnect_reason: Arc::new(std::sync::Mutex::new(None)),
+            alive: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -117,6 +135,7 @@ impl SSHHandler {
             host: None,
             port: None,
             disconnect_reason: Arc::new(std::sync::Mutex::new(None)),
+            alive: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -124,8 +143,9 @@ impl SSHHandler {
         host: String,
         port: u16,
         known_hosts: Arc<tokio::sync::RwLock<HashMap<String, KnownHostEntry>>>,
-    ) -> (Self, Arc<std::sync::Mutex<Option<String>>>) {
+    ) -> (Self, Arc<std::sync::Mutex<Option<String>>>, Arc<AtomicBool>) {
         let disconnect_reason = Arc::new(std::sync::Mutex::new(None));
+        let alive = Arc::new(AtomicBool::new(true));
         let handler = Self {
             expected_key: None,
             verify_callback: None,
@@ -133,8 +153,9 @@ impl SSHHandler {
             host: Some(host),
             port: Some(port),
             disconnect_reason: disconnect_reason.clone(),
+            alive: alive.clone(),
         };
-        (handler, disconnect_reason)
+        (handler, disconnect_reason, alive)
     }
 }
 
@@ -271,6 +292,9 @@ impl Handler for SSHHandler {
         if let Ok(mut guard) = self.disconnect_reason.lock() {
             *guard = Some(msg);
         }
+        // Flip the shared liveness flag so the manager can detect the dead
+        // session and trigger transparent reconnect on the next SFTP/exec call.
+        self.alive.store(false, Ordering::SeqCst);
         // Propagate errors so russh surfaces them; swallow clean server disconnect.
         match reason {
             DisconnectReason::ReceivedDisconnect(_) => Ok(()),
@@ -854,6 +878,40 @@ impl SSHConnectionManager {
         config: SSHConnectionConfig,
         timeout_secs: u64,
     ) -> anyhow::Result<SSHConnectionResult> {
+        let (handle, alive, server_info) = self.establish_session(&config, timeout_secs).await?;
+
+        let connection_id = config.id.clone();
+
+        let mut guard = self.connections.write().await;
+        guard.insert(
+            connection_id.clone(),
+            ActiveConnection {
+                handle: Arc::new(handle),
+                config,
+                server_info: server_info.clone(),
+                sftp_session: Arc::new(tokio::sync::RwLock::new(None)),
+                server_key: None,
+                alive,
+                reconnect_lock: Arc::new(tokio::sync::Mutex::new(())),
+            },
+        );
+
+        Ok(SSHConnectionResult {
+            success: true,
+            connection_id: Some(connection_id),
+            error: None,
+            server_info,
+        })
+    }
+
+    /// Build a fresh SSH session (handshake + auth + server info probe) without
+    /// touching the connection map. Reused by both [`Self::connect_with_timeout`]
+    /// and the transparent reconnect path in [`Self::ensure_alive_or_reconnect`].
+    async fn establish_session(
+        &self,
+        config: &SSHConnectionConfig,
+        timeout_secs: u64,
+    ) -> anyhow::Result<(Handle<SSHHandler>, Arc<AtomicBool>, Option<ServerInfo>)> {
         let addr = format!("{}:{}", config.host, config.port);
 
         // Connect to the server with timeout
@@ -920,9 +978,14 @@ impl SSHConnectionManager {
         };
 
         let ssh_config = Arc::new(russh::client::Config {
-            inactivity_timeout: Some(std::time::Duration::from_secs(60)),
+            // Tolerate brief network blips (NAT timeouts, Wi-Fi roaming) by
+            // widening the inactivity window and allowing more missed keepalives
+            // before declaring the session dead. Combined with transparent
+            // reconnect, this prevents the user-visible "early eof" cascade
+            // while idly browsing the remote file picker.
+            inactivity_timeout: Some(std::time::Duration::from_secs(180)),
             keepalive_interval: Some(std::time::Duration::from_secs(30)),
-            keepalive_max: 3,
+            keepalive_max: 6,
             // Broad algorithm list for compatibility with both modern and legacy SSH servers.
             // Modern algorithms first (preferred), legacy ones appended as fallback.
             preferred: russh::Preferred {
@@ -952,7 +1015,7 @@ impl SSHConnectionManager {
         });
 
         // Create handler with known_hosts for verification
-        let (handler, disconnect_reason) = SSHHandler::with_known_hosts(
+        let (handler, disconnect_reason, alive) = SSHHandler::with_known_hosts(
             config.host.clone(),
             config.port,
             self.known_hosts.clone(),
@@ -1072,41 +1135,24 @@ impl SSHConnectionManager {
             }
         }
 
-        let connection_id = config.id.clone();
-
-        // Store connection
-        let mut guard = self.connections.write().await;
-        guard.insert(
-            connection_id.clone(),
-            ActiveConnection {
-                handle: Arc::new(handle),
-                config,
-                server_info: server_info.clone(),
-                sftp_session: Arc::new(tokio::sync::RwLock::new(None)),
-                server_key: None,
-            },
-        );
-
-        Ok(SSHConnectionResult {
-            success: true,
-            connection_id: Some(connection_id),
-            error: None,
-            server_info,
-        })
+        Ok((handle, alive, server_info))
     }
 
     /// Get server information (partial lines allowed so we can still fill `home_dir` via [`Self::probe_remote_home_dir`]).
     async fn get_server_info_internal(handle: &Handle<SSHHandler>) -> Option<ServerInfo> {
-        let (stdout, _stderr, exit_status) =
-            Self::execute_command_internal(handle, "uname -s && hostname && echo $HOME")
-                .await
-                .ok()?;
+        let result = Self::execute_command_internal(
+            handle,
+            "uname -s && hostname && echo $HOME",
+            SSHCommandOptions::default(),
+        )
+        .await
+        .ok()?;
 
-        if exit_status != 0 {
+        if result.exit_code != 0 {
             return None;
         }
 
-        let lines: Vec<&str> = stdout.trim().lines().collect();
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
         if lines.is_empty() {
             return None;
         }
@@ -1128,13 +1174,15 @@ impl SSHConnectionManager {
             "sh -c 'getent passwd \"$(id -un)\" 2>/dev/null | cut -d: -f6'",
         ];
         for cmd in PROBES {
-            let Ok((stdout, _, status)) = Self::execute_command_internal(handle, cmd).await else {
+            let Ok(result) =
+                Self::execute_command_internal(handle, cmd, SSHCommandOptions::default()).await
+            else {
                 continue;
             };
-            if status != 0 {
+            if result.exit_code != 0 {
                 continue;
             }
-            let first = stdout.trim().lines().next().unwrap_or("").trim();
+            let first = result.stdout.trim().lines().next().unwrap_or("").trim();
             if first.is_empty() || first == "~" {
                 continue;
             }
@@ -1144,19 +1192,79 @@ impl SSHConnectionManager {
     }
 
     /// Execute a command on the remote server
+    async fn interrupt_exec_channel(
+        session: &russh::Channel<Msg>,
+        signal: Sig,
+    ) -> anyhow::Result<()> {
+        session.signal(signal).await?;
+        let _ = session.eof().await;
+        Ok(())
+    }
+
     async fn execute_command_internal(
         handle: &Handle<SSHHandler>,
         command: &str,
-    ) -> std::result::Result<(String, String, i32), anyhow::Error> {
+        options: SSHCommandOptions,
+    ) -> std::result::Result<SSHCommandResult, anyhow::Error> {
         let mut session = handle.channel_open_session().await?;
         session.exec(true, command).await?;
 
         let mut stdout = String::new();
         let mut stderr = String::new();
-        let mut exit_status: i32 = -1;
+        let mut exit_status: Option<i32> = None;
+        let mut interrupted = false;
+        let mut timed_out = false;
+        let timeout_deadline = options
+            .timeout_ms
+            .map(|ms| Instant::now() + Duration::from_millis(ms));
+        let mut interrupt_drain_deadline: Option<Instant> = None;
 
         loop {
-            match session.wait().await {
+            let now = Instant::now();
+
+            if !interrupted
+                && options
+                    .cancellation_token
+                    .as_ref()
+                    .is_some_and(|token| token.is_cancelled())
+            {
+                interrupted = true;
+                interrupt_drain_deadline = Some(now + SSH_COMMAND_INTERRUPT_DRAIN_GRACE);
+                if let Err(e) = Self::interrupt_exec_channel(&session, Sig::INT).await {
+                    log::debug!("Failed to interrupt remote exec channel via SIGINT: {}", e);
+                }
+            }
+
+            if !timed_out && timeout_deadline.is_some_and(|deadline| now >= deadline) {
+                timed_out = true;
+                interrupt_drain_deadline = Some(now + SSH_COMMAND_INTERRUPT_DRAIN_GRACE);
+                if let Err(e) = Self::interrupt_exec_channel(&session, Sig::INT).await {
+                    log::debug!("Failed to interrupt timed out remote exec channel: {}", e);
+                }
+            }
+
+            let wait_budget = if let Some(deadline) = interrupt_drain_deadline {
+                if now >= deadline {
+                    let _ = session.close().await;
+                    break;
+                }
+                (deadline - now).min(SSH_COMMAND_WAIT_POLL_INTERVAL)
+            } else if let Some(deadline) = timeout_deadline {
+                if now >= deadline {
+                    SSH_COMMAND_WAIT_POLL_INTERVAL
+                } else {
+                    (deadline - now).min(SSH_COMMAND_WAIT_POLL_INTERVAL)
+                }
+            } else {
+                SSH_COMMAND_WAIT_POLL_INTERVAL
+            };
+
+            let next_msg = match tokio::time::timeout(wait_budget, session.wait()).await {
+                Ok(msg) => msg,
+                Err(_) => continue,
+            };
+
+            match next_msg {
                 Some(russh::ChannelMsg::Data { ref data }) => {
                     stdout.push_str(&String::from_utf8_lossy(data));
                 }
@@ -1166,7 +1274,10 @@ impl SSHConnectionManager {
                 Some(russh::ChannelMsg::ExitStatus {
                     exit_status: status,
                 }) => {
-                    exit_status = status as i32;
+                    exit_status = Some(status as i32);
+                }
+                Some(russh::ChannelMsg::ExitSignal { signal_name, .. }) => {
+                    interrupted = interrupted || matches!(signal_name, Sig::INT | Sig::TERM);
                 }
                 Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => {
                     break;
@@ -1178,7 +1289,21 @@ impl SSHConnectionManager {
             }
         }
 
-        Ok((stdout, stderr, exit_status))
+        Ok(SSHCommandResult {
+            stdout,
+            stderr,
+            exit_code: exit_status.unwrap_or_else(|| {
+                if timed_out {
+                    124
+                } else if interrupted {
+                    130
+                } else {
+                    -1
+                }
+            }),
+            interrupted,
+            timed_out,
+        })
     }
 
     /// Disconnect from a server
@@ -1194,10 +1319,105 @@ impl SSHConnectionManager {
         guard.clear();
     }
 
-    /// Check if connected
+    /// Check if connected.
+    ///
+    /// Returns true only when there is an entry in the connections map AND its
+    /// liveness flag is still set. A previously-connected session that the
+    /// server (or network) tore down is considered NOT connected even though
+    /// the entry has not yet been pruned, so the UI cannot mistakenly believe
+    /// the session is healthy.
     pub async fn is_connected(&self, connection_id: &str) -> bool {
         let guard = self.connections.read().await;
-        guard.contains_key(connection_id)
+        guard
+            .get(connection_id)
+            .map(|c| c.alive.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    }
+
+    /// Ensure the connection is alive; if it was torn down (network blip,
+    /// server-side timeout), transparently reconnect using the saved config
+    /// and (for password auth) the encrypted password vault.
+    ///
+    /// Uses a per-connection mutex to prevent reconnect stampedes when many
+    /// concurrent SFTP/exec calls hit a dead session at the same time.
+    /// Idempotent: returns Ok(()) immediately when the session is already alive.
+    async fn ensure_alive_or_reconnect(&self, connection_id: &str) -> anyhow::Result<()> {
+        let (alive_flag, reconnect_lock, mut config) = {
+            let guard = self.connections.read().await;
+            let conn = guard
+                .get(connection_id)
+                .ok_or_else(|| anyhow!("Connection {} not found", connection_id))?;
+            (
+                conn.alive.clone(),
+                conn.reconnect_lock.clone(),
+                conn.config.clone(),
+            )
+        };
+
+        if alive_flag.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        // Serialize concurrent reconnect attempts for the same connection.
+        let _guard = reconnect_lock.lock().await;
+        // Re-check under lock; another task may have already restored the session.
+        if alive_flag.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        log::warn!(
+            "SSH session {} is dead; attempting transparent reconnect",
+            connection_id
+        );
+
+        // Refresh the password from the encrypted vault if password auth was
+        // configured but the in-memory copy is empty (defensive — covers cases
+        // where callers cleared it intentionally).
+        if let SSHAuthMethod::Password { ref password } = config.auth {
+            if password.is_empty() {
+                match self.password_vault.load(connection_id).await {
+                    Ok(Some(pwd)) => {
+                        config.auth = SSHAuthMethod::Password { password: pwd };
+                    }
+                    Ok(None) => {
+                        return Err(anyhow!(
+                            "SSH session {} is dead and no stored password is available for reconnect",
+                            connection_id
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Failed to load stored SSH password: {}", e));
+                    }
+                }
+            }
+        }
+
+        let (handle, alive, server_info) = self.establish_session(&config, 30).await?;
+
+        // Replace the handle and clear the cached SFTP session so subsequent
+        // operations open a fresh channel on the new transport.
+        {
+            let mut guard = self.connections.write().await;
+            if let Some(conn) = guard.get_mut(connection_id) {
+                conn.handle = Arc::new(handle);
+                conn.alive = alive;
+                if let Some(si) = server_info {
+                    conn.server_info = Some(si);
+                }
+                let mut sftp_guard = conn.sftp_session.write().await;
+                *sftp_guard = None;
+            } else {
+                // Entry was removed concurrently (e.g. user-triggered disconnect);
+                // nothing to restore.
+                return Err(anyhow!(
+                    "Connection {} was removed during reconnect",
+                    connection_id
+                ));
+            }
+        }
+
+        log::info!("SSH session {} reconnected successfully", connection_id);
+        Ok(())
     }
 
     /// Execute a command on the remote server
@@ -1206,12 +1426,38 @@ impl SSHConnectionManager {
         connection_id: &str,
         command: &str,
     ) -> anyhow::Result<(String, String, i32)> {
-        let guard = self.connections.read().await;
-        let conn = guard
-            .get(connection_id)
-            .ok_or_else(|| anyhow!("Connection {} not found", connection_id))?;
+        let result = self
+            .execute_command_with_options(connection_id, command, SSHCommandOptions::default())
+            .await?;
 
-        Self::execute_command_internal(&conn.handle, command)
+        if result.timed_out {
+            return Err(anyhow!("Command timed out"));
+        }
+        if result.interrupted {
+            return Err(anyhow!("Command was cancelled"));
+        }
+
+        Ok((result.stdout, result.stderr, result.exit_code))
+    }
+
+    /// Execute a command on the remote server with structured timeout/cancellation handling.
+    pub async fn execute_command_with_options(
+        &self,
+        connection_id: &str,
+        command: &str,
+        options: SSHCommandOptions,
+    ) -> anyhow::Result<SSHCommandResult> {
+        self.ensure_alive_or_reconnect(connection_id).await?;
+        let handle = {
+            let guard = self.connections.read().await;
+            guard
+                .get(connection_id)
+                .ok_or_else(|| anyhow!("Connection {} not found", connection_id))?
+                .handle
+                .clone()
+        };
+
+        Self::execute_command_internal(&handle, command, options)
             .await
             .map_err(|e| anyhow!("Command execution failed: {}", e))
     }
@@ -1311,8 +1557,15 @@ impl SSHConnectionManager {
         }
     }
 
-    /// Get or create SFTP session for a connection
+    /// Get or create SFTP session for a connection.
+    ///
+    /// Detects dead transports up-front via [`Self::ensure_alive_or_reconnect`]
+    /// so a transient SSH disconnect (e.g. NAT timeout while the user is idly
+    /// browsing the remote folder picker) is recovered transparently instead
+    /// of cascading into a stale cached SFTP handle that fails forever.
     pub async fn get_sftp(&self, connection_id: &str) -> anyhow::Result<Arc<SftpSession>> {
+        self.ensure_alive_or_reconnect(connection_id).await?;
+
         // First check if we have an existing SFTP session
         {
             let guard = self.connections.read().await;
@@ -1405,15 +1658,53 @@ impl SSHConnectionManager {
         Ok(())
     }
 
-    /// Read directory via SFTP
+    /// Read directory via SFTP.
+    ///
+    /// Retries once after dropping the cached SFTP session and forcing a
+    /// reconnect attempt, so a stale SFTP channel left over from a prior
+    /// network blip does not permanently break the remote folder picker.
     pub async fn sftp_read_dir(&self, connection_id: &str, path: &str) -> anyhow::Result<ReadDir> {
-        let path = self.resolve_sftp_path(connection_id, path).await?;
+        let resolved = self.resolve_sftp_path(connection_id, path).await?;
         let sftp = self.get_sftp(connection_id).await?;
-        let entries = sftp
-            .read_dir(&path)
-            .await
-            .map_err(|e| anyhow!("Failed to read directory '{}': {}", path, e))?;
-        Ok(entries)
+        match sftp.read_dir(&resolved).await {
+            Ok(entries) => Ok(entries),
+            Err(first_err) => {
+                log::warn!(
+                    "SFTP read_dir '{}' failed (will retry once after refreshing session): {}",
+                    resolved,
+                    first_err
+                );
+                self.invalidate_sftp_session(connection_id).await;
+                // Force the alive flag to false so ensure_alive_or_reconnect rebuilds
+                // the underlying SSH transport too — the previous failure may indicate
+                // the channel was torn down even though the keepalive callback has not
+                // fired yet.
+                self.mark_dead(connection_id).await;
+                let sftp = self.get_sftp(connection_id).await?;
+                sftp.read_dir(&resolved)
+                    .await
+                    .map_err(|e| anyhow!("Failed to read directory '{}': {}", resolved, e))
+            }
+        }
+    }
+
+    /// Drop the cached SFTP session for a connection so the next call opens a
+    /// fresh channel. Safe to call when no session is cached.
+    async fn invalidate_sftp_session(&self, connection_id: &str) {
+        let guard = self.connections.read().await;
+        if let Some(conn) = guard.get(connection_id) {
+            let mut sftp_guard = conn.sftp_session.write().await;
+            *sftp_guard = None;
+        }
+    }
+
+    /// Force the liveness flag to false. Triggers a transparent reconnect on
+    /// the next call to [`Self::ensure_alive_or_reconnect`].
+    async fn mark_dead(&self, connection_id: &str) {
+        let guard = self.connections.read().await;
+        if let Some(conn) = guard.get(connection_id) {
+            conn.alive.store(false, Ordering::SeqCst);
+        }
     }
 
     /// Create directory via SFTP

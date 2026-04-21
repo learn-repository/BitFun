@@ -1,6 +1,7 @@
 use crate::agentic::tools::framework::{
     Tool, ToolRenderOptions, ToolResult, ToolUseContext, ValidationResult,
 };
+use crate::agentic::workspace::WorkspaceCommandOptions;
 use crate::infrastructure::events::event_system::get_global_event_system;
 use crate::infrastructure::events::event_system::BackendEvent::{
     ToolExecutionProgress, ToolTerminalReady,
@@ -44,6 +45,73 @@ const BANNED_COMMANDS: &[&str] = &[
     "firefox",
     "safari",
 ];
+
+/// Detect a known-broken pattern: `osascript ... keystroke "<text containing
+/// non-ASCII>"`. AppleScript's `keystroke` sends raw key codes, NOT Unicode
+/// strings — typing CJK / emoji / non-Latin text via `keystroke` produces
+/// garbage like "AAA…" because the receiving app sees the wrong key codes.
+/// The correct path is `ControlHub domain:"desktop" action:"paste"` (which
+/// uses the system clipboard).
+fn detect_osascript_keystroke_non_ascii(cmd: &str) -> Option<String> {
+    if !cmd.contains("osascript") {
+        return None;
+    }
+    // Walk every `keystroke "..."` literal and check for non-ASCII inside.
+    let bytes = cmd.as_bytes();
+    let needle = b"keystroke";
+    let mut i = 0usize;
+    while i + needle.len() < bytes.len() {
+        if &bytes[i..i + needle.len()] == needle {
+            // Find the next quoted string after `keystroke`.
+            let mut j = i + needle.len();
+            while j < bytes.len() && bytes[j] != b'"' {
+                j += 1;
+            }
+            if j >= bytes.len() {
+                break;
+            }
+            let start = j + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end] != b'"' {
+                end += 1;
+            }
+            if end > bytes.len() {
+                break;
+            }
+            let literal = &cmd[start..end.min(cmd.len())];
+            if !literal.is_ascii() {
+                return Some(literal.to_string());
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Detect `osascript` driving a chat / IM application. The model loves to
+/// reach for AppleScript here, but `tell process "<App>" to keystroke …` is
+/// brittle (no CJK), opaque (no return value to verify), and almost always
+/// loses to `system.open_app + desktop.paste` or the `im_send_message`
+/// playbook. Returns the matched app name when detected.
+fn detect_osascript_im_app(cmd: &str) -> Option<&'static str> {
+    if !cmd.contains("osascript") {
+        return None;
+    }
+    const IM_APPS: &[&str] = &[
+        "WeChat", "微信", "iMessage", "Messages", "Slack", "Lark", "飞书", "Telegram", "DingTalk",
+        "钉钉", "QQ", "Discord", "Teams", "Whatsapp", "WhatsApp",
+    ];
+    let cmd_lc = cmd.to_lowercase();
+    for app in IM_APPS {
+        let app_lc = app.to_lowercase();
+        if cmd.contains(app) || cmd_lc.contains(&app_lc) {
+            return Some(*app);
+        }
+    }
+    None
+}
 
 fn truncate_output_preserving_tail(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -212,6 +280,17 @@ impl BashTool {
             let _ = event_system.emit(event).await;
         });
     }
+
+    fn cancellation_requested(context: &ToolUseContext) -> bool {
+        context
+            .cancellation_token
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+    }
+
+    fn cancellation_error(stage: &str) -> BitFunError {
+        BitFunError::cancelled(format!("Bash tool execution cancelled {}", stage))
+    }
 }
 
 #[async_trait]
@@ -294,7 +373,7 @@ Usage notes:
         }
         if !context.map(|c| c.is_remote()).unwrap_or(false) {
             base.push_str(
-                "\n\n**Desktop automation:** Prefer this tool for anything achievable from the **workspace shell** (build, test, git, scripts, CLIs). On **macOS**, `open -a \"AppName\"` launches or foregrounds an app with fewer steps than GUI workflows. When **Computer use** is enabled, use **`ComputerUse`** **`action: locate`** for **named** on-screen controls before guessing coordinates from **`action: screenshot`** alone.",
+                "\n\n**Desktop automation:** Prefer this tool for anything achievable from the **workspace shell** (build, test, git, scripts, CLIs). On **macOS**, `open -a \"AppName\"` launches or foregrounds an app with fewer steps than GUI workflows. When desktop automation is enabled, use **`ControlHub`** with `{ domain: \"desktop\", action: \"locate\" }` for **named** on-screen controls before guessing coordinates from `action: \"screenshot\"` alone.",
             );
         }
         Ok(base)
@@ -364,6 +443,59 @@ Usage notes:
                         meta: None,
                     };
                 }
+            }
+
+            // Reject `osascript ... keystroke "<non-ASCII>"` — fundamentally
+            // broken: AppleScript's `keystroke` sends raw key codes, not
+            // Unicode, so CJK / emoji becomes garbage like "AAA…" in the
+            // target app. This is exactly the WeChat-search-box failure
+            // mode users keep hitting. Redirect to the canonical path.
+            if let Some(literal) = detect_osascript_keystroke_non_ascii(cmd) {
+                let preview: String = literal.chars().take(40).collect();
+                return ValidationResult {
+                    result: false,
+                    message: Some(format!(
+                        "Refused: `osascript ... keystroke \"{}…\"` cannot type non-ASCII text — \
+                         AppleScript's `keystroke` sends raw key codes, not Unicode, so CJK / \
+                         emoji / accented text comes out as garbage in the target app (e.g. \
+                         the WeChat search box receives `AAA…` instead of `{}`). \n\n\
+                         Use ControlHub instead:\n\
+                         1. `system.open_app {{ app_name: \"<App>\" }}` to focus the app\n\
+                         2. (optional) `desktop.key_chord {{ keys: [\"command\",\"f\"] }}` to focus search\n\
+                         3. `desktop.paste {{ text: \"<your text>\", submit: true }}` — pastes via \
+                            system clipboard, works for ANY language.\n\n\
+                         For sending an IM message specifically, run the `im_send_message` \
+                         playbook — it's the same 3-step flow pre-packaged.",
+                        preview, preview
+                    )),
+                    error_code: Some(400),
+                    meta: None,
+                };
+            }
+
+            // Soft-block `osascript` driving chat / IM apps. These flows are
+            // a constant source of frustration: no return value to verify,
+            // brittle UI scripting, no CJK support via keystroke, and the
+            // alternative (`system.open_app` + `desktop.paste` /
+            // `im_send_message` playbook) is faster AND more reliable.
+            if let Some(app) = detect_osascript_im_app(cmd) {
+                return ValidationResult {
+                    result: false,
+                    message: Some(format!(
+                        "Refused: driving {app} via `osascript` / AppleScript GUI scripting is unreliable \
+                         (no CJK support in keystroke, no return value, easy to deadlock). \n\n\
+                         Use the canonical IM-send recipe instead — same 3 deterministic calls:\n\
+                         1. `ControlHub domain:\"system\" action:\"open_app\" {{ app_name:\"{app}\" }}`\n\
+                         2. `ControlHub domain:\"desktop\" action:\"key_chord\" {{ keys:[\"command\",\"f\"] }}`\n\
+                         3. `ControlHub domain:\"desktop\" action:\"paste\" {{ text:\"<contact>\", submit:true }}`\n\
+                         4. `ControlHub domain:\"desktop\" action:\"paste\" {{ text:\"<message>\", submit:true }}`\n\n\
+                         Or run the prepackaged `im_send_message` playbook with \
+                         `{{ app_name, contact, message }}`. For Slack/Lark where Return inserts \
+                         a newline, pass `submit_keys:[\"command\",\"return\"]`."
+                    )),
+                    error_code: Some(400),
+                    meta: None,
+                };
             }
         } else {
             return ValidationResult {
@@ -473,18 +605,20 @@ Usage notes:
                     .and_then(|v| v.as_u64())
                     .unwrap_or(120_000);
 
-                let (stdout, stderr, exit_code) = ws_shell
-                    .exec(command_str, Some(timeout_ms))
+                let exec_result = ws_shell
+                    .exec_with_options(
+                        command_str,
+                        WorkspaceCommandOptions {
+                            timeout_ms: Some(timeout_ms),
+                            cancellation_token: context.cancellation_token.clone(),
+                        },
+                    )
                     .await
                     .map_err(|e| {
                         BitFunError::tool(format!("Remote command execution failed: {}", e))
                     })?;
 
-                let output = if stderr.is_empty() {
-                    stdout.clone()
-                } else {
-                    format!("{}\n{}", stdout, stderr)
-                };
+                let output = exec_result.combined_output();
 
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
                 let working_directory = context
@@ -494,23 +628,35 @@ Usage notes:
 
                 let result = ToolResult::Result {
                     data: json!({
-                        "success": exit_code == 0,
+                        "success": exec_result.exit_code == 0,
                         "command": command_str,
-                        "stdout": stdout,
-                        "stderr": stderr,
+                        "stdout": exec_result.stdout,
+                        "stderr": exec_result.stderr,
                         "output": output,
-                        "exit_code": exit_code,
-                        "interrupted": false,
-                        "timed_out": false,
+                        "exit_code": exec_result.exit_code,
+                        "interrupted": exec_result.interrupted,
+                        "timed_out": exec_result.timed_out,
                         "working_directory": working_directory,
                         "execution_time_ms": execution_time_ms,
                         "duration_ms": execution_time_ms,
                         "is_remote": true
                     }),
-                    result_for_assistant: Some(format!(
-                        "[Remote SSH] Command executed on remote server:\n{}\n\nExit code: {}",
-                        output, exit_code
-                    )),
+                    result_for_assistant: Some(if exec_result.timed_out {
+                        format!(
+                            "[Remote SSH] Command timed out on remote server:\n{}\n\nExit code: {}",
+                            output, exec_result.exit_code
+                        )
+                    } else if exec_result.interrupted {
+                        format!(
+                            "[Remote SSH] Command was cancelled on remote server:\n{}\n\nExit code: {}",
+                            output, exec_result.exit_code
+                        )
+                    } else {
+                        format!(
+                            "[Remote SSH] Command executed on remote server:\n{}\n\nExit code: {}",
+                            output, exec_result.exit_code
+                        )
+                    }),
                     image_attachments: None,
                 };
                 return Ok(vec![result]);
@@ -551,6 +697,12 @@ Usage notes:
             .to_string();
 
         if run_in_background {
+            if Self::cancellation_requested(context) {
+                return Err(Self::cancellation_error(
+                    "before creating background session",
+                ));
+            }
+
             // For background commands, inherit CWD from an already-running primary session
             // if one exists; otherwise fall back to workspace path.  This avoids forcing a
             // primary session to be created just to read its working directory.
@@ -813,6 +965,12 @@ impl BashTool {
             command_str, chat_session_id
         );
 
+        if Self::cancellation_requested(context) {
+            return Err(Self::cancellation_error(
+                "before creating background terminal",
+            ));
+        }
+
         // Create a dedicated background terminal session sharing the primary session's cwd
         let bg_session_id = binding
             .create_background_session(
@@ -843,6 +1001,18 @@ impl BashTool {
 
         // Subscribe to session output before sending the command so no data is missed
         let mut output_rx = terminal_api.subscribe_session_output(&bg_session_id);
+
+        if Self::cancellation_requested(context) {
+            let _ = terminal_api
+                .close_session(terminal_core::CloseSessionRequest {
+                    session_id: bg_session_id.clone(),
+                    immediate: Some(true),
+                })
+                .await;
+            return Err(Self::cancellation_error(
+                "before sending background command",
+            ));
+        }
 
         // Fire-and-forget: write the command to the PTY without waiting for completion
         terminal_api
@@ -976,6 +1146,49 @@ mod tests {
         assert!(truncated.ends_with("IMPORTANT-END"));
         assert!(!truncated.contains("BEGIN-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"));
         assert!(truncated.chars().count() <= 80);
+    }
+
+    #[test]
+    fn detect_osascript_keystroke_non_ascii_flags_cjk_keystroke() {
+        let cmd = r#"osascript -e 'tell application "System Events" to keystroke "尉怡青"'"#;
+        let hit = detect_osascript_keystroke_non_ascii(cmd).expect("should flag CJK keystroke");
+        assert!(hit.contains("尉怡青"));
+    }
+
+    #[test]
+    fn detect_osascript_keystroke_non_ascii_flags_emoji_keystroke() {
+        let cmd = r#"osascript -e 'tell application "System Events" to keystroke "hi 👋"'"#;
+        assert!(detect_osascript_keystroke_non_ascii(cmd).is_some());
+    }
+
+    #[test]
+    fn detect_osascript_keystroke_non_ascii_passes_pure_ascii() {
+        let cmd = r#"osascript -e 'tell application "System Events" to keystroke "hello"'"#;
+        assert!(detect_osascript_keystroke_non_ascii(cmd).is_none());
+    }
+
+    #[test]
+    fn detect_osascript_keystroke_non_ascii_passes_non_osascript() {
+        let cmd = r#"echo "尉怡青""#;
+        assert!(detect_osascript_keystroke_non_ascii(cmd).is_none());
+    }
+
+    #[test]
+    fn detect_osascript_im_app_flags_wechat() {
+        let cmd = r#"osascript -e 'tell application "WeChat" to activate'"#;
+        assert_eq!(detect_osascript_im_app(cmd), Some("WeChat"));
+    }
+
+    #[test]
+    fn detect_osascript_im_app_flags_weixin_chinese() {
+        let cmd = r#"osascript -e 'tell application "微信" to activate'"#;
+        assert_eq!(detect_osascript_im_app(cmd), Some("微信"));
+    }
+
+    #[test]
+    fn detect_osascript_im_app_passes_non_im() {
+        let cmd = r#"osascript -e 'tell application "Finder" to activate'"#;
+        assert!(detect_osascript_im_app(cmd).is_none());
     }
 
     #[test]

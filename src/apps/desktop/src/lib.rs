@@ -348,6 +348,8 @@ pub async fn run() {
             test_ai_connection,
             test_ai_config_connection,
             list_ai_models_by_config,
+            discover_cli_credentials,
+            refresh_cli_credential,
             initialize_ai,
             set_agent_model,
             get_agent_models,
@@ -672,6 +674,7 @@ pub async fn run() {
             api::miniapp_api::grant_miniapp_path,
             api::miniapp_api::miniapp_runtime_status,
             api::miniapp_api::miniapp_worker_call,
+            api::miniapp_api::miniapp_host_call,
             api::miniapp_api::miniapp_worker_stop,
             api::miniapp_api::miniapp_worker_list_running,
             api::miniapp_api::miniapp_install_deps,
@@ -689,6 +692,7 @@ pub async fn run() {
             // Browser Control API (CDP-based user browser control)
             api::browser_control_api::browser_control_get_status,
             api::browser_control_api::browser_control_launch,
+            api::browser_control_api::browser_control_restart_with_cdp,
             api::browser_control_api::browser_control_create_launcher,
             api::self_control_api::submit_self_control_response,
             // Insights API

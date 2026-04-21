@@ -16,6 +16,7 @@ import {
 import { ConfigPageHeader, ConfigPageLayout, ConfigPageContent, ConfigPageSection, ConfigPageRow } from './common';
 import { aiExperienceConfigService, type AIExperienceSettings } from '../services/AIExperienceConfigService';
 import { configManager } from '../services/ConfigManager';
+import { systemAPI } from '@/infrastructure/api/service-api/SystemAPI';
 import { useNotification, notificationService } from '@/shared/notification-system';
 import type { AIModelConfig, DebugModeConfig, LanguageDebugTemplate } from '../types';
 import {
@@ -43,6 +44,13 @@ type ComputerUseStatusPayload = {
   platformNote: string | null;
 };
 
+type BrowserControlLaunchResponse = {
+  success: boolean;
+  status: string;
+  message: string | null;
+  browserKind: string;
+};
+
 const SessionConfig: React.FC = () => {
   const { t } = useTranslation('settings/session-config');
   const { t: tTools } = useTranslation('settings/agentic-tools');
@@ -54,7 +62,7 @@ const SessionConfig: React.FC = () => {
   const [settings, setSettings] = useState<AIExperienceSettings | null>(null);
   const [models, setModels] = useState<AIModelConfig[]>([]);
   const [funcAgentModels, setFuncAgentModels] = useState<Record<string, string>>({});
-  const [skipToolConfirmation, setSkipToolConfirmation] = useState(false);
+  const [skipToolConfirmation, setSkipToolConfirmation] = useState(true);
   const [executionTimeout, setExecutionTimeout] = useState('');
   const [confirmationTimeout, setConfirmationTimeout] = useState('');
   const [toolExecConfigLoading, setToolExecConfigLoading] = useState(false);
@@ -70,6 +78,8 @@ const SessionConfig: React.FC = () => {
   const [browserVersion, setBrowserVersion] = useState<string | null>(null);
   const [browserPageCount, setBrowserPageCount] = useState(0);
   const [browserControlBusy, setBrowserControlBusy] = useState(false);
+  const [platform, setPlatform] = useState<string>('');
+  const [browserRestartPrompt, setBrowserRestartPrompt] = useState<BrowserControlLaunchResponse | null>(null);
 
   // ── Debug mode config state ──────────────────────────────────────────────
   const [debugConfig, setDebugConfig] = useState<DebugModeConfig>(DEFAULT_DEBUG_MODE_CONFIG);
@@ -139,7 +149,7 @@ const SessionConfig: React.FC = () => {
       setSettings(loadedSettings);
       setModels(allModels as AIModelConfig[]);
       setFuncAgentModels(funcAgentModelsData as Record<string, string>);
-      setSkipToolConfirmation(skipConfirm || false);
+      setSkipToolConfirmation(skipConfirm ?? true);
       setExecutionTimeout(execTimeout != null ? String(execTimeout) : '');
       setConfirmationTimeout(confirmTimeout != null ? String(confirmTimeout) : '');
       if (debugConfigData) setDebugConfig(debugConfigData);
@@ -148,6 +158,12 @@ const SessionConfig: React.FC = () => {
         const ok = await refreshComputerUseStatus();
         if (!ok) setComputerUseEnabled(computerUseCfg ?? false);
         await refreshBrowserControlStatus();
+        try {
+          const info = await systemAPI.getSystemInfo();
+          setPlatform(info.platform || '');
+        } catch (error) {
+          log.warn('getSystemInfo failed', error);
+        }
       } else {
         setComputerUseEnabled(computerUseCfg ?? false);
       }
@@ -270,17 +286,14 @@ const SessionConfig: React.FC = () => {
     setBrowserControlBusy(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const result = await invoke<{
-        success: boolean;
-        status: string;
-        message: string | null;
-        browserKind: string;
-      }>('browser_control_launch', { request: { port: 9222 } });
+      const result = await invoke<BrowserControlLaunchResponse>('browser_control_launch', { request: { port: 9222 } });
       if (result.success) {
         notificationService.success(
           t('browserControl.connectSuccess', { browser: result.browserKind }),
           { duration: 3000 }
         );
+      } else if (result.status === 'needs_restart') {
+        setBrowserRestartPrompt(result);
       } else if (result.message) {
         notificationService.info(result.message, { duration: 8000 });
       }
@@ -288,6 +301,32 @@ const SessionConfig: React.FC = () => {
     } catch (error) {
       log.error('browser_control_launch failed', error);
       notificationService.error(t('browserControl.connectFailed'));
+    } finally {
+      setBrowserControlBusy(false);
+    }
+  };
+
+  const handleBrowserControlRestart = async () => {
+    if (!browserRestartPrompt) return;
+    setBrowserControlBusy(true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const result = await invoke<BrowserControlLaunchResponse>('browser_control_restart_with_cdp', {
+        request: { port: 9222 },
+      });
+      if (result.success) {
+        notificationService.success(
+          t('browserControl.restartSuccess', { browser: result.browserKind }),
+          { duration: 3000 }
+        );
+        setBrowserRestartPrompt(null);
+      } else if (result.message) {
+        notificationService.info(result.message, { duration: 8000 });
+      }
+      await refreshBrowserControlStatus();
+    } catch (error) {
+      log.error('browser_control_restart_with_cdp failed', error);
+      notificationService.error(t('browserControl.restartFailed'));
     } finally {
       setBrowserControlBusy(false);
     }
@@ -693,7 +732,7 @@ const SessionConfig: React.FC = () => {
             <>
               <ConfigPageRow
                 label={t('browserControl.status')}
-                description={t('browserControl.statusDesc')}
+                description={t('browserControl.statusDesc') || undefined}
                 align="center"
                 balanced
               >
@@ -702,16 +741,29 @@ const SessionConfig: React.FC = () => {
                   style={{
                     display: 'flex',
                     flexDirection: 'row',
-                    flexWrap: 'nowrap',
+                    flexWrap: 'wrap',
                     alignItems: 'center',
                     justifyContent: 'flex-end',
                     gap: 8,
+                    minWidth: 0,
                   }}
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    <span className={browserCdpAvailable ? 'bitfun-func-agent-config__perm-status--granted' : undefined}>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      minWidth: 0,
+                      maxWidth: '100%',
+                    }}
+                    title={browserCdpAvailable && browserVersion ? `${browserKind} ${browserVersion}` : undefined}
+                  >
+                    <span
+                      className={browserCdpAvailable ? 'bitfun-func-agent-config__perm-status--granted' : undefined}
+                      style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                    >
                       {browserCdpAvailable
-                        ? `${browserKind}${browserVersion ? ` (${browserVersion})` : ''} — ${browserPageCount} ${t('browserControl.tabs')}`
+                        ? `${browserKind} · ${browserPageCount} ${t('browserControl.tabs')}`
                         : t('browserControl.notConnected')}
                     </span>
                     <IconButton
@@ -739,23 +791,25 @@ const SessionConfig: React.FC = () => {
                   )}
                 </div>
               </ConfigPageRow>
-              <ConfigPageRow
-                label={t('browserControl.createLauncher')}
-                description={t('browserControl.createLauncherDesc')}
-                align="center"
-              >
-                <div className="bitfun-func-agent-config__row-control">
-                  <Button
-                    className="bitfun-func-agent-config__row-action-btn"
-                    size="small"
-                    variant="secondary"
-                    disabled={browserControlBusy}
-                    onClick={() => void handleBrowserControlCreateLauncher()}
-                  >
-                    {t('browserControl.createLauncher')}
-                  </Button>
-                </div>
-              </ConfigPageRow>
+              {platform === 'macos' && (
+                <ConfigPageRow
+                  label={t('browserControl.createLauncher')}
+                  description={t('browserControl.createLauncherDesc')}
+                  align="center"
+                >
+                  <div className="bitfun-func-agent-config__row-control">
+                    <Button
+                      className="bitfun-func-agent-config__row-action-btn"
+                      size="small"
+                      variant="secondary"
+                      disabled={browserControlBusy}
+                      onClick={() => void handleBrowserControlCreateLauncher()}
+                    >
+                      {t('browserControl.createLauncher')}
+                    </Button>
+                  </div>
+                </ConfigPageRow>
+              )}
             </>
           ) : null}
         </ConfigPageSection>
@@ -972,6 +1026,44 @@ const SessionConfig: React.FC = () => {
               </Button>
             </div>
           )}
+        </Modal>
+
+        <Modal
+          isOpen={browserRestartPrompt !== null}
+          onClose={() => {
+            if (!browserControlBusy) setBrowserRestartPrompt(null);
+          }}
+          title={t('browserControl.restartModal.title')}
+          size="small"
+          closeOnOverlayClick={!browserControlBusy}
+        >
+          <div className="bitfun-debug-config__modal-body">
+            <p>{t('browserControl.restartModal.description', { browser: browserRestartPrompt?.browserKind || browserKind })}</p>
+            <p>{t('browserControl.restartModal.warning')}</p>
+            {browserRestartPrompt?.message ? (
+              <p className="bitfun-func-agent-config__hint">{browserRestartPrompt.message}</p>
+            ) : null}
+          </div>
+          <div className="bitfun-debug-config__modal-footer">
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={() => setBrowserRestartPrompt(null)}
+              disabled={browserControlBusy}
+            >
+              {t('browserControl.restartModal.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              size="small"
+              onClick={() => void handleBrowserControlRestart()}
+              disabled={browserControlBusy}
+            >
+              {browserControlBusy
+                ? t('browserControl.restartModal.restarting')
+                : t('browserControl.restartModal.confirm')}
+            </Button>
+          </div>
         </Modal>
 
       </ConfigPageContent>

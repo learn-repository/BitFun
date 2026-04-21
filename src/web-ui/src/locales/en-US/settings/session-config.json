@@ -9,7 +9,7 @@
     },
     "agentCompanion": {
       "title": "Agent companion",
-      "subtitle": "Show a pixel-style companion animation in the collapsed chat input.",
+      "subtitle": "Show BitFun companion in the collapsed chat input.",
       "enable": "Show Agent companion"
     }
   },
@@ -34,21 +34,31 @@
     "platformNote": "Note"
   },
   "browserControl": {
-    "sectionTitle": "Browser control (CDP)",
-    "sectionDescription": "Control your default browser (Chrome, Edge, etc.) through the Chrome DevTools Protocol. Preserves your login sessions, cookies, and extensions.",
-    "desktopOnly": "Browser control settings are only available in the BitFun desktop app.",
-    "status": "CDP connection",
-    "statusDesc": "Status of the Chrome DevTools Protocol connection to your browser.",
+    "sectionTitle": "Browser control",
+    "sectionDescription": "Reuse your default browser with logins, cookies, and extensions.",
+    "desktopOnly": "Browser control is only available in the BitFun desktop app.",
+    "status": "Connection",
+    "statusDesc": "",
     "notConnected": "Not connected",
     "refreshStatus": "Refresh status",
-    "connect": "Connect browser",
-    "connectSuccess": "{{browser}} connected with CDP",
-    "connectFailed": "Failed to launch browser with CDP",
-    "createLauncher": "Create launcher app",
+    "connect": "Connect",
+    "connectSuccess": "Connected to {{browser}}",
+    "connectFailed": "Failed to connect to browser",
+    "restartSuccess": "Restarted {{browser}} with debug mode enabled",
+    "restartFailed": "Failed to restart browser with debug mode enabled",
+    "restartModal": {
+      "title": "Enable browser debug mode",
+      "description": "{{browser}} is already running and the current instance was not started with the debug port enabled. BitFun needs to restart the browser in debug mode before it can control it.",
+      "warning": "This will close the current browser windows.",
+      "cancel": "Cancel",
+      "confirm": "Restart and enable debug",
+      "restarting": "Restarting..."
+    },
+    "createLauncher": "Create launcher",
     "createLauncherSuccess": "Launcher created at {{path}}",
-    "createLauncherFailed": "Failed to create launcher app",
-    "createLauncherDesc": "Create a shortcut app that always starts the browser with CDP debug port enabled.",
-    "tabs": "tab(s)"
+    "createLauncherFailed": "Failed to create launcher",
+    "createLauncherDesc": "Create a browser shortcut with the debug port enabled.",
+    "tabs": "tabs"
   },
   "model": {
     "label": "Model",

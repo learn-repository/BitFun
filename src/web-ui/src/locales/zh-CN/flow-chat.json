@@ -123,9 +123,8 @@
     "retry": "重试",
     "addImage": "添加图片",
     "maxImagesWarning": "最多只能选择{{count}}张图片",
-    "imageAddedSuccess": "成功添加 {{count}} 张图片",
-    "imageAddedSingle": "已添加剪贴板图片: {{name}}",
     "imagePasteFailed": "图片粘贴失败",
+    "removeImage": "移除图片",
     "largePastePlaceholder": "[已粘贴内容 {{count}} 字符]",
     "messageTooLarge": "消息超过最大长度 {{max}} 个字符（当前 {{count}} 个字符）。",
     "openWorkspaceFolder": "打开工作区文件夹",
@@ -160,7 +159,12 @@
     "temperature": "温度",
     "maxTokens": "最大令牌数",
     "topP": "Top P",
-    "streaming": "流式输出"
+    "streaming": "流式输出",
+    "autoMigrated": {
+      "title": "模型已自动切换",
+      "description": "会话原模型\"{{previous}}\"不可用，已切换为\"{{next}}\"。",
+      "reason": "原因：{{reason}}"
+    }
   },
   "toolbar": {
     "newSession": "新建会话",
@@ -327,7 +331,14 @@
     "turnBadge": "第 {{current}} 轮",
     "btwBackTooltipWithTurn": "返回到来源会话：{{title}}（第 {{turn}} 轮）",
     "btwBackTooltipWithoutTurn": "返回到来源会话：{{title}}",
-    "btwCreateTooltip": "快速发起一个侧问"
+    "btwCreateTooltip": "快速发起一个侧问",
+    "searchPlaceholder": "搜索对话消息",
+    "searchResult": "{{current}} / {{total}}",
+    "searchNoResults": "没有匹配结果",
+    "searchPrevious": "上一个匹配结果",
+    "searchNext": "下一个匹配结果",
+    "searchClose": "关闭搜索",
+    "searchOpen": "搜索消息"
   },
   "sessionFilesBadge": {
     "files": "文件",
@@ -518,7 +529,8 @@
       "expandContent": "展开内容",
       "inputParams": "输入参数",
       "executionResult": "执行结果",
-      "viewDetails": "查看详情"
+      "viewDetails": "查看详情",
+      "interruptedByRestart": "上次关闭应用时该工具尚未完成，已恢复为中断状态"
     },
     "askUser": {
       "completed": "已完成",

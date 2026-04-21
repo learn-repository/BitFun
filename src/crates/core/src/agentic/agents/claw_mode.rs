@@ -25,7 +25,6 @@ impl ClawMode {
                 "Grep".to_string(),
                 "Glob".to_string(),
                 "WebSearch".to_string(),
-                "MermaidInteractive".to_string(),
                 "Skill".to_string(),
                 "Git".to_string(),
                 "TerminalControl".to_string(),
@@ -33,10 +32,11 @@ impl ClawMode {
                 "SessionMessage".to_string(),
                 "SessionHistory".to_string(),
                 "Cron".to_string(),
-                // All desktop automation consolidated into ComputerUse
-                // (click_element, click, mouse_move, scroll, drag, screenshot, locate, etc.)
-                "ComputerUse".to_string(),
-                "SelfControl".to_string(),
+                // All control capabilities (desktop, browser, app, terminal, system)
+                // are unified under the ControlHub tool. Use ControlHub for
+                // screenshot, click, click_element, mouse_move, scroll, drag,
+                // locate, browser CDP automation, and BitFun self-UI control.
+                "ControlHub".to_string(),
             ],
         }
     }

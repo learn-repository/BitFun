@@ -123,9 +123,8 @@
     "retry": "Retry",
     "addImage": "Add image",
     "maxImagesWarning": "Maximum {{count}} images allowed",
-    "imageAddedSuccess": "Successfully added {{count}} images",
-    "imageAddedSingle": "Added clipboard image: {{name}}",
     "imagePasteFailed": "Image paste failed",
+    "removeImage": "Remove image",
     "largePastePlaceholder": "[Pasted Content {{count}} chars]",
     "messageTooLarge": "Message exceeds the maximum length of {{max}} characters ({{count}} provided).",
     "openWorkspaceFolder": "Open workspace folder",
@@ -160,7 +159,12 @@
     "temperature": "Temperature",
     "maxTokens": "Max Tokens",
     "topP": "Top P",
-    "streaming": "Streaming"
+    "streaming": "Streaming",
+    "autoMigrated": {
+      "title": "Model auto-switched",
+      "description": "Session model \"{{previous}}\" is no longer available. Switched to \"{{next}}\".",
+      "reason": "Reason: {{reason}}"
+    }
   },
   "toolbar": {
     "newSession": "New Session",
@@ -327,7 +331,14 @@
     "turnBadge": "Turn {{current}}",
     "btwBackTooltipWithTurn": "Go back to the source session: {{title}} (Turn {{turn}})",
     "btwBackTooltipWithoutTurn": "Go back to the source session: {{title}}",
-    "btwCreateTooltip": "Start a quick side question"
+    "btwCreateTooltip": "Start a quick side question",
+    "searchPlaceholder": "Search messages",
+    "searchResult": "{{current}} / {{total}}",
+    "searchNoResults": "No results",
+    "searchPrevious": "Previous match",
+    "searchNext": "Next match",
+    "searchClose": "Close search",
+    "searchOpen": "Search messages"
   },
   "sessionFilesBadge": {
     "files": "files",
@@ -526,7 +537,8 @@
       "expandContent": "Expand content",
       "inputParams": "Input Parameters",
       "executionResult": "Execution Result",
-      "viewDetails": "View Details"
+      "viewDetails": "View Details",
+      "interruptedByRestart": "This tool was still running when the app closed last time, so it has been restored as interrupted"
     },
     "askUser": {
       "completed": "Completed",
