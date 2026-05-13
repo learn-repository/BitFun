@@ -17,6 +17,12 @@ pub struct TokenUsageRecord {
     /// Whether cached token count was explicitly reported by the provider/event.
     #[serde(default)]
     pub cached_tokens_available: bool,
+    /// Tokens served from the provider's KV cache (cache hit).
+    #[serde(default)]
+    pub cache_read_tokens: u32,
+    /// Tokens freshly written into the provider's KV cache (cache creation).
+    #[serde(default)]
+    pub cache_write_tokens: u32,
     pub total_tokens: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_details: Option<serde_json::Value>,

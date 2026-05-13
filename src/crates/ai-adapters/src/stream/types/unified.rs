@@ -66,6 +66,18 @@ pub struct UnifiedTokenUsage {
     pub total_token_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_token_count: Option<u32>,
+    /// Combined cache read + write token count (backward-compatible; use
+    /// `cache_read_input_tokens` / `cache_creation_input_tokens` for KV cache reporting).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_content_token_count: Option<u32>,
+    /// Tokens served from the provider's KV cache (cache hit).
+    /// Mapped from `prompt_tokens_details.cached_tokens` (OpenAI / GLM / Doubao),
+    /// `prompt_cache_hit_tokens` (DeepSeek), or `cache_read_input_tokens` (Anthropic / MiniMax).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u32>,
+    /// Tokens freshly written into the provider's KV cache (cache creation).
+    /// Mapped from `cache_creation_input_tokens` (Anthropic / MiniMax).
+    /// OpenAI-chat / OpenAI-compatible providers do not report cache writes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u32>,
 }

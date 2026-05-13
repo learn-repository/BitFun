@@ -272,6 +272,8 @@ impl TransportAdapter for TauriTransportAdapter {
                 max_context_tokens,
                 is_subagent,
                 cached_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
                 token_details,
             } => {
                 self.app_handle.emit(
@@ -286,6 +288,8 @@ impl TransportAdapter for TauriTransportAdapter {
                         "maxContextTokens": max_context_tokens,
                         "isSubagent": is_subagent,
                         "cachedTokens": cached_tokens,
+                        "cacheReadTokens": cache_read_tokens,
+                        "cacheWriteTokens": cache_write_tokens,
                         "tokenDetails": token_details,
                     }),
                 )?;

@@ -165,6 +165,10 @@ pub enum AgenticEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cached_tokens: Option<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_read_tokens: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         token_details: Option<serde_json::Value>,
     },
 

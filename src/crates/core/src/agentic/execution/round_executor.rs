@@ -391,12 +391,35 @@ impl RoundExecutor {
             .iter()
             .map(|tc| tc.tool_name.as_str())
             .collect();
+        let usage_summary = stream_result.usage.as_ref().map(|u| {
+            let cache_read = u.cache_read_input_tokens.unwrap_or(0);
+            let cache_write = u.cache_creation_input_tokens.unwrap_or(0);
+            let input_without_cache = u
+                .prompt_token_count
+                .saturating_sub(cache_read)
+                .saturating_sub(cache_write);
+            let cache_hit_rate = if u.prompt_token_count > 0 {
+                format!("{:.1}%", (cache_read as f64 / u.prompt_token_count as f64) * 100.0)
+            } else {
+                "0.0%".to_string()
+            };
+            format!(
+                "input={}, output={}, total={}, cache_read={}, cache_write={}, non_cache_input={}, cache_hit_rate={}",
+                u.prompt_token_count,
+                u.candidates_token_count,
+                u.total_token_count,
+                cache_read,
+                cache_write,
+                input_without_cache,
+                cache_hit_rate
+            )
+        }).unwrap_or_else(|| "none".to_string());
         debug!(
             target: "ai::model_response",
-            "Model response received: text_length={}, tool_calls={}, token_usage={:?}, send_to_stream_ms={}, stream_processing_ms={}, first_chunk_ms={:?}, first_visible_output_ms={:?}",
+            "Model response received: text_length={}, tool_calls={}, token_usage=[{}], send_to_stream_ms={}, stream_processing_ms={}, first_chunk_ms={:?}, first_visible_output_ms={:?}",
             stream_result.full_text.len(),
             if tool_names.is_empty() { "none".to_string() } else { tool_names.join(", ") },
-            stream_result.usage.as_ref().map(|u| format!("input={}, output={}, total={}", u.prompt_token_count, u.candidates_token_count, u.total_token_count)).unwrap_or_else(|| "none".to_string()),
+            usage_summary,
             send_to_stream_ms,
             stream_processing_ms,
             stream_result.first_chunk_ms,
@@ -414,12 +437,31 @@ impl RoundExecutor {
 
         // If stream response contains usage info, update token statistics
         if let Some(ref usage) = stream_result.usage {
-            debug!(
-                "Updating token stats from model response: input={}, output={}, total={}, is_subagent={}",
+            let cache_read = usage.cache_read_input_tokens.unwrap_or(0);
+            let cache_write = usage.cache_creation_input_tokens.unwrap_or(0);
+            let input_without_cache = usage
+                .prompt_token_count
+                .saturating_sub(cache_read)
+                .saturating_sub(cache_write);
+            let cache_hit_rate_pct = if usage.prompt_token_count > 0 {
+                (cache_read as f64 / usage.prompt_token_count as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            info!(
+                target: "ai::kv_cache",
+                "KV Cache: session={}, turn={}, model={}, prompt_tokens={}, output_tokens={}, cache_read={}, cache_write={}, non_cache_input={}, cache_hit_rate={:.1}%, is_subagent={}",
+                context.session_id,
+                context.dialog_turn_id,
+                context.model_name,
                 usage.prompt_token_count,
                 usage.candidates_token_count,
-                usage.total_token_count,
-                is_subagent
+                cache_read,
+                cache_write,
+                input_without_cache,
+                cache_hit_rate_pct,
+                is_subagent,
             );
 
             self.emit_event(
@@ -433,6 +475,8 @@ impl RoundExecutor {
                     max_context_tokens: context_window,
                     is_subagent,
                     cached_tokens: usage.cached_content_token_count.map(|v| v as usize),
+                    cache_read_tokens: usage.cache_read_input_tokens.map(|v| v as usize),
+                    cache_write_tokens: usage.cache_creation_input_tokens.map(|v| v as usize),
                     token_details: token_details_from_usage(usage),
                 },
                 EventPriority::Normal,
@@ -1165,6 +1209,18 @@ fn token_details_from_usage(
         details.insert(
             "cachedContentTokenCount".to_string(),
             serde_json::json!(cached_tokens),
+        );
+    }
+    if let Some(cache_read) = usage.cache_read_input_tokens {
+        details.insert(
+            "cacheReadInputTokens".to_string(),
+            serde_json::json!(cache_read),
+        );
+    }
+    if let Some(cache_write) = usage.cache_creation_input_tokens {
+        details.insert(
+            "cacheCreationInputTokens".to_string(),
+            serde_json::json!(cache_write),
         );
     }
 

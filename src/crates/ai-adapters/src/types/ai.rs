@@ -32,6 +32,14 @@ pub struct GeminiUsage {
     #[serde(rename = "cachedContentTokenCount")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_content_token_count: Option<u32>,
+    #[serde(rename = "cacheReadInputTokens")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Tokens served from the provider's KV cache.
+    pub cache_read_input_tokens: Option<u32>,
+    #[serde(rename = "cacheCreationInputTokens")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Tokens freshly written into the provider's KV cache.
+    pub cache_creation_input_tokens: Option<u32>,
 }
 
 /// Structured message codes for localized connection test messaging.

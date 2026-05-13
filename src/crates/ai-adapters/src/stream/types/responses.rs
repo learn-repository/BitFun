@@ -54,14 +54,18 @@ pub struct ResponsesInputTokensDetails {
 
 impl From<ResponsesUsage> for UnifiedTokenUsage {
     fn from(usage: ResponsesUsage) -> Self {
+        let cache_read = usage
+            .input_tokens_details
+            .as_ref()
+            .map(|details| details.cached_tokens);
         Self {
             prompt_token_count: usage.input_tokens,
             candidates_token_count: usage.output_tokens,
             total_token_count: usage.total_tokens,
             reasoning_token_count: None,
-            cached_content_token_count: usage
-                .input_tokens_details
-                .map(|details| details.cached_tokens),
+            cached_content_token_count: cache_read,
+            cache_read_input_tokens: cache_read,
+            cache_creation_input_tokens: None,
         }
     }
 }

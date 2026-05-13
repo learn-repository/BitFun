@@ -148,6 +148,8 @@ impl TokenUsageService {
         input_tokens: u32,
         output_tokens: u32,
         cached_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        cache_write_tokens: Option<u32>,
         token_details: Option<serde_json::Value>,
         is_subagent: bool,
     ) -> Result<()> {
@@ -165,6 +167,8 @@ impl TokenUsageService {
             output_tokens,
             cached_tokens,
             cached_tokens_available,
+            cache_read_tokens: cache_read_tokens.unwrap_or(0),
+            cache_write_tokens: cache_write_tokens.unwrap_or(0),
             total_tokens,
             token_details,
             is_subagent,

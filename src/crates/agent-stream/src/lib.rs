@@ -609,12 +609,23 @@ impl StreamProcessor {
             total_token_count: response_usage.total_token_count,
             reasoning_token_count: response_usage.reasoning_token_count,
             cached_content_token_count: response_usage.cached_content_token_count,
+            cache_read_input_tokens: response_usage.cache_read_input_tokens,
+            cache_creation_input_tokens: response_usage.cache_creation_input_tokens,
         });
+        let cache_read = response_usage.cache_read_input_tokens.unwrap_or(0);
+        let cache_write = response_usage.cache_creation_input_tokens.unwrap_or(0);
+        let non_cache_input = response_usage
+            .prompt_token_count
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write);
         debug!(
-            "Received token usage stats: input={}, output={}, total={}",
+            "Received token usage: input={}, output={}, total={}, cache_read={}, cache_write={}, non_cache_input={}",
             response_usage.prompt_token_count,
             response_usage.candidates_token_count,
-            response_usage.total_token_count
+            response_usage.total_token_count,
+            cache_read,
+            cache_write,
+            non_cache_input,
         );
     }
 
@@ -1071,6 +1082,8 @@ mod tests {
             total_token_count: total_tokens,
             reasoning_token_count: None,
             cached_content_token_count: None,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
         }
     }
 

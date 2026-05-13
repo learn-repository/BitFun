@@ -33,6 +33,8 @@ impl EventSubscriber for TokenUsageSubscriber {
             total_tokens,
             is_subagent,
             cached_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
             token_details,
             ..
         } = event
@@ -60,6 +62,8 @@ impl EventSubscriber for TokenUsageSubscriber {
                     *input_tokens as u32,
                     output as u32,
                     cached_tokens.map(|value| value as u32),
+                    cache_read_tokens.map(|value| value as u32),
+                    cache_write_tokens.map(|value| value as u32),
                     token_details.clone(),
                     *is_subagent,
                 )

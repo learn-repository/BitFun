@@ -61,6 +61,20 @@ impl From<Usage> for UnifiedTokenUsage {
                 (None, None) => None,
                 (read, creation) => Some(read.unwrap_or(0) + creation.unwrap_or(0)),
             },
+            cache_read_input_tokens: if value.cache_read_input_tokens.is_some()
+                || value.cache_creation_input_tokens.is_some()
+            {
+                Some(cache_read)
+            } else {
+                None
+            },
+            cache_creation_input_tokens: if value.cache_read_input_tokens.is_some()
+                || value.cache_creation_input_tokens.is_some()
+            {
+                Some(cache_creation)
+            } else {
+                None
+            },
         }
     }
 }

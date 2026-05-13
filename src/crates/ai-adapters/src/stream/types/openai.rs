@@ -15,18 +15,39 @@ struct OpenAIUsage {
     #[serde(default)]
     total_tokens: u32,
     prompt_tokens_details: Option<PromptTokensDetails>,
+    /// DeepSeek-specific KV cache fields.
+    /// DeepSeek API reports `prompt_cache_hit_tokens` + `prompt_cache_miss_tokens`
+    /// instead of the standard `prompt_tokens_details.cached_tokens`.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u32>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    /// Tokens in the prompt that did NOT hit the cache (informational only;
+    /// derived as `prompt_tokens - prompt_cache_hit_tokens`).
+    prompt_cache_miss_tokens: Option<u32>,
 }
 
 impl From<OpenAIUsage> for UnifiedTokenUsage {
     fn from(usage: OpenAIUsage) -> Self {
+        // DeepSeek uses non-standard `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`.
+        // Standard OpenAI-compatible providers (GLM, Doubao, MiniMax-openai-mode) use
+        // `prompt_tokens_details.cached_tokens`.
+        let cache_read = usage
+            .prompt_cache_hit_tokens
+            .or_else(|| {
+                usage
+                    .prompt_tokens_details
+                    .and_then(|d| d.cached_tokens)
+            });
+
         Self {
             prompt_token_count: usage.prompt_tokens,
             candidates_token_count: usage.completion_tokens,
             total_token_count: usage.total_tokens,
             reasoning_token_count: None,
-            cached_content_token_count: usage
-                .prompt_tokens_details
-                .and_then(|prompt_tokens_details| prompt_tokens_details.cached_tokens),
+            cached_content_token_count: cache_read,
+            cache_read_input_tokens: cache_read,
+            cache_creation_input_tokens: None, // OpenAI chat API does not report cache writes
         }
     }
 }
