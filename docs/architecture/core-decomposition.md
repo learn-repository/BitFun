@@ -118,6 +118,21 @@ owner 边界，否则不要把一个 feature group 继续拆成更小的 crate�
   CLI presentation 依赖迁入 core-types、runtime-ports 或 agent-tools。
 - Tool framework crate 不得依赖 concrete service implementation。
 - 产品 crate 可以通过显式 product feature 组装完整 runtime。
+- 后续迁移必须先按风险分层处理：
+  - 低风险：文档、boundary check、Cargo feature graph / dependency profile 基线、纯 DTO /
+    contract 搬迁、旧路径 re-export、序列化 round-trip 测试、未启用的新 feature group 声明。
+  - 中风险：在 owner crate 内为纯模块补 feature group、把 core 中的重依赖改为 optional 但
+    仍由 `product-full` 启用、把只依赖 port 的 helper 迁入 owner crate。
+  - 高风险：`ToolUseContext`、tool registry、MCP dynamic tools、remote-connect、remote SSH
+    runtime、miniapp / function-agent runtime、agent registry、`bitfun-core default = []`
+    或任何产品 crate feature set 调整。
+- 高风险项不能作为 P2/P3 普通收尾任务顺带执行，必须先有等价性测试、port/provider 设计、
+  旧路径兼容策略和用户确认。
+- 为减少 PR 次数，剩余 runtime 迁移可以压缩为 5 个主题 PR，但每个 PR 仍必须保持单一
+  owner 主题：`services-integrations` runtime 收口、MCP runtime/dynamic tools、
+  remote-connect runtime、agent tools + `tool-packs` owner 化、`product-domains`
+  runtime + core facade finalization。`bitfun-core default = []` 和 per-product feature
+  matrix 仍是上述 5 个 PR 之后的独立评估。
 
 ## Feature 安全规则
 
@@ -130,6 +145,11 @@ owner 边界，否则不要把一个 feature group 继续拆成更小的 crate�
   feature set 替代它，必须作为 P3 之后的独立评估，并且先通过完整产品矩阵。
 - 不要把 feature 默认值变更和模块移动放在同一个变更中。
 - 不要把改变产品构建产物能力集合作为减少本地测试编译面的副作用。
+- 在任何 feature optionalization 之前，先提交只读保护网：记录 `bitfun-core`、desktop、CLI、
+  ACP 和相关 owner crate 的 feature graph，明确哪些目标允许出现 `rmcp`、`git2`、`image`、
+  `tokio-tungstenite`、`bitfun-relay-server`、Tauri / CLI presentation 依赖。
+- owner crate 的 `product-full` 只聚合已经迁入且可独立验证的能力；不能为了让产品构建通过，
+  让空 scaffold 或未迁移 runtime 假装已经拥有对应能力。
 
 ## 测试和验证策略（Test And Verification Policy）
 
@@ -141,6 +161,11 @@ owner 边界，否则不要把一个 feature group 继续拆成更小的 crate�
 - 当模块已经移出 `bitfun-core` 后，优先使用小 crate 测试。
 - 如果变更影响 feature assembly、产品 crate manifest、desktop integration、CLI、
   server 或 transport path，则必须保留完整产品检查。
+- 对功能逻辑偏移风险较高的迁移，必须先补“迁移前快照”测试或脚本输出，例如 tool registry
+  工具清单、dynamic provider metadata、snapshot wrapping 覆盖、remote-connect 消息字段、
+  MCP tool/resource/prompt wire shape、miniapp permission policy、function-agent 输入输出契约。
+- boundary check 只能证明依赖方向，不能替代产品等价性验证。任何会移动 runtime owner 的 PR
+  都必须同时说明旧路径兼容方式、产品能力不变证据和失败时的回滚边界。
 
 对于仅调整文档护栏的变更：
 

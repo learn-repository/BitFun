@@ -10,6 +10,7 @@ import { agenticEventListener, type AgenticEventCallbacks } from '../AgenticEven
 import { 
   generateTextChunkKey, 
   generateToolEventKey,
+  normalizeParamsPartialFragment,
   parseEventKey,
   type FlowToolEvent,
   type SubagentParentInfo,
@@ -192,15 +193,17 @@ function handleDeepReviewQueueStateChanged(event: DeepReviewQueueStateChangedEve
   }
 
   const actionBar = useReviewActionBarStore.getState();
-  if (actionBar.childSessionId === event.sessionId) {
-    actionBar.applyCapacityQueueState(queueState);
+  const existingActionState = actionBar.getSessionState(event.sessionId);
+  if (existingActionState) {
+    actionBar.applyCapacityQueueState(queueState, event.sessionId);
     const nextActionBar = useReviewActionBarStore.getState();
+    const nextActionState = nextActionBar.getSessionState(event.sessionId);
     if (
       queueState.status !== 'running' &&
       queueState.status !== 'capacity_skipped' &&
-      nextActionBar.phase === 'idle'
+      (nextActionState?.phase === 'idle' || nextActionState?.phase === 'review_running')
     ) {
-      actionBar.updatePhase('review_waiting_capacity');
+      actionBar.updatePhase('review_waiting_capacity', undefined, event.sessionId);
     }
     return;
   }
@@ -1573,8 +1576,8 @@ function handleToolEvent(
           toolEvent: {
             ...(existing.toolEvent as ParamsPartialToolEvent),
             params:
-              (existing.toolEvent as ParamsPartialToolEvent).params +
-              (incoming.toolEvent as ParamsPartialToolEvent).params
+              normalizeParamsPartialFragment((existing.toolEvent as ParamsPartialToolEvent).params) +
+              normalizeParamsPartialFragment((incoming.toolEvent as ParamsPartialToolEvent).params)
           }
         })
       );
