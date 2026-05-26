@@ -108,6 +108,9 @@ pub async fn handle_anthropic_stream(
                 if let Some(message_usage) = message_start.message.usage {
                     usage.update(&message_usage);
                 }
+                if let Some(root_usage) = message_start.usage {
+                    usage.update(&root_usage);
+                }
             }
             "content_block_start" => {
                 let content_block_start: ContentBlockStart = match serde_json::from_str(&data) {

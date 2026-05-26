@@ -3,52 +3,73 @@ use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize)]
 struct PromptTokensDetails {
+    #[serde(alias = "cached_tokens")]
+    #[serde(alias = "prompt_cache_hit_tokens")]
+    #[serde(alias = "cache_read_input_tokens")]
+    #[serde(alias = "cache_read")]
     cached_tokens: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OpenAIUsage {
     #[serde(default)]
+    #[serde(alias = "input_tokens")]
     prompt_tokens: u32,
     #[serde(default)]
+    #[serde(alias = "output_tokens")]
     completion_tokens: u32,
     #[serde(default)]
+    #[serde(alias = "total_tokens")]
     total_tokens: u32,
     prompt_tokens_details: Option<PromptTokensDetails>,
     /// DeepSeek-specific KV cache fields.
     /// DeepSeek API reports `prompt_cache_hit_tokens` + `prompt_cache_miss_tokens`
     /// instead of the standard `prompt_tokens_details.cached_tokens`.
     #[serde(default)]
+    #[serde(alias = "cache_read_input_tokens")]
+    #[serde(alias = "cached_tokens")]
+    #[serde(alias = "cache_read")]
     prompt_cache_hit_tokens: Option<u32>,
     #[serde(default)]
-    #[allow(dead_code)]
-    /// Tokens in the prompt that did NOT hit the cache (informational only;
-    /// derived as `prompt_tokens - prompt_cache_hit_tokens`).
+    #[serde(alias = "cache_creation_input_tokens")]
+    #[serde(alias = "cache_write")]
     prompt_cache_miss_tokens: Option<u32>,
+    /// Completion tokens details may contain cache info (MiniMax, GLM, Doubao variants).
+    #[serde(default)]
+    completion_tokens_details: Option<serde_json::Value>,
 }
 
 impl From<OpenAIUsage> for UnifiedTokenUsage {
     fn from(usage: OpenAIUsage) -> Self {
-        // DeepSeek uses non-standard `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`.
-        // Standard OpenAI-compatible providers (GLM, Doubao, MiniMax-openai-mode) use
-        // `prompt_tokens_details.cached_tokens`.
-        let cache_read = usage
-            .prompt_cache_hit_tokens
-            .or_else(|| {
-                usage
-                    .prompt_tokens_details
-                    .and_then(|d| d.cached_tokens)
-            });
+        let details_cached = usage.prompt_tokens_details.as_ref().and_then(|d| d.cached_tokens);
 
-        Self {
+        let cache_read = match (details_cached, usage.prompt_cache_hit_tokens) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => usage
+                .completion_tokens_details
+                .as_ref()
+                .and_then(|d| d.as_object()?.get("cache_read")?.as_u64().map(|v| v as u32))
+                .or_else(|| usage.completion_tokens_details.as_ref().and_then(|d| d.as_object()?.get("cached_tokens")?.as_u64().map(|v| v as u32))),
+        };
+
+        let cache_write = usage
+            .prompt_cache_miss_tokens
+            .or_else(|| usage.completion_tokens_details.as_ref().and_then(|d| d.as_object()?.get("cache_write")?.as_u64().map(|v| v as u32)))
+            .or_else(|| usage.completion_tokens_details.as_ref().and_then(|d| d.as_object()?.get("cache_creation_input_tokens")?.as_u64().map(|v| v as u32)));
+
+        let result = Self {
             prompt_token_count: usage.prompt_tokens,
             candidates_token_count: usage.completion_tokens,
             total_token_count: usage.total_tokens,
             reasoning_token_count: None,
             cached_content_token_count: cache_read,
             cache_read_input_tokens: cache_read,
-            cache_creation_input_tokens: None, // OpenAI chat API does not report cache writes
-        }
+            cache_creation_input_tokens: cache_write,
+        };
+
+        result
     }
 }
 

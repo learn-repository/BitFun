@@ -3,19 +3,32 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct MessageStart {
+    #[serde(alias = "message")]
+    #[serde(alias = "response")]
+    #[serde(alias = "data")]
     pub message: Message,
+    #[serde(flatten)]
+    pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Message {
+    #[serde(alias = "usage")]
+    #[serde(alias = "stats")]
     pub usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Usage {
+    #[serde(alias = "prompt_tokens")]
     input_tokens: Option<u32>,
+    #[serde(alias = "completion_tokens")]
     output_tokens: Option<u32>,
+    #[serde(alias = "cached_tokens")]
+    #[serde(alias = "prompt_cache_hit_tokens")]
     cache_read_input_tokens: Option<u32>,
+    #[serde(alias = "cache_creation_tokens")]
+    #[serde(alias = "prompt_cache_miss_tokens")]
     cache_creation_input_tokens: Option<u32>,
 }
 
@@ -47,7 +60,13 @@ impl From<Usage> for UnifiedTokenUsage {
     fn from(value: Usage) -> Self {
         let cache_read = value.cache_read_input_tokens.unwrap_or(0);
         let cache_creation = value.cache_creation_input_tokens.unwrap_or(0);
-        let prompt_token_count = value.input_tokens.unwrap_or(0) + cache_read + cache_creation;
+        let input_tokens = value.input_tokens.unwrap_or(0);
+        let prompt_token_count = if input_tokens == 0 && (cache_read > 0 || cache_creation > 0) {
+            // If we only have cache tokens, use those as the prompt count
+            cache_read + cache_creation
+        } else {
+            input_tokens + cache_read + cache_creation
+        };
         let candidates_token_count = value.output_tokens.unwrap_or(0);
         Self {
             prompt_token_count,

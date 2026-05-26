@@ -40,15 +40,20 @@ pub struct ResponsesDone {
 
 #[derive(Debug, Deserialize)]
 pub struct ResponsesUsage {
+    #[serde(alias = "prompt_tokens")]
     pub input_tokens: u32,
     #[serde(default)]
+    #[serde(alias = "prompt_tokens_details")]
     pub input_tokens_details: Option<ResponsesInputTokensDetails>,
+    #[serde(alias = "completion_tokens")]
     pub output_tokens: u32,
     pub total_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ResponsesInputTokensDetails {
+    #[serde(alias = "prompt_cache_hit_tokens")]
+    #[serde(alias = "cache_read_input_tokens")]
     pub cached_tokens: u32,
 }
 
